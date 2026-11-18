@@ -1,0 +1,265 @@
+"""M1 tests: run with `python -m pytest tests/` or `python -m unittest`."""
+import http.client
+import json
+import os
+import sqlite3
+import sys
+import tempfile
+import threading
+import unittest
+import urllib.request
+from http.server import ThreadingHTTPServer
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# urllib honors NO_PROXY and would bypass the loopback test proxy;
+# drop it so the suite never depends on ambient proxy config (N7).
+os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+
+import proxy as proxy_module
+import server as server_module
+
+
+class _HeaderEchoHandler(server_module.Handler):
+    """Upstream that echoes received header NAMES only, never values."""
+
+    def _handle(self):
+        names = sorted({key.lower() for key in self.headers})
+        body = json.dumps({"received_headers": names}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # Handler binds do_GET/do_POST to its own _handle, so rebind here.
+    do_GET = _handle
+    do_POST = _handle
+
+
+class M1ProxyTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
+        cls.upstream = ThreadingHTTPServer(("127.0.0.1", 0), server_module.Handler)
+        cls.upstream_port = cls.upstream.server_address[1]
+        threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
+        cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path)
+        cls.proxy_port = cls.proxy.server_address[1]
+        threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.upstream_port}"
+        cls.opener = urllib.request.build_opener(urllib.request.ProxyHandler(
+            {"http": f"http://127.0.0.1:{cls.proxy_port}"}))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proxy.shutdown(); cls.upstream.shutdown()
+        cls.proxy.server_close(); cls.upstream.server_close()
+        cls.proxy.state.conn.close()
+        cls.tmp.cleanup()
+
+    def rows(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        out = conn.execute("SELECT * FROM attempts ORDER BY id").fetchall()
+        conn.close()
+        return out
+
+    def get(self, path, trace=None, data=None, headers=None):
+        req = urllib.request.Request(self.base + path, data=data,
+                                     method="POST" if data else "GET")
+        if trace:
+            req.add_header("X-Trace-Id", trace)
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
+        try:
+            with self.opener.open(req, timeout=10) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
+
+    def test_generated_trace_is_forwarded_and_logged(self):
+        before = len(self.rows())
+        status, headers, body = self.get("/echo")
+        self.assertEqual(status, 200)
+        generated = headers.get("X-Trace-Id")
+        self.assertTrue(generated)
+        self.assertEqual(json.loads(body)["trace_id"], generated)
+        row = self.rows()[before]
+        self.assertEqual(row["trace_id"], generated)
+        self.assertEqual(row["method"], "GET")
+        self.assertEqual(row["endpoint"], "/echo")
+        self.assertIn("127.0.0.1", row["dest_host"])
+        self.assertEqual(row["status"], "success")
+        self.assertEqual(row["http_status"], 200)
+        self.assertGreaterEqual(row["bytes_out"], len(body) - 5)
+        self.assertGreaterEqual(row["latency_seconds"], 0)
+
+    def test_existing_trace_kept_unchanged_and_retry_grouping(self):
+        status, _, body = self.get("/echo", trace="trace-keep-1")
+        self.assertEqual(json.loads(body)["trace_id"], "trace-keep-1")
+        self.get("/echo", trace="trace-keep-1")
+        mine = [r for r in self.rows() if r["trace_id"] == "trace-keep-1"]
+        self.assertEqual([r["attempt"] for r in mine], [1, 2])
+        self.assertEqual(mine[1]["retry_reason"], "retry")
+        self.assertEqual(mine[0]["task_number"], mine[1]["task_number"])
+
+    def test_secrets_and_bodies_never_logged(self):
+        secret_body = b"SECRET_PROMPT_BODY_12345"
+        self.get("/echo", trace="trace-secret",
+                 data=secret_body,
+                 headers={"Authorization": "Bearer SECRET_KEY_67890"})
+        conn = sqlite3.connect(self.db_path)
+        dump = "\n".join(str(r) for r in conn.execute("SELECT * FROM attempts"))
+        conn.close()
+        self.assertNotIn("SECRET_PROMPT_BODY_12345", dump)
+        self.assertNotIn("SECRET_KEY_67890", dump)
+        row = [r for r in self.rows() if r["trace_id"] == "trace-secret"][0]
+        self.assertEqual(row["bytes_in"], len(secret_body))
+
+    def test_failure_status_and_usage_tokens(self):
+        status, _, _ = self.get("/fail", trace="trace-fail")
+        self.assertEqual(status, 500)
+        row = [r for r in self.rows() if r["trace_id"] == "trace-fail"][0]
+        self.assertEqual((row["status"], row["http_status"]), ("failure", 500))
+        self.assertEqual(row["input_tokens"], 0)
+
+        self.get("/usage", trace="trace-usage")
+        row = [r for r in self.rows() if r["trace_id"] == "trace-usage"][0]
+        self.assertEqual(row["input_tokens"], 42)  # only because upstream reported it
+        self.assertEqual(row["cost_dollars"], 0.0)
+
+    def test_malformed_content_length_gets_400_and_log_row(self):
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.proxy_port, timeout=10)
+        conn.request("GET", f"{self.base}/echo",
+                     headers={"Content-Length": "abc",
+                              "X-Trace-Id": "trace-malformed-cl"})
+        resp = conn.getresponse()
+        resp.read()
+        self.assertEqual(resp.status, 400)
+        self.assertEqual(resp.getheader("X-Trace-Id"), "trace-malformed-cl")
+        conn.close()
+        rows = [r for r in self.rows()
+                if r["trace_id"] == "trace-malformed-cl"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["http_status"], 400)
+        self.assertEqual(rows[0]["reason"], "malformed_header")
+        self.assertEqual((rows[0]["bytes_in"], rows[0]["bytes_out"]), (0, 0))
+
+    def test_malformed_host_port_gets_400_and_log_row(self):
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.proxy_port, timeout=10)
+        conn.putrequest("GET", "/echo", skip_host=1)
+        conn.putheader("Host", "127.0.0.1:abc")
+        conn.putheader("X-Trace-Id", "trace-malformed-host")
+        conn.endheaders()
+        resp = conn.getresponse()
+        resp.read()
+        self.assertEqual(resp.status, 400)
+        conn.close()
+        rows = [r for r in self.rows()
+                if r["trace_id"] == "trace-malformed-host"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["http_status"], 400)
+        self.assertEqual(rows[0]["reason"], "malformed_header")
+        self.assertEqual((rows[0]["bytes_in"], rows[0]["bytes_out"]), (0, 0))
+
+        conn2 = http.client.HTTPConnection(
+            "127.0.0.1", self.proxy_port, timeout=10)
+        conn2.request("GET", "http://127.0.0.1:abc/echo",
+                      headers={"X-Trace-Id": "trace-malformed-urlport"})
+        resp2 = conn2.getresponse()
+        resp2.read()
+        self.assertEqual(resp2.status, 400)
+        conn2.close()
+        rows2 = [r for r in self.rows()
+                 if r["trace_id"] == "trace-malformed-urlport"]
+        self.assertEqual(len(rows2), 1)
+        self.assertEqual(rows2[0]["reason"], "malformed_header")
+
+    def test_retry_key_includes_method_get_post_get_is_1_1_2(self):
+        self.get("/echo", trace="trace-method-key")
+        self.get("/echo", trace="trace-method-key", data=b"{}")
+        self.get("/echo", trace="trace-method-key")
+        mine = [r for r in self.rows() if r["trace_id"] == "trace-method-key"]
+        self.assertEqual([r["method"] for r in mine], ["GET", "POST", "GET"])
+        self.assertEqual([r["attempt"] for r in mine], [1, 1, 2])
+        self.assertEqual(mine[2]["retry_reason"], "retry")
+
+    def test_control_headers_stripped_but_trace_forwarded(self):
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), _HeaderEchoHandler)
+        port = upstream.server_address[1]
+        threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/headers")
+            req.add_header("X-Trace-Id", "trace-headers-t7")
+            req.add_header("X-Task-Number", "7")
+            req.add_header("X-Strategy", "test-strategy")
+            with self.opener.open(req, timeout=10) as resp:
+                self.assertEqual(resp.status, 200)
+                payload = json.loads(resp.read())
+        finally:
+            upstream.shutdown()
+            upstream.server_close()
+        names = payload["received_headers"]
+        self.assertIn("x-trace-id", names)
+        self.assertNotIn("x-task-number", names)
+        self.assertNotIn("x-strategy", names)
+        row = [r for r in self.rows() if r["trace_id"] == "trace-headers-t7"][0]
+        self.assertEqual(row["task_number"], 7)
+        self.assertEqual(row["strategy"], "test-strategy")
+
+    def test_malformed_then_allowed_logs_attempts_1_1(self):
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.proxy_port, timeout=10)
+        conn.request("GET", f"{self.base}/echo",
+                     headers={"Content-Length": "abc",
+                              "X-Trace-Id": "trace-malformed-peek-cl"})
+        self.assertEqual(conn.getresponse().status, 400)
+        conn.close()
+        self.assertEqual(
+            self.get("/echo", trace="trace-malformed-peek-cl")[0], 200)
+        mine = [r for r in self.rows()
+                if r["trace_id"] == "trace-malformed-peek-cl"]
+        self.assertEqual([r["status"] for r in mine], ["failure", "success"])
+        self.assertEqual([r["attempt"] for r in mine], [1, 1])
+
+        conn2 = http.client.HTTPConnection(
+            "127.0.0.1", self.proxy_port, timeout=10)
+        conn2.putrequest("GET", "/echo", skip_host=1)
+        conn2.putheader("Host", "127.0.0.1:abc")
+        conn2.putheader("X-Trace-Id", "trace-malformed-peek-host")
+        conn2.endheaders()
+        self.assertEqual(conn2.getresponse().status, 400)
+        conn2.close()
+        self.assertEqual(
+            self.get("/echo", trace="trace-malformed-peek-host")[0], 200)
+        mine2 = [r for r in self.rows()
+                 if r["trace_id"] == "trace-malformed-peek-host"]
+        self.assertEqual([r["status"] for r in mine2], ["failure", "success"])
+        self.assertEqual([r["attempt"] for r in mine2], [1, 1])
+
+    # CONNECT tunnelling (M2) is covered in tests/test_connect.py.
+
+
+class TaskNumberReconciliationTest(unittest.TestCase):
+    def test_duplicate_explicit_numbers_are_distinguished(self):
+        tmp = tempfile.TemporaryDirectory()
+        state = proxy_module.ProxyState(os.path.join(tmp.name, "tasks.db"))
+        try:
+            first = state.task_number("trace-explicit-a", "5")
+            second = state.task_number("trace-explicit-b", "5")
+            auto = state.task_number("trace-auto-c", None)
+            self.assertEqual(first, 5)
+            self.assertEqual(second, 6)
+            self.assertEqual(auto, 7)
+            self.assertEqual(state.task_number("trace-explicit-a", "5"), 5)
+        finally:
+            state.conn.close()
+            tmp.cleanup()
+
+
+if __name__ == "__main__":
+    unittest.main()
