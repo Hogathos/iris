@@ -1279,6 +1279,33 @@ def make_handler(state: ProxyState):
             # 200, the tunnel is tracked, so a Pause that lands in between
             # journals the live destination and cuts a live socket.
             state._register_live(trace_id, self.connection, endpoint)
+            # Re-check Pause now that the tunnel is tracked. The gates at
+            # the top ran before create_connection, which can take up to
+            # 10 s: a Pause landing in that window found no live tunnel
+            # to cut, and without this check the tunnel would open for a
+            # Run the human had already paused. Register first, check
+            # second, so a Pause either sees this socket and cuts it, or
+            # was already recorded and is seen here.
+            # Journal first, then refuse: same rule as every steer cut.
+            # Redirect is deliberately NOT handled here. A route changed
+            # under a connecting tunnel needs its own test and its own
+            # decision, so a redirected Run is never refused blindly.
+            if state.is_paused(trace_id):
+                state._unregister_live(trace_id, self.connection)
+                upstream.close()
+                log_connect("unknown", "paused",
+                            state.pause_reason(trace_id),
+                            503, 0, 0, "paused", connect_ms)
+                try:
+                    self.send_response(503)
+                    self.send_header("X-Trace-Id", trace_id)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                except OSError:
+                    # The Pause cut already shut this socket: the client
+                    # sees the hangup, and the row above is the record.
+                    pass
+                return
             self.send_response(200)
             self.send_header("X-Trace-Id", trace_id)
             self.end_headers()
