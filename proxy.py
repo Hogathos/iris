@@ -752,7 +752,20 @@ class ProxyState:
             # rest. A tunnel registering after this section sees the flag
             # at its re-check and is refused. Order stays journal first,
             # then flag, then cut, so the journal rule is untouched.
-            live.update(self._live.pop(trace_id, {}))
+            late = self._live.pop(trace_id, {})
+            live.update(late)
+        # A late tunnel was not known when the pause row above was
+        # written, so that row cannot name it. Never rewrite a row.
+        # Journal a second row per late destination, before any cut, so
+        # the journal says where each swept tunnel was going. This row
+        # exists only when the sweep found a tunnel. Written outside
+        # the lock: _control_row takes the lock itself (task_number),
+        # so calling it under the lock would deadlock on a plain Lock.
+        if late:
+            for late_dest in (dict.fromkeys(
+                    d for d in late.values() if d) or [""]):
+                self._control_row(trace_id, "CONNECT", late_dest, late_dest,
+                                  "unknown", "paused", reason, "paused")
         for sock in live:
             try:
                 sock.shutdown(socket.SHUT_RDWR)

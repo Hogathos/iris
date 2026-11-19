@@ -1,21 +1,29 @@
-"""Bench Part B, test 1d: the Pause row names a tunnel the sweep cuts.
+"""Bench Part B, test 1d: the Pause rows for a tunnel the sweep cuts.
 
-Test-first. This test is expected to FAIL on fd906b3 (the 1c fix). A
-failure is the proof that the Pause row has an empty dest_host when a
-tunnel registers between the pop and the flag. Charles reviews this
-test first. Nothing is fixed until he does.
+Test-first. Charles reviews this test first. Nothing is fixed until he
+does.
+
+History. The first version asserted that every pause row names the
+destination. It failed on fd906b3 (the 1c fix), as expected. Charles
+then chose option 2 for the fix: the first pause row stays as it is,
+empty, because a row is never rewritten and journal first stays
+untouched. The sweep writes a second row that names the swept tunnel.
+A test that demands a name on every row cannot pass that design, so this
+version pins the design. It must still FAIL without the fix: with no
+second row the journal holds one empty row, and the assertion fails.
 
 Problem in one sentence: pause_run reads the destination in its first
 lock section, before the late tunnel exists, and the second sweep finds
-that tunnel only after the pause row is written, so the row that records
-the cut names no destination.
+that tunnel only after the pause row is written, so the first pause row
+names no destination.
 
 Why it matters: the journal is the proof of what the human stopped. In
-this race the Pause cut a live tunnel, and the row that says so cannot
-say where the tunnel was going. Test 1b pinned the same rule for a
-tunnel that is still connecting. Part A pinned it for a tunnel that is
-already live. This test pins it for the last case, a tunnel that went
-live in the gap.
+this race the Pause cut a live tunnel, and the journal must say where
+that tunnel was going. Test 1b pinned the rule for a tunnel that is
+still connecting. Part A pinned it for a tunnel that is already live.
+This test pins it for the last case, a tunnel that went live in the gap.
+The first row cannot name it and is never rewritten, so the sweep adds a
+second row for the tunnel it found.
 
 The order inside pause_run (proxy.py), from reading it:
   1. lock: pop the live tunnels, read pending destinations
@@ -24,8 +32,9 @@ The order inside pause_run (proxy.py), from reading it:
   4. lock: set the flag, second sweep for late tunnels (the 1c fix)
   5. shut the popped and swept tunnels
 A tunnel that registers between 1 and 4 is cut by the sweep. Step 2 has
-already run, so the row cannot name it. Unverified until this test runs
-and fails.
+already run, so the first row cannot name it. The fix (option 2) adds one
+more journal write after step 4 and before step 5: one row for each
+destination the sweep found.
 
 How the gap is held open, deterministically, no sleeps and no luck:
 the same harness as test 1c. The test stops pause_run at db.save_paused
@@ -34,9 +43,13 @@ then releases pause_run and waits for it to return. The pause row is
 written before pause_run returns, so the test reads the journal at that
 point and there is nothing to poll.
 
-What must be true: every pause row for the Run names the destination of
-the tunnel the Pause cut, in the same form Part A uses for an open
-tunnel ("127.0.0.1:<port>"), never an empty string.
+What must be true: the paused rows for the Run are exactly two, in this
+order, and both have close_reason "paused":
+  1. dest_host "" (written before the tunnel was known, expected empty)
+  2. dest_host "127.0.0.1:<port>" (the swept tunnel, in the same form
+     Part A uses for an open tunnel)
+A plain Pause with no late tunnel writes one row. Other tests cover that.
+This test covers the race only.
 
 This test needs the tunnel to be live in the gap. It asserts that the
 proxy answered 200 before the release. If a later change makes the proxy
@@ -44,9 +57,8 @@ refuse a tunnel in the gap, then no tunnel is cut, this test no longer
 applies, and it fails loudly with that message so a human can decide.
 
 This test does not check what the tunnel does after the Pause. Test 1c
-covers that. It checks the journal row only. The row's endpoint column
-is empty today for the same reason. This test pins dest_host only, so
-the fix is free to choose how to fill endpoint.
+covers that. It checks the paused rows only. It pins dest_host and
+close_reason, and it does not pin the endpoint column.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
@@ -197,19 +209,21 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
                 "harness: the tunnel must be live in the gap. If the proxy "
                 "now refuses it there, no tunnel is cut and test 1d no "
                 "longer applies: review this test")
-            # pause_run has returned. Its pause row is written. Read the
-            # journal now. A row the proxy writes later can only add to
-            # the rows, so this check cannot be raced.
+            # pause_run has returned. Both of its rows are written. Read
+            # the journal now. The tunnel's own close row has outcome
+            # allowed, so it is not a paused row and cannot change this
+            # list, and nothing here needs a poll.
             pause_rows = [r for r in self.rows_for(trace)
                           if r["outcome"] == "paused"]
-            self.assertTrue(
-                pause_rows, "pause_run returned but journaled no pause row")
-            for row in pause_rows:
-                self.assertEqual(
-                    row["dest_host"], self.dest,
-                    "Pause cut a tunnel that registered between the pop "
-                    "and the flag, and the pause row does not name the "
-                    "destination of that tunnel")
+            self.assertEqual(
+                [r["dest_host"] for r in pause_rows], ["", self.dest],
+                "Pause cut a tunnel that registered between the pop and "
+                "the flag. The paused rows must be the first row, empty, "
+                "then one row that names the destination of that tunnel")
+            self.assertEqual(
+                [r["close_reason"] for r in pause_rows],
+                ["paused", "paused"],
+                "both paused rows must have close reason paused")
         finally:
             if tunnel_sock is not None:
                 tunnel_sock.close()
