@@ -1306,6 +1306,46 @@ def make_handler(state: ProxyState):
                     # sees the hangup, and the row above is the record.
                     pass
                 return
+            # Re-check Redirect the same way, with its own call. If the
+            # route changed while this tunnel was connecting, the tunnel
+            # is open to the OLD destination and must carry nothing. It
+            # is refused, not re-routed in flight: the gates for the new
+            # destination (override, cap, rate limit) have not run for
+            # it. The client's retry takes the normal path through every
+            # gate and lands on the new destination. A Redirect that was
+            # already in place at the gate re-targeted this tunnel, so
+            # the connected destination matches and nothing is refused.
+            # Redirect pops live tunnels and sets its route in one lock
+            # section, so this check cannot miss a Redirect that also
+            # missed this socket.
+            target_now = state.redirect_target(trace_id)
+            route_changed = False
+            if target_now is not None:
+                try:
+                    now_host, now_port = _split_authority(target_now, 443)
+                except ValueError:
+                    pass  # validated at redirect time; keep the tunnel
+                else:
+                    route_changed = ((now_host.lower(), now_port)
+                                     != (dest_host.lower(), dest_port))
+            if route_changed:
+                state._unregister_live(trace_id, self.connection)
+                upstream.close()
+                cut = state.steer_cut(trace_id) or (
+                    "redirected", "human redirect")
+                log_connect("unknown", cut[0], cut[1],
+                            503, 0, 0, cut[0], connect_ms)
+                try:
+                    self.send_response(503)
+                    self.send_header("X-Trace-Id", trace_id)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                except OSError:
+                    # The Redirect cut already shut this socket: the
+                    # client sees the hangup, and the row above is the
+                    # record.
+                    pass
+                return
             self.send_response(200)
             self.send_header("X-Trace-Id", trace_id)
             self.end_headers()
