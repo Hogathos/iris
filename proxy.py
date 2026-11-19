@@ -265,6 +265,10 @@ class ProxyState:
         self._paused: dict[str, dict] = db_module.load_paused(self.conn)
         self._verified: dict[str, str] = {}
         self._live: dict[str, set] = {}
+        # Tunnels still connecting upstream, per Run: client socket ->
+        # destination label. Not live yet, so a Pause cannot cut them,
+        # but it can name where the Run is going.
+        self._connecting: dict[str, dict] = {}
         # Steer Redirect one Run: human-chosen destination per trace_id
         # (survives restart, never silently undone).
         self._redirects: dict[str, dict] = db_module.load_redirected(
@@ -713,12 +717,20 @@ class ProxyState:
         with self._lock:
             live = self._live.pop(trace_id, {})
             live_dests = [dest for dest in live.values() if dest]
+            pending_dests = [dest for dest in
+                             self._connecting.get(trace_id, {}).values()
+                             if dest]
         last = db_module.last_attempt(self.conn, trace_id)
         if live_dests:
             # Live tunnel first: an open tunnel has no journal row yet,
             # so the journal lookup would come back empty. Journaled
             # destination second, never empty for a live tunnel.
             dest_host = endpoint = live_dests[0]
+        elif pending_dests:
+            # Still connecting: no live tunnel and, for a first attempt,
+            # no journal row either. The pending destination is where
+            # the Run is going right now, so the row names it.
+            dest_host = endpoint = pending_dests[0]
         elif last:
             dest_host = last["dest_host"]
             endpoint = last["endpoint"]
@@ -1063,6 +1075,26 @@ class ProxyState:
                 if not live:
                     self._live.pop(trace_id, None)
 
+    def _register_connecting(self, trace_id: str, sock,
+                             dest_label: str) -> None:
+        """Note a tunnel that is connecting upstream, before the connect.
+
+        A Pause that lands before the tunnel is live has nothing to cut
+        and, for a first attempt, no journal row to read. This is where
+        the Run is going, so the pause row never has to say "".
+        """
+        with self._lock:
+            self._connecting.setdefault(trace_id, {})[sock] = dest_label
+
+    def _unregister_connecting(self, trace_id: str, sock) -> None:
+        """Forget a connecting tunnel. Never raises, safe to call twice."""
+        with self._lock:
+            pending = self._connecting.get(trace_id)
+            if pending is not None:
+                pending.pop(sock, None)
+                if not pending:
+                    self._connecting.pop(trace_id, None)
+
 
 class _RelayTimeout(Exception):
     """Relay idle past the timeout; carries bytes relayed so far."""
@@ -1260,12 +1292,17 @@ def make_handler(state: ProxyState):
             # Numbered only once the tunnel will actually be opened.
             attempt = state.next_attempt(trace_id, endpoint, "CONNECT")
             upstream = None
+            # Record where this tunnel is going BEFORE the connect: the
+            # connect can take up to 10 s, and a Pause that lands in it
+            # must journal this destination, not an empty string.
+            state._register_connecting(trace_id, self.connection, endpoint)
             connect_start = time.perf_counter()
             try:
                 upstream = socket.create_connection(
                     (dest_host, dest_port), timeout=10)
                 connect_ms = (time.perf_counter() - connect_start) * 1000.0
             except Exception:
+                state._unregister_connecting(trace_id, self.connection)
                 connect_ms = (time.perf_counter() - connect_start) * 1000.0
                 log_connect("failure", "allowed", "", None, 0, 0,
                             "upstream_reset", connect_ms)
@@ -1279,6 +1316,10 @@ def make_handler(state: ProxyState):
             # 200, the tunnel is tracked, so a Pause that lands in between
             # journals the live destination and cuts a live socket.
             state._register_live(trace_id, self.connection, endpoint)
+            # Live now, so drop the pending note. Order matters: live is
+            # registered first, so there is never a moment where the Run
+            # has a tunnel that is neither pending nor live.
+            state._unregister_connecting(trace_id, self.connection)
             # Re-check Pause now that the tunnel is tracked. The gates at
             # the top ran before create_connection, which can take up to
             # 10 s: a Pause landing in that window found no live tunnel
