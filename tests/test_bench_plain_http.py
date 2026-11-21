@@ -25,6 +25,9 @@ This test pins, with real proxy traffic:
   6. The readers agree after the mixed run, on both journals: the
      buckets reconcile, the dashboard agrees, the spend cap counts
      allowed rows only, and the cost is what was actually spent.
+  7. The warn threshold rounds to cents: a 5-cent cap warns at 4
+     cents on plain HTTP, and the same threshold on CONNECT warns
+     the same way.
 
 One rule the readers check pins: a control row is not spend. The
 cap warn row carries the cumulative total that tripped it, and the
@@ -40,8 +43,9 @@ body, and HEAD, PUT, PATCH, DELETE, OPTIONS (they share the same
 _handle path as GET and POST).
 
 The checks run in alphabetical order, on shared fixtures, so the
-readers check (6) runs last and sees every row the other checks
-journalled.
+readers check (6) runs after checks 1 to 5 and sees every row they
+journalled. The float check (7) runs its own proxy on a fresh
+journal, so its rows cannot touch the readers check.
 """
 
 import contextlib
@@ -76,6 +80,8 @@ import report as report_module
 STEP_TIMEOUT = 5.0
 TEST_PRICE = 0.20  # twenty cents per request, patched in for the cap
 TEST_CAP = 1.00  # five priced requests, then the cap blocks
+FLOAT_PRICE = 0.01  # one cent per request, patched in for the float cap
+FLOAT_CAP = 0.05  # five priced requests reach 80%, then the cap blocks
 BIG_SIZE = 1024 * 1024 + 65536  # past MAX_BUFFERED_RESPONSE_BYTES
 BIG_BODY = (bytes(range(256)) * (BIG_SIZE // 256 + 1))[:BIG_SIZE]
 POST_BODY = b'{"hello": "plain-http"}'
@@ -432,6 +438,62 @@ class PlainHttpBenchTest(unittest.TestCase):
                 ["allowed", "paused", "paused"],
                 "the pause rows must read allowed, paused, paused")
             self.assertEqual(pause_rows[1]["reason"], "human pause")
+
+    def test_warn_threshold_rounds_to_cents(self):
+        """A 5-cent cap warns at 4 cents on plain HTTP, not never.
+
+        0.8 times 5 cents is a hair above 4 cents in float, so an
+        unrounded 80% threshold is unreachable before the cap
+        blocks. The threshold is rounded to cents, on this path and
+        on CONNECT. Runs its own proxy: the gates proxy already
+        carries twenty cents of spend on its pause destination, and
+        a fresh cap needs a fresh destination.
+        """
+        trace = "bench-plain-float"
+        tmp = tempfile.TemporaryDirectory()
+        db_path = os.path.join(tmp.name, "float.db")
+        db_module.init_db(db_path)
+        float_proxy = None
+        try:
+            float_proxy = proxy_module.serve(
+                "127.0.0.1", 0, db_path, rate_limit=10000)
+            float_port = float_proxy.server_address[1]
+            threading.Thread(target=float_proxy.serve_forever,
+                             daemon=True).start()
+            with mock.patch.dict(api_module.PRICE_PER_REQUEST,
+                                {"127.0.0.1": FLOAT_PRICE}):
+                self.assertTrue(
+                    float_proxy.state.set_cap(
+                        self.dest_b, FLOAT_CAP, reason="human cap"),
+                    "harness: the cap did not land")
+                for _ in range(5):
+                    self.assertEqual(
+                        self.call(self.base_b, float_port, trace), 200)
+                rows = self.wait_for_rows(db_path, trace, 6)
+                warns = [r for r in rows if r["outcome"] == "warned"]
+                self.assertEqual(
+                    len(warns), 1, "the cap must warn exactly once")
+                self.assertEqual(warns[0]["reason"], "cap warn 80%")
+                self.assertEqual(warns[0]["cost_dollars"], 0.04,
+                                 "the warn row carries the spent total")
+                self.assertEqual(
+                    [r["outcome"] for r in rows],
+                    ["allowed"] * 4 + ["warned", "allowed"],
+                    "the cap rows must read allowed, warned, allowed")
+                self.assertEqual(
+                    self.call(self.base_b, float_port, trace), 503,
+                    "the 6th request past the cap must be blocked")
+                rows = self.wait_for_rows(db_path, trace, 7)
+                self.assertEqual(
+                    [r["outcome"] for r in rows],
+                    ["allowed"] * 4 + ["warned", "allowed"] + ["blocked"],
+                    "the cap rows must end with the blocked refusal")
+        finally:
+            if float_proxy is not None:
+                float_proxy.shutdown()
+                float_proxy.server_close()
+                float_proxy.state.conn.close()
+            tmp.cleanup()
 
     def test_post_body_forwards_intact(self):
         """A POST body crosses the proxy byte for byte, both ways.

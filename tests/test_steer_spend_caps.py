@@ -386,6 +386,30 @@ class SteerSpendCapTest(unittest.TestCase):
             sockA.close()
             sockB.close()
 
+    def test_warn_threshold_rounds_to_cents(self):
+        """Cap $0.05: the warn fires at $0.04, not never.
+
+        0.8 times 5 cents is a hair above 4 cents in float, so an
+        unrounded 80% threshold is unreachable before the cap
+        blocks. The threshold is rounded to cents, on this path and
+        on plain HTTP.
+        """
+        trace = "cap-float-connect"
+        self.assertTrue(
+            self.proxy.state.set_cap(self.destA, 0.05, reason="human cap"),
+            "harness: the cap did not land")
+        for _ in range(4):
+            self.record_cost(trace, self.destA, 0.01)
+        sock, status = self.open_tunnel(self.destA, trace)
+        try:
+            self.assertEqual(status, 200, "the run still flows at 80%")
+        finally:
+            sock.close()
+        warns = [r for r in self.rows_for(trace) if r["outcome"] == "warned"]
+        self.assertEqual(len(warns), 1, "the warn must fire at $0.04")
+        self.assertEqual(warns[0]["reason"], "cap warn 80%")
+        self.assertEqual(warns[0]["cost_dollars"], 0.04)
+
 
 if __name__ == "__main__":
     unittest.main()
