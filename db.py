@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS attempts (
 def init_db(path: str) -> sqlite3.Connection:
     """Open (or create) the database at path and ensure the table exists."""
     conn = sqlite3.connect(path, check_same_thread=False)  # proxy logs from worker threads
+    # WAL mode: readers (the dashboard's read-only connection) no
+    # longer stall the writer, and the writer no longer stalls the
+    # readers. Journal-first still holds: a commit lands before
+    # log_attempt returns, WAL only changes how readers and the
+    # writer share the file, not when a row becomes durable.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(CREATE_TABLE_SQL)
     conn.execute(PAUSED_RUNS_TABLE_SQL)
     conn.execute(REDIRECTED_RUNS_TABLE_SQL)
@@ -89,6 +95,29 @@ def init_db(path: str) -> sqlite3.Connection:
                 cols = {row[1] for row in conn.execute("PRAGMA table_info(attempts)")}
                 if name not in cols:
                     raise
+    conn.commit()
+    # Scale indexes (audit 2026-11-21): every trace lookup and every
+    # cap check was a full table scan. They go after the migration
+    # above, because idx_attempts_dest_outcome needs the outcome
+    # column the migration adds to a pre-M4 database. Two processes
+    # can arrive here together, same race as the ALTER above: if a
+    # peer created the index first, the re-check below lets us
+    # continue. Anything else is re-raised, never masked.
+    for name, sql in (
+        ("idx_attempts_trace_id",
+         "CREATE INDEX IF NOT EXISTS idx_attempts_trace_id "
+         "ON attempts (trace_id, id)"),
+        ("idx_attempts_dest_outcome",
+         "CREATE INDEX IF NOT EXISTS idx_attempts_dest_outcome "
+         "ON attempts (dest_host, outcome)"),
+    ):
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            present = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            if name not in present:
+                raise
     conn.commit()
     return conn
 
