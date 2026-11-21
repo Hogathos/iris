@@ -745,6 +745,14 @@ class ProxyState:
         with self._lock:
             self._paused[trace_id] = {"reason": reason, "created_at": now}
             self._verified.pop(trace_id, None)
+            # Second sweep, in the same lock section as the flag. A
+            # tunnel that registered after the first pop and before this
+            # flag is in neither set: it was not popped, and its Pause
+            # re-check saw no flag yet. Take it now so it is cut with the
+            # rest. A tunnel registering after this section sees the flag
+            # at its re-check and is refused. Order stays journal first,
+            # then flag, then cut, so the journal rule is untouched.
+            live.update(self._live.pop(trace_id, {}))
         for sock in live:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
