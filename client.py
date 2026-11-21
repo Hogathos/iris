@@ -7,6 +7,7 @@ Run (proxy + server already running):
 from __future__ import annotations
 
 import argparse
+import urllib.error
 import urllib.request
 
 
