@@ -76,9 +76,14 @@ def _event_for(row) -> str | None:
         return "cap_warn"
     if outcome == "verified" and row["status"] == "success":
         return "verify_ok"
+    # A Verify is not a resume: the Run is checked clean but still held
+    # until a human retry lets it go, so the verify-ok row maps to
+    # verify_ok (VERIFY_OK), never to resume. Only the retry row, or a
+    # cap lift, resumes the Run.
+    if outcome == "" and reason == "verify ok":
+        return "verify_ok"
     if outcome == "" and reason in ("retry allowed after verify",
-                                    "cap lifted",
-                                    "verify ok"):
+                                    "cap lifted"):
         return "resume"
     return None
 
