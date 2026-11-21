@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 
+import api as api_module
 import db as db_module
 
 
@@ -19,11 +20,27 @@ def main():
     args = parser.parse_args()
 
     conn = db_module.init_db(args.db)
+    conn.row_factory = sqlite3.Row
     totals = db_module.fetch_totals(conn)
     attempts = totals["attempts"] or 0
     successes = totals["successes"] or 0
     rate = (100.0 * successes / attempts) if attempts else 0.0
     outcomes = db_module.fetch_outcome_counts(conn)
+    # The money number is the priced total, the same number the
+    # dashboard shows. The recorded cost sum is not the money spent:
+    # a priced request with no recorded cost shows $0.00 there.
+    # When a destination has no price, the total is unknown, never
+    # guessed, and the line names the destination.
+    cost_rows = conn.execute(
+        "SELECT trace_id, dest_host, outcome, status, cost_dollars "
+        "FROM attempts"
+    ).fetchall()
+    summary = api_module.summarize_costs(cost_rows)
+    if summary["cost"] is None:
+        cost_text = ("unknown (no price for "
+                     + ", ".join(summary["unknown_dests"]) + ")")
+    else:
+        cost_text = f"{summary['cost']:.2f}"
     print(f"allowed={outcomes['allowed']} blocked={outcomes['blocked']} "
           f"rate_limited={outcomes['rate_limited']} "
           f"paused={outcomes['paused']} "
@@ -39,7 +56,7 @@ def main():
           f"bytes_in={totals['bytes_in'] or 0} "
           f"bytes_out={totals['bytes_out'] or 0} "
           f"input_tokens={totals['input_tokens'] or 0} "
-          f"cost_dollars={totals['cost_dollars'] or 0}")
+          f"cost_dollars={cost_text}")
     print()
     print(f"{'dest_host':<22} {'method':<7} {'endpoint':<28} "
           f"{'n':>4} {'ok':>4} {'retry':>5} {'avg_s':>8} {'b_in':>7} {'b_out':>7}")

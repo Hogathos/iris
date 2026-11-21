@@ -571,6 +571,7 @@ def stats() -> dict:
             "stopped": 0,
             "verified": 0,
             "warned": 0,
+            "other": 0,
             "successes": 0,
             "avg_latency_seconds": 0.0,
         }
@@ -601,6 +602,7 @@ def stats() -> dict:
             "stopped": counts["stopped"],
             "verified": counts["verified"],
             "warned": counts["warned"],
+            "other": counts["other"],
             "successes": row[0] or 0,
             "avg_latency_seconds": row[1] or 0.0,
             "total_cost": summary["cost"],
