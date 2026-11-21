@@ -633,6 +633,12 @@ class ProxyState:
             socks = [sock for tid in live
                      for sock in self._live.pop(tid, {}).keys()]
         for sock in socks:
+            # Mark the cut where it happens, the same as pause_run:
+            # without the mark the close row falls through to the
+            # steer_cut branch, which only fires when the relay did
+            # not end cleanly, so the row reads allowed or paused
+            # depending on timing. Marked, it always reads paused.
+            self._mark_cut(sock, "pause")
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -707,6 +713,12 @@ class ProxyState:
             live = [sock for tid in live_traces
                     for sock in self._live.pop(tid, {}).keys()]
         for sock in live:
+            # Mark the cut where it happens, the same as pause_run:
+            # without the mark the close row falls through to the
+            # steer_cut branch, which only fires when the relay did
+            # not end cleanly, so the row reads allowed or paused
+            # depending on timing. Marked, it always reads paused.
+            self._mark_cut(sock, "pause")
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
