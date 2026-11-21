@@ -1017,16 +1017,41 @@ class ProxyState:
         scores, no LLM, no percentages. The call row is journaled before
         anything is read; the verdict row follows; a stop follows an
         Incorrect verdict. Verdict and retry permission stay separate:
-        nothing here stamps a Verify or allows a retry.
+        nothing here stamps a Verify or allows a retry. No trace: a
+        remote claim on a Run with no prior journal row is Unverified
+        with reason No trace. The check runs before the call row is
+        journaled, because the call row itself would count as a row.
         """
         now = datetime.datetime.now(
             datetime.timezone.utc).isoformat(timespec="seconds")
         key = (claim.get("idempotency_key", "-")
                if isinstance(claim, dict) else "-")
+        # No trace: the journal holds no row for this Run yet, so there
+        # is no proxy row, no bytes, no effect to read. Local kinds keep
+        # their own read: a file or a database is the trace. A missing
+        # done clause still wins over no trace, same order as _read_back.
+        # A second Verify on the same traceless Run sees the first
+        # Verify's rows and reads "remote with no local proof" instead.
+        # Both are Unverified.
+        prior = db_module.last_attempt(self.conn, trace_id)
+        no_trace = (
+            prior is None
+            and isinstance(claim, dict)
+            and claim.get("kind") not in ("local-file", "sqlite")
+            and isinstance(done_clause, dict)
+            and done_clause.get("approved_by") == "human"
+            and done_clause.get("read_back")
+        )
         self._control_row(trace_id, "VERIFY", "", "", "unknown",
                           "verified", f"verify call {key}", "verified")
-        verdict, what_read, source, why, nxt = self._read_back(claim,
-                                                               done_clause)
+        if no_trace:
+            verdict, what_read, source, why, nxt = (
+                "Unverified", "no read attempted",
+                "journal: no trace for this Run",
+                "No trace", "human investigates")
+        else:
+            verdict, what_read, source, why, nxt = self._read_back(
+                claim, done_clause)
         status = {"Correct": "success", "Incorrect": "failure",
                   "Unverified": "unknown"}[verdict]
         self._control_row(trace_id, "VERIFY", "", "", status,
