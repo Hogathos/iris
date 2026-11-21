@@ -267,6 +267,13 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
                 [r for r in self.rows_all()
                  if r["reason"] == "cap lifted"],
                 "unblock must be journaled")
+            # The lift is journaled for the Run it unpauses, not only
+            # for the destination: the panel folds one Run's rows, so
+            # a lift row with no trace id cannot return it to FLOWING.
+            self.assertTrue(
+                [r for r in self.rows_for(traceA)
+                 if r["reason"] == "cap lifted"],
+                "unblock must be journaled for the Run it unpauses")
             allowed, _ = self.proxy.state.retry_run(traceA)
             self.assertTrue(allowed, "retry after unblock must be allowed")
             sockA3, statusA3 = self.open_tunnel(self.destA, traceA)

@@ -568,6 +568,13 @@ class ProxyState:
             stopped = [tid for tid, dest in self._cap_paused.items()
                        if dest == dest_label]
         for trace_id in stopped:
+            # The lift returns this Run to flowing, so the Run's own
+            # journal needs the row: the panel folds one Run's rows,
+            # and the destination-level row above carries no trace id,
+            # so the panel never sees it. Without a per-Run row the
+            # fold cannot reach FLOWING after an unblock.
+            self._control_row(trace_id, "CAP", dest_label, dest_label,
+                              "unknown", "", "cap lifted", "capped")
             db_module.clear_paused(self.conn, trace_id)
             with self._lock:
                 self._paused.pop(trace_id, None)
