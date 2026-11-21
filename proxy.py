@@ -2036,6 +2036,11 @@ class ProxyServer(ThreadingHTTPServer):
 
     state: ProxyState
 
+    # Listen backlog: the socketserver default is 5, so a burst of
+    # simultaneous connects is refused at TCP before Iris ever sees
+    # it. 128 is the usual listen backlog.
+    request_queue_size = 128
+
 
 def serve(host: str = "127.0.0.1", port: int = 8888,
           db_path: str = "attempts.db", allowlist=None,

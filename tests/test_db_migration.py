@@ -28,6 +28,10 @@ def _open_db(path, barrier, queue):
 
 def _make_pre_m4_db(path):
     conn = db.init_db(path)
+    # The (dest_host, outcome) index references outcome, so it must
+    # go before the column does. A genuine pre-M4 database never had
+    # the index at all.
+    conn.execute("DROP INDEX IF EXISTS idx_attempts_dest_outcome")
     conn.execute("ALTER TABLE attempts DROP COLUMN outcome")
     conn.execute("ALTER TABLE attempts DROP COLUMN reason")
     conn.commit()
