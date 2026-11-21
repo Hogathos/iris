@@ -72,6 +72,7 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import overload
 from urllib.parse import urlparse
 
 import db as db_module
@@ -100,6 +101,17 @@ def _parse_port(text: str, authority: str) -> int:
     if not 0 < port < 65536:
         raise ValueError(f"bad port in {authority!r}")
     return port
+
+
+@overload
+def _split_authority(authority: str, default_port: int) -> tuple[str, int]:
+    ...
+
+
+@overload
+def _split_authority(authority: str,
+                     default_port: None) -> tuple[str, int | None]:
+    ...
 
 
 def _split_authority(authority: str, default_port: int | None) -> tuple[str, int | None]:
@@ -264,7 +276,7 @@ class ProxyState:
         # never auto-resume), fresh Verify stamps, live tunnel sockets.
         self._paused: dict[str, dict] = db_module.load_paused(self.conn)
         self._verified: dict[str, str] = {}
-        self._live: dict[str, set] = {}
+        self._live: dict[str, dict[socket.socket, str]] = {}
         # Tunnels still connecting upstream, per Run: client socket ->
         # destination label. Not live yet, so a Pause cannot cut them,
         # but it can name where the Run is going.
@@ -431,7 +443,8 @@ class ProxyState:
             new_label = _format_label(new_host, new_port)
         except ValueError:
             new_host, new_port, new_label = None, None, ""
-        if not new_label or not self.is_allowed(new_host, new_port):
+        if (not new_label or new_host is None or new_port is None
+                or not self.is_allowed(new_host, new_port)):
             last = db_module.last_attempt(self.conn, trace_id)
             dest_host = last["dest_host"] if last else ""
             endpoint = last["endpoint"] if last else ""
@@ -455,7 +468,7 @@ class ProxyState:
                                          "reason": reason,
                                          "created_at": now}
             self._verified.pop(trace_id, None)
-            live = self._live.pop(trace_id, set())
+            live = self._live.pop(trace_id, {})
         for sock in live:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -631,7 +644,8 @@ class ProxyState:
             label = _format_label(host, port)
         except ValueError:
             host, port, label = None, None, ""
-        if not label or not self.is_allowed(host, port):
+        if (not label or host is None or port is None
+                or not self.is_allowed(host, port)):
             # The refusal names a destination, not a Run: no Run existed,
             # none is invented. It journals under its own override-attempt
             # trace so the audit trail has exactly one row for it and no
@@ -1823,7 +1837,7 @@ def make_handler(state: ProxyState):
                 finally:
                     connect_ms = ((time.perf_counter() - connect_start)
                                   * 1000.0)
-                upstream.putrequest(self.command, endpoint, skip_host=1)
+                upstream.putrequest(self.command, endpoint, skip_host=True)
                 for key, value in headers.items():
                     upstream.putheader(key, value)
                 upstream.endheaders()
@@ -2011,17 +2025,29 @@ def make_handler(state: ProxyState):
     return ProxyHandler
 
 
+class ProxyServer(ThreadingHTTPServer):
+    """HTTP server that carries its ProxyState.
+
+    The state rides on the server so handlers reach it without a
+    global. Declared here so the type checker knows .state exists:
+    before this, serve() attached it dynamically and every .state
+    access in the tests and demos was an unknown attribute.
+    """
+
+    state: ProxyState
+
+
 def serve(host: str = "127.0.0.1", port: int = 8888,
           db_path: str = "attempts.db", allowlist=None,
           rate_limit: int = RATE_LIMIT,
           rate_window: float = RATE_WINDOW_SECONDS,
           relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS
-          ) -> ThreadingHTTPServer:
+          ) -> ProxyServer:
     state = ProxyState(db_path, allowlist=allowlist,
                        rate_limit=rate_limit, rate_window=rate_window,
                        relay_timeout=relay_timeout)
-    server = ThreadingHTTPServer((host, port), make_handler(state))
-    server.state = state  # type: ignore[attr-defined]
+    server = ProxyServer((host, port), make_handler(state))
+    server.state = state
     return server
 
 

@@ -76,7 +76,7 @@ def run_gui() -> None:
     import tkinter as tk
     from tkinter import messagebox
 
-    procs = {"proxy": None, "api": None}
+    procs: dict[str, subprocess.Popen[str] | None] = {"proxy": None, "api": None}
     queues = {"proxy": queue.Queue(), "api": queue.Queue()}
 
     root = tk.Tk()
@@ -101,6 +101,8 @@ def run_gui() -> None:
         box.config(state="disabled")
 
     def reader(which: str, proc: subprocess.Popen) -> None:
+        if proc.stdout is None:
+            return
         try:
             for line in proc.stdout:
                 queues[which].put(line.rstrip("\n"))
