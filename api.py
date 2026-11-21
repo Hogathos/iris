@@ -43,10 +43,26 @@ PRICE_PER_REQUEST = {
 }
 
 
+# Methods a control row journals under. Control rows are notes, not
+# requests: a cap set or lift, an approval, a Verify check, a retry
+# decision. They carry no usage, so they cost $0.00 even when their
+# destination has a price.
+_CONTROL_METHODS = ("CAP", "APPROVE", "VERIFY", "RETRY")
+
+
 def attempt_cost(row) -> float | None:
-    """USD for one attempt row, or None when the price is unknown."""
+    """USD for one attempt row, or None when the price is unknown.
+
+    A control row is not spend. A cap warn row carries the total
+    already spent as a note, and a cap set, approval, Verify, or
+    retry row is a decision being saved, not a request. Their
+    recorded or looked-up price must not count as new spend.
+    """
     if row["outcome"] in ("blocked", "rate_limited", "paused",
-                            "redirected", "stopped", "verified"):
+                            "redirected", "stopped", "verified", "warned"):
+        return 0.0
+    method = row["method"] if "method" in row.keys() else None
+    if method in _CONTROL_METHODS:
         return 0.0
     if row["cost_dollars"]:
         return row["cost_dollars"]
@@ -586,7 +602,7 @@ def stats() -> dict:
             """
         ).fetchone()
         cost_rows = conn.execute(
-            "SELECT trace_id, dest_host, outcome, status, cost_dollars FROM attempts"
+            "SELECT trace_id, dest_host, outcome, status, cost_dollars, method FROM attempts"
         ).fetchall()
         summary = summarize_costs(cost_rows)
         unknown_runs = len({

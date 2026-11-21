@@ -32,7 +32,7 @@ def main():
     # When a destination has no price, the total is unknown, never
     # guessed, and the line names the destination.
     cost_rows = conn.execute(
-        "SELECT trace_id, dest_host, outcome, status, cost_dollars "
+        "SELECT trace_id, dest_host, outcome, status, cost_dollars, method "
         "FROM attempts"
     ).fetchall()
     summary = api_module.summarize_costs(cost_rows)
