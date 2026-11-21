@@ -1,0 +1,7 @@
+# Ruff replaces flake8. The gate stays tight: hard errors only, the
+# same set the CI flake8 run enforced (E9 syntax errors, F63, F7, F82).
+# Line length 127 matches the old flake8 warnings pass.
+line-length = 127
+
+[lint]
+select = ["E9", "F63", "F7", "F82"]
