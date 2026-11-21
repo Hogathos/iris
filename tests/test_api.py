@@ -93,6 +93,7 @@ class ApiShapeTest(unittest.TestCase):
             "stopped": 0,
             "verified": 0,
             "warned": 0,
+            "other": 0,
             "successes": 2,
             "avg_latency_seconds": 1.0,
             "total_cost": 0.0,
