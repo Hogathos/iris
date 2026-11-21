@@ -34,6 +34,7 @@ TRANSITIONS = {
     ("PAUSED", "resume"): "FLOWING",
     ("PAUSED", "red_button"): "STOPPED",
     ("PAUSED", "cap_block"): "BLOCKED",
+    ("REDIRECTED", "pause"): "PAUSED",
     ("REDIRECTED", "verify_ok"): "VERIFY_OK",
     ("REDIRECTED", "resume"): "FLOWING",
     ("REDIRECTED", "red_button"): "STOPPED",
