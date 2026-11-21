@@ -530,3 +530,24 @@ def last_attempt(conn, trace_id: str):
         return dict(row) if row is not None else None
     finally:
         conn.row_factory = prev_factory
+
+
+def has_trace(conn, trace_id: str) -> bool:
+    """True when the journal holds a row for this trace that counts
+    as a trace of something real.
+
+    A row counts when its outcome is not verified, or when it is a
+    Correct Verify verdict (outcome verified, status success): the
+    read happened, so it is a tool log. Verify call rows and
+    Unverified verdict rows carry outcome verified with status
+    unknown. They are Verify talking about itself, not a trace. A
+    Run whose only rows are those has no trace behind it. Used by
+    the no-trace check, which must not count a prior Verify as a
+    trace, and must not call a Correct Verify no trace either.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM attempts WHERE trace_id = ? "
+        "AND (outcome != 'verified' OR status = 'success') LIMIT 1",
+        (trace_id,),
+    ).fetchone()
+    return row is not None
