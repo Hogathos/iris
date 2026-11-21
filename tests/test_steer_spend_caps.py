@@ -225,7 +225,9 @@ class SteerSpendCapTest(unittest.TestCase):
         self.assertTrue(set_rows, "cap set must be journaled")
 
         # Step 2: recorded cost reaches $0.80. Warn row, outcome warned,
-        # cost $0.80, run continues, next call flows.
+        # cost $0.00: the row carries the $0.80 already spent as a note,
+        # and a control row is not spend, so it adds nothing to the
+        # total. Run continues, next call flows.
         sockA, statusA = self.open_tunnel(self.destA, traceA)
         self.assertEqual(statusA, 200)
         sockB, statusB = self.open_tunnel(self.destB, traceB)
@@ -242,7 +244,7 @@ class SteerSpendCapTest(unittest.TestCase):
             ]
             self.assertTrue(warn_rows, "80% must journal a warn row")
             self.assertEqual(warn_rows[-1]["reason"], "cap warn 80%")
-            self.assertEqual(api_module.attempt_cost(warn_rows[-1]), 0.80)
+            self.assertEqual(api_module.attempt_cost(warn_rows[-1]), 0.0)
             self.assertEqual(
                 self.echo_roundtrip(sockB, b"run-still-on-B"),
                 b"run-still-on-B",
@@ -319,15 +321,18 @@ class SteerSpendCapTest(unittest.TestCase):
             self.assertTrue(allowed, "retry after unblock must be allowed")
 
             # Step 6: cost rules, never guessed. Blocked, rate_limited,
-            # paused, redirected, stopped, verified always $0.00, nonzero
-            # recorded cost wins, loopback $0.00, else Unverified. Pause
-            # and blocked rows here cost $0.00. Unverified costs never
-            # count: an unpriced row contributes nothing, and nothing is
-            # guessed in its place.
+            # paused, redirected, stopped, verified, warned always
+            # $0.00, nonzero recorded cost wins, loopback $0.00, else
+            # Unverified. Pause and blocked rows here cost $0.00. A
+            # warn row carries the spent total as a note, and a control
+            # row is not spend, so it costs $0.00 too. Unverified costs
+            # never count: an unpriced row contributes nothing, and
+            # nothing is guessed in its place.
             for row in self.rows_all():
                 cost = api_module.attempt_cost(row)
                 if row["outcome"] in ("blocked", "rate_limited", "paused",
-                                      "redirected", "stopped", "verified"):
+                                      "redirected", "stopped", "verified",
+                                      "warned"):
                     self.assertEqual(cost, 0.0)
                 elif row["cost_dollars"]:
                     self.assertEqual(cost, row["cost_dollars"])

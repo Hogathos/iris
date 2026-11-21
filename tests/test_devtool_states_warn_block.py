@@ -285,7 +285,9 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
                 states_module.run_state(self.rows_for(traceA)), "FLOWING")
 
             # Step 6: accounting reconciles across every outcome,
-            # including warned. Warned rows keep what was spent.
+            # including warned. Warned rows keep what was spent in
+            # the journal, and a control row is not spend, so the
+            # row costs $0.00.
             conn = sqlite3.connect(self.db_path)
             try:
                 counts = db_module.fetch_outcome_counts(conn)
@@ -301,7 +303,8 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
                 len(all_rows))
             for row in all_rows:
                 if row["outcome"] == "warned":
-                    self.assertEqual(api_module.attempt_cost(row), 0.80)
+                    self.assertEqual(row["cost_dollars"], 0.80)
+                    self.assertEqual(api_module.attempt_cost(row), 0.0)
                 if row["outcome"] == "blocked":
                     self.assertEqual(api_module.attempt_cost(row), 0.0)
         finally:
