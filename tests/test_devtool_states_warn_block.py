@@ -28,6 +28,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -287,20 +288,26 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
             # Step 6: accounting reconciles across every outcome,
             # including warned. Warned rows keep what was spent in
             # the journal, and a control row is not spend, so the
-            # row costs $0.00.
-            conn = sqlite3.connect(self.db_path)
-            try:
-                counts = db_module.fetch_outcome_counts(conn)
-            finally:
-                conn.close()
-            all_rows = self.rows_all()
-            self.assertEqual(
-                counts["allowed"] + counts["blocked"]
-                + counts["rate_limited"] + counts["paused"]
-                + counts["redirected"] + counts["stopped"]
-                + counts["verified"] + counts["warned"]
-                + counts["other"],
-                len(all_rows))
+            # row costs $0.00. A tunnel close row can land between
+            # the counts read and the rows read, so read both until
+            # they agree, then compare. The journal settles once the
+            # in-flight close lands, so a few tries is enough.
+            for _ in range(5):
+                conn = sqlite3.connect(self.db_path)
+                try:
+                    counts = db_module.fetch_outcome_counts(conn)
+                finally:
+                    conn.close()
+                all_rows = self.rows_all()
+                total = (counts["allowed"] + counts["blocked"]
+                         + counts["rate_limited"] + counts["paused"]
+                         + counts["redirected"] + counts["stopped"]
+                         + counts["verified"] + counts["warned"]
+                         + counts["other"])
+                if total == len(all_rows):
+                    break
+                time.sleep(0.05)
+            self.assertEqual(total, len(all_rows))
             for row in all_rows:
                 if row["outcome"] == "warned":
                     self.assertEqual(row["cost_dollars"], 0.80)
