@@ -230,7 +230,13 @@ class SteerPauseOneRunTest(unittest.TestCase):
                 if r["outcome"] == "paused"
             ]
             self.assertTrue(pause_rows, "no journal row with outcome=paused for Run 1")
-            pause_row = pause_rows[-1]
+            # The FIRST paused row is the control row pause_run journals
+            # before it cuts. The cut tunnel's own close row also reads
+            # paused, with its own reason ("tunnel cut by pause"), and
+            # lands on the handler's thread, so it can arrive before or
+            # after this read. Taking the last row would make this test
+            # depend on that timing.
+            pause_row = pause_rows[0]
             self.assertEqual(pause_row["trace_id"], trace1)
             self.assertIn(self.dest1, pause_row["dest_host"])
             self.assertIn(pause_row["reason"], ("human pause", "Steer pause"))

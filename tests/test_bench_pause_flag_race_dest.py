@@ -12,6 +12,13 @@ A test that demands a name on every row cannot pass that design, so this
 version pins the design. It must still FAIL without the fix: with no
 second row the journal holds one empty row, and the assertion fails.
 
+Amended again, for the usage-accounting fix (fix A). A tunnel cut by
+Pause now journals its own close row as a paused row, on the handler's
+thread, after pause_run returns. So the swept tunnel adds a third paused
+row, and this test waits for it with a deadline instead of reading the
+journal at once. Before fix A that close row read allowed, and an
+immediate read was safe. Now an immediate read is a race.
+
 Problem in one sentence: pause_run reads the destination in its first
 lock section, before the late tunnel exists, and the second sweep finds
 that tunnel only after the pause row is written, so the first pause row
@@ -43,13 +50,15 @@ then releases pause_run and waits for it to return. The pause row is
 written before pause_run returns, so the test reads the journal at that
 point and there is nothing to poll.
 
-What must be true: the paused rows for the Run are exactly two, in this
-order, and both have close_reason "paused":
+What must be true: the paused rows for the Run are exactly three, in
+this order, and all have close_reason "paused":
   1. dest_host "" (written before the tunnel was known, expected empty)
-  2. dest_host "127.0.0.1:<port>" (the swept tunnel, in the same form
-     Part A uses for an open tunnel)
+  2. dest_host "127.0.0.1:<port>" (the sweep row for the swept tunnel,
+     in the same form Part A uses for an open tunnel)
+  3. dest_host "127.0.0.1:<port>" (the swept tunnel's own close row,
+     journaled after the cut, so it comes last)
 A plain Pause with no late tunnel writes one row. Other tests cover that.
-This test covers the race only.
+This test covers the race only. It does not pin the reason strings.
 
 This test needs the tunnel to be live in the gap. It asserts that the
 proxy answered 200 before the release. If a later change makes the proxy
@@ -69,6 +78,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -209,21 +219,28 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
                 "harness: the tunnel must be live in the gap. If the proxy "
                 "now refuses it there, no tunnel is cut and test 1d no "
                 "longer applies: review this test")
-            # pause_run has returned. Both of its rows are written. Read
-            # the journal now. The tunnel's own close row has outcome
-            # allowed, so it is not a paused row and cannot change this
-            # list, and nothing here needs a poll.
-            pause_rows = [r for r in self.rows_for(trace)
-                          if r["outcome"] == "paused"]
+            # pause_run has returned. Its two rows are written. The cut
+            # tunnel's own close row lands on the handler's thread, so
+            # wait for the third paused row with a deadline, then fail
+            # loudly if it never comes.
+            deadline = time.monotonic() + STEP_TIMEOUT
+            while True:
+                pause_rows = [r for r in self.rows_for(trace)
+                              if r["outcome"] == "paused"]
+                if len(pause_rows) >= 3 or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.02)
             self.assertEqual(
-                [r["dest_host"] for r in pause_rows], ["", self.dest],
+                [r["dest_host"] for r in pause_rows],
+                ["", self.dest, self.dest],
                 "Pause cut a tunnel that registered between the pop and "
                 "the flag. The paused rows must be the first row, empty, "
-                "then one row that names the destination of that tunnel")
+                "then the sweep row and the cut tunnel's close row, both "
+                "naming the destination of that tunnel")
             self.assertEqual(
                 [r["close_reason"] for r in pause_rows],
-                ["paused", "paused"],
-                "both paused rows must have close reason paused")
+                ["paused", "paused", "paused"],
+                "all three paused rows must have close reason paused")
         finally:
             if tunnel_sock is not None:
                 tunnel_sock.close()
