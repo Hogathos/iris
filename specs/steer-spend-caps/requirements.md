@@ -69,7 +69,21 @@ Claude). Anything in the Tier 2 prompt's out-of-scope list.
 - 2026-11-16, warn rows carry the cumulative total. Choice: the warn
   row's cost is what was spent, not $0.00. Rejected: a $0.00 warn row,
   because then the warning would not say what triggered it. Why: a
-  warning that hides the number is not a warning.
+  warning that hides the number is not a warning. Superseded
+  2026-11-21 for the cost read: the row still carries the total, and
+  the cost read is $0.00 (see below).
+- 2026-11-21, a control row is not spend. Choice: the warn row still
+  carries the cumulative total in the journal, so the warning says
+  what triggered it, but the cost read is $0.00. Rejected: counting
+  the carried total as spend, because the readers then counted $0.80
+  twice, once in the allowed rows and once in the warn row, and read
+  $2.20 for $1.20 actually spent. Why: a control row is not a
+  request, so it must not add to the total.
+- 2026-11-21, the warn threshold is rounded to cents. Choice:
+  compare the recorded total to round(0.8 times the cap, 2).
+  Rejected: the raw float product, because 0.8 times $0.05 is a hair
+  above $0.04 in float, so a 5-cent cap never warns. Why: money is
+  counted in cents, and the threshold must be reachable.
 - 2026-11-16, the cap itself is journaled as a plain row (outcome
   empty, reason "cap set $X.XX"). Choice: audit the human action like
   any other control. Rejected: silent in-memory caps, because an

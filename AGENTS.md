@@ -104,10 +104,14 @@ Do not use these words in GUI text, docs, or user-facing strings: billable vendo
 
 ## Cost rules
 
-- Blocked, rate-limited, paused, redirected, stopped, and verified runs always cost $0.00.
-- A nonzero recorded cost always wins.
+- Blocked, rate-limited, paused, redirected, stopped, verified, and
+  warned runs always cost $0.00.
+- A nonzero recorded cost always wins for a real attempt row. A
+  control row carries the total it notes, and costs $0.00.
 - Loopback is $0.00.
 - Everything else stays Unverified, never guessed.
+- The warn threshold is rounded to cents. Money is counted in cents,
+  and an unrounded 80% threshold can be unreachable in float.
 - Automate price data where coherent: auto-detect model and destination, auto-fetch published vendor prices into a local cached price file, update on startup or periodically. Offline fallback is Unverified, never guessed. No manual price tables.
 
 ## User protection

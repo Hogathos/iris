@@ -1377,7 +1377,11 @@ def make_handler(state: ProxyState):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                if total >= 0.8 * cap["cap"]:
+                # Money is counted in cents, so the 80% threshold is
+                # rounded to cents: 0.8 times 5 cents is a hair above
+                # 4 cents in float, and an unrounded threshold is
+                # unreachable before the cap blocks.
+                if total >= round(0.8 * cap["cap"], 2):
                     with state._lock:
                         fresh = endpoint not in state._cap_warned
                         if fresh:
@@ -1838,7 +1842,11 @@ def make_handler(state: ProxyState):
                         outcome="blocked")
                     state._cap_block(dest_label)
                     return
-                if total >= 0.8 * cap["cap"]:
+                # Money is counted in cents, so the 80% threshold is
+                # rounded to cents: 0.8 times 5 cents is a hair above
+                # 4 cents in float, and an unrounded threshold is
+                # unreachable before the cap blocks.
+                if total >= round(0.8 * cap["cap"], 2):
                     with state._lock:
                         fresh = dest_label not in state._cap_warned
                         if fresh:
