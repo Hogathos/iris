@@ -64,6 +64,8 @@ def _event_for(row) -> str | None:
     moves nothing. Control rows are the events; traffic rows are not."""
     outcome = row["outcome"]
     reason = row["reason"] or ""
+    if reason.startswith("tunnel cut by"):  # a cut tunnel's close row
+        return None
     if outcome == "paused" and "cap block" in reason:
         return "cap_block"
     if outcome == "paused":

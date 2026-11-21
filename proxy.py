@@ -71,6 +71,7 @@ import sys
 import threading
 import time
 import uuid
+import weakref
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import overload
 from urllib.parse import urlparse
@@ -277,6 +278,11 @@ class ProxyState:
         self._paused: dict[str, dict] = db_module.load_paused(self.conn)
         self._verified: dict[str, str] = {}
         self._live: dict[str, dict[socket.socket, str]] = {}
+        # Per-tunnel cut fact: client socket -> "pause" or "redirect".
+        # Set where the cut happens, read on the close path, so a cut
+        # tunnel journals as cut instead of allowed. Weak keys so an
+        # entry cannot outlive its socket.
+        self._cut: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
         # Tunnels still connecting upstream, per Run: client socket ->
         # destination label. Not live yet, so a Pause cannot cut them,
         # but it can name where the Run is going.
@@ -421,6 +427,20 @@ class ProxyState:
                 return ("stopped", self._stopped["reason"])
             return None
 
+    def _mark_cut(self, sock, kind: str) -> None:
+        """Record that this client socket was cut by a steer action.
+
+        Per-tunnel fact, set where the cut happens, so the close path
+        can journal this tunnel as cut instead of allowed.
+        """
+        with self._lock:
+            self._cut[sock] = kind
+
+    def _take_cut(self, sock):
+        """Pop and return the cut kind for this socket, or None."""
+        with self._lock:
+            return self._cut.pop(sock, None)
+
     def redirect_run(self, trace_id: str, new_dest: str,
                      reason: str = "human redirect") -> bool:
         """Move one Run to a new allowlisted destination. Journal first.
@@ -470,6 +490,7 @@ class ProxyState:
             self._verified.pop(trace_id, None)
             live = self._live.pop(trace_id, {})
         for sock in live:
+            self._mark_cut(sock, "redirect")
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -788,6 +809,7 @@ class ProxyState:
                 self._control_row(trace_id, "CONNECT", late_dest, late_dest,
                                   "unknown", "paused", reason, "paused")
         for sock in live:
+            self._mark_cut(sock, "pause")
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -1455,7 +1477,19 @@ def make_handler(state: ProxyState):
                 state._unregister_live(trace_id, self.connection)
                 upstream.close()
             cut = state.steer_cut(trace_id)
-            if cut is not None and status != "success":
+            tunnel_cut = state._take_cut(self.connection)
+            if tunnel_cut is not None:
+                # This socket was cut by a steer action: the close row
+                # says what happened, outcome paused or redirected,
+                # status unknown, bytes kept. It is not allowed. The
+                # kind is the verb ("pause"); the outcome is the past
+                # tense ("paused"), same as the control rows.
+                cut_outcome = {"pause": "paused",
+                               "redirect": "redirected"}[tunnel_cut]
+                log_connect("unknown", cut_outcome,
+                            f"tunnel cut by {tunnel_cut}", None,
+                            bytes_in, bytes_out, cut_outcome, connect_ms)
+            elif cut is not None and status != "success":
                 # Cut mid-flight by Pause or Redirect: the tunnel did not
                 # fail, it was steered, so the outcome is unknown, never
                 # failure. The reason stays the steer reason, for one

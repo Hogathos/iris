@@ -212,7 +212,12 @@ class DevtoolPauseButtonTest(unittest.TestCase):
                 if r["outcome"] == "paused"
             ]
             self.assertTrue(pause_rows, "button press must be journaled")
-            pause_row = pause_rows[-1]
+            # The FIRST paused row is the control row the button press
+            # journals before it cuts. A tunnel the press cut adds its own
+            # close row (reason "tunnel cut by pause"), and the refused
+            # retry above adds one too, so the last paused row can be
+            # either, depending on thread timing. Read the first.
+            pause_row = pause_rows[0]
             self.assertEqual(pause_row["reason"], "human pause")
             self.assertEqual(
                 pause_row["status"], "unknown",
