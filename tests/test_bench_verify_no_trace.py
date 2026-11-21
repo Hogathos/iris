@@ -29,6 +29,11 @@ journal holds traffic for the Run or nothing at all. The existing
 test test_verify_read_back_local_file_sqlite pins the verdict
 Unverified for a remote claim, but never pins the why. This file
 pins the why, and the line between no trace and no local proof.
+A second Verify on the same traceless Run must say No trace again:
+the first Verify's own rows are not a trace. A Correct Verify is
+different: the read happened, so it counts as a trace, and a later
+remote claim on that Run says "remote with no local proof", not
+"No trace".
 
 The no-trace check must look at rows that existed BEFORE the
 verify call: verify_read_back journals its own call row under the
@@ -222,6 +227,53 @@ class VerifyNoTraceTest(unittest.TestCase):
             row_text = " ".join(str(row[k]) for k in row.keys())
             self.assertNotIn("Authorization", row_text)
             self.assertNotIn("Bearer", row_text)
+
+    def test_second_verify_still_no_trace(self):
+        """A second Verify on the same traceless Run still says No trace."""
+        trace = "verify-no-trace-second-run"
+        self.assertEqual(self.rows_for(trace), [])
+        verdict1, card1 = self.proxy.state.verify_read_back(
+            trace, self.remote_claim("verify-no-trace-2a"),
+            done_clause=DONE_FILE)
+        self.assertEqual(verdict1, "Unverified")
+        self.assertEqual(card1["why"], "No trace")
+        # The first Verify's own rows are not a trace: its call row
+        # and verdict row both carry outcome verified. A second
+        # Verify must still say No trace, not "remote with no local
+        # proof". Fails today: the second why is the remote line.
+        verdict2, card2 = self.proxy.state.verify_read_back(
+            trace, self.remote_claim("verify-no-trace-2b"),
+            done_clause=DONE_FILE)
+        self.assertEqual(verdict2, "Unverified")
+        self.check_card(card2, "Unverified")
+        self.assertEqual(card2["why"], "No trace")
+        self.assertEqual(card2["next"], "human investigates")
+
+    def test_correct_verify_is_a_trace(self):
+        """A Correct Verify counts as a trace for a later remote claim."""
+        trace = "verify-no-trace-correct-run"
+        proof_path = os.path.join(self.tmp.name, "trace-proof.txt")
+        with open(proof_path, "w") as proof:
+            proof.write("row exists after close/fsync")
+            proof.flush()
+            os.fsync(proof.fileno())
+        verdict1, _ = self.proxy.state.verify_read_back(
+            trace,
+            {"kind": "local-file", "path": proof_path,
+             "expected_text": "row exists after close/fsync",
+             "idempotency_key": "verify-trace-correct-1"},
+            done_clause=DONE_FILE)
+        self.assertEqual(verdict1, "Correct")
+        # The read happened, so the Run has a trace. A later remote
+        # claim has no trace of ITS effect, so the why is the remote
+        # line, not No trace. Guards the refined check: a Correct
+        # verdict row (outcome verified, status success) counts.
+        verdict2, card2 = self.proxy.state.verify_read_back(
+            trace, self.remote_claim("verify-no-trace-2c"),
+            done_clause=DONE_FILE)
+        self.assertEqual(verdict2, "Unverified")
+        self.check_card(card2, "Unverified")
+        self.assertEqual(card2["why"], "remote with no local proof")
 
     def test_remote_claim_with_traffic(self):
         """Traffic with no local proof stays 'remote with no local proof'."""

@@ -1030,24 +1030,25 @@ class ProxyState:
         anything is read; the verdict row follows; a stop follows an
         Incorrect verdict. Verdict and retry permission stay separate:
         nothing here stamps a Verify or allows a retry. No trace: a
-        remote claim on a Run with no prior journal row is Unverified
-        with reason No trace. The check runs before the call row is
-        journaled, because the call row itself would count as a row.
+        remote claim on a Run with no prior journal row that counts
+        as a trace is Unverified with reason No trace. The check runs
+        before the call row is journaled, because the call row itself
+        would count as a row.
         """
         now = datetime.datetime.now(
             datetime.timezone.utc).isoformat(timespec="seconds")
         key = (claim.get("idempotency_key", "-")
                if isinstance(claim, dict) else "-")
-        # No trace: the journal holds no row for this Run yet, so there
-        # is no proxy row, no bytes, no effect to read. Local kinds keep
-        # their own read: a file or a database is the trace. A missing
-        # done clause still wins over no trace, same order as _read_back.
-        # A second Verify on the same traceless Run sees the first
-        # Verify's rows and reads "remote with no local proof" instead.
-        # Both are Unverified.
-        prior = db_module.last_attempt(self.conn, trace_id)
+        # No trace: the journal holds no row for this Run that counts
+        # as a trace, so there is no proxy row, no bytes, no effect to
+        # read. Local kinds keep their own read: a file or a database
+        # is the trace. A missing done clause still wins over no trace,
+        # same order as _read_back. A second Verify on the same
+        # traceless Run sees the first Verify's rows, but those rows
+        # are Verify talking about itself, so they do not count. A
+        # Correct Verify does count: the read happened.
         no_trace = (
-            prior is None
+            not db_module.has_trace(self.conn, trace_id)
             and isinstance(claim, dict)
             and claim.get("kind") not in ("local-file", "sqlite")
             and isinstance(done_clause, dict)
