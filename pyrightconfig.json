@@ -1,0 +1,12 @@
+{
+  // Pyright, first trial. Basic mode: the codebase is untyped, so strict
+  // would drown in noise. Keep it only if it finds real bugs.
+  // pythonVersion 3.10 matches CI, the lowest supported version.
+  // Tests are excluded: they attach dynamic attributes (.count and the
+  // like) to stdlib servers across 14 files, and they are verified by
+  // running them, not by type-checking them. locustfile.py is excluded
+  // too: locust is an optional load-test dep and is not installed.
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.10",
+  "exclude": ["tests", "locustfile.py"]
+}
