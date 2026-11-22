@@ -21,3 +21,19 @@ def pause_run(state, trace_id: str, reason: str = "human pause") -> bool:
     (or already was), False when the human gave no usable reason.
     """
     return state.pause_run(trace_id, reason=reason)
+
+
+def verify_run(state, trace_id: str, read_back: str = "") -> bool:
+    """Verify one Run when the human presses the panel Verify button.
+
+    Human only, local only. The typed words become the human-approved
+    done clause: approved by human, read back is what the human typed.
+    Delegates to the proxy's own Verify gate, so an empty read-back or
+    a Run that is neither paused nor redirected is refused with no row.
+    Returns True when the gate is stamped, False when it refuses.
+    """
+    words = (read_back or "").strip()
+    if not words:
+        return False
+    done_clause = {"approved_by": "human", "read_back": words}
+    return state.verify_run(trace_id, done_clause)
