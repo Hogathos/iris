@@ -81,11 +81,15 @@ class PanelPolishRefusalTest(unittest.TestCase):
             "127.0.0.1", 0, self.db_path)
         self.old_db_path = api_module.DB_PATH
         api_module.DB_PATH = self.db_path
+        # addCleanup runs LIFO: the temp dir must go last, after
+        # the server stops and the DB connection closes. Windows
+        # refuses to delete a folder holding an open file; Linux
+        # lets it go, which is why this only failed on Windows.
         self.addCleanup(setattr, api_module, "DB_PATH",
                         self.old_db_path)
+        self.addCleanup(self.tmp.cleanup)
         self.addCleanup(self.server.state.conn.close)
         self.addCleanup(self.server.server_close)
-        self.addCleanup(self.tmp.cleanup)
 
     def _request(self, state):
         """A fake panel request that carries the live proxy state."""
