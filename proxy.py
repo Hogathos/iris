@@ -997,7 +997,8 @@ class ProxyState:
         if last is None:
             return False
         self._control_row(trace_id, "VERIFY", last["dest_host"],
-                          last["endpoint"], "unknown", "", "verify ok",
+                          last["endpoint"], "unknown", "", 
+                          f"verify ok: {done_clause['read_back']}",
                           "paused")
         with self._lock:
             self._verified[trace_id] = datetime.datetime.now(

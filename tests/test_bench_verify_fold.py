@@ -156,12 +156,19 @@ class VerifyFoldTest(unittest.TestCase):
         pause = journal_row("paused", "human pause")
         redirect = journal_row("redirected", "human redirect")
         verify = journal_row("", "verify ok")
+        verify_words = journal_row(
+            "", "verify ok: named read-back: file row exists after "
+            "close/fsync")
         resume = journal_row("", "retry allowed after verify")
         held_attempt = journal_row("paused", "human pause")
         self.assertEqual(
             states_module.run_state([pause, verify]), "VERIFY_OK",
             "after Verify and before retry the Run is checked clean "
             "and held, so the panel must say VERIFY_OK, not FLOWING")
+        self.assertEqual(
+            states_module.run_state([pause, verify_words]), "VERIFY_OK",
+            "a verify ok row carrying the human's words must fold the "
+            "same way: the words are the audit trail, not a new event")
         self.assertEqual(
             states_module.run_state([pause, verify, resume]), "FLOWING",
             "after the retry the Run flows")

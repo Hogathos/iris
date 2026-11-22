@@ -30,7 +30,10 @@ offer what it cannot check.
 1. Verify form on the Run page for a paused or redirected Run: one
    field for the read-back, one Verify button.
 2. Pressing Verify with words stamps the gate: a retry after it is
-   allowed and journaled. The journal carries a verify ok row.
+   allowed and journaled. The journal carries a verify ok row, and
+   the row carries the words the human typed, after "verify ok: ".
+   The words are the audit trail. A run cannot retry until a human
+   checks it again.
 3. Pressing Verify on a flowing Run is refused with 400, and the
    page says refused. Nothing is stamped.
 4. Pressing Verify with an empty read-back is refused with 400, and
@@ -42,10 +45,14 @@ offer what it cannot check.
 ## Non-goals
 
 Verify read-back of a claim: the panel holds no claim, so the button
-stamps the gate only and reads nothing back. Red-button-approved
-Runs: the panel cannot see the approval, so the button stays off for
-stopped Runs. Verify button on the run list: the Run page is its
-home. Swarm map. App mode.
+stamps the gate only and reads nothing back. Stopped Runs: the button
+stays off for them, and that is correct, not a gap. A stopped Run can
+never be approved or verified again: approve refuses stopped traces,
+the Verify gate refuses them, and a retry refuses them. Old Runs stay
+stopped. A Run that arrives after the press can be approved and then
+verified, but approval has no panel route by design, so that flow
+cannot start from the panel. Verify button on the run list: the Run
+page is its home. Swarm map. App mode.
 
 ## Decisions
 
@@ -61,5 +68,12 @@ home. Swarm map. App mode.
 - 2026-11-22, the button shows for paused and redirected Runs only.
   Choice: the Run page reads the run state and shows the form for
   PAUSED and REDIRECTED. Rejected: showing it for stopped Runs,
-  because the panel cannot tell a fresh approval from the rows. Why:
-  do not offer what cannot be checked.
+  because a stopped Run can never be approved or verified again, so
+  there is nothing to show. Why: do not offer what cannot be checked.
+- 2026-11-22, the verify ok row carries the human's words. Choice:
+  the reason reads "verify ok: " plus the typed words, and the panel
+  state fold reads the reason by prefix. Rejected: a new column for
+  the words, because one field is not worth a schema change and a
+  migration. Rejected: a second journal row for the words, because a
+  second row would break outcome accounting. Why: the reason already
+  carries human words, and the row is the audit trail.

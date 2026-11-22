@@ -83,7 +83,7 @@ def _event_for(row) -> str | None:
     # until a human retry lets it go, so the verify-ok row maps to
     # verify_ok (VERIFY_OK), never to resume. Only the retry row, or a
     # cap lift, resumes the Run.
-    if outcome == "" and reason == "verify ok":
+    if outcome == "" and reason.startswith("verify ok"):
         return "verify_ok"
     if outcome == "" and reason in ("retry allowed after verify",
                                     "cap lifted"):
