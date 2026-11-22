@@ -369,12 +369,19 @@ class SteerSpendCapTest(unittest.TestCase):
 
             # Accounting reconciles across every outcome, including the
             # new warned outcome: total always equals the row count.
+            # Both reads come from one connection inside one read
+            # transaction, so they see the same snapshot. The proxy
+            # journals a tunnel row when it closes, on its own
+            # thread, so two separate reads can disagree by one row.
             conn = sqlite3.connect(self.db_path)
             try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN")
                 counts = db_module.fetch_outcome_counts(conn)
+                all_rows = conn.execute(
+                    "SELECT * FROM attempts ORDER BY id").fetchall()
             finally:
                 conn.close()
-            all_rows = self.rows_all()
             self.assertEqual(
                 counts["allowed"] + counts["blocked"]
                 + counts["rate_limited"] + counts["paused"]
