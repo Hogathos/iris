@@ -66,6 +66,8 @@ jobs:
       run: |
         python -m unittest discover -s tests -v
     - name: Test with pytest
+      # always runs so both suites report, even if unittest failed
+      if: always()
       env:
         PYTHONPATH: .
       run: |
