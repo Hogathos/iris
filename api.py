@@ -499,8 +499,8 @@ def dashboard() -> str:
 @app.get("/traces")
 def list_traces(limit: int = 20) -> dict:
     """Newest traces first; one summary row per trace_id."""
-    if not 1 <= limit <= 100:
-        raise HTTPException(status_code=422, detail="limit must be 1..100")
+    if not 1 <= limit <= 1000:
+        raise HTTPException(status_code=422, detail="limit must be 1..1000")
     conn = _connect()
     if conn is None:
         return {"traces": []}

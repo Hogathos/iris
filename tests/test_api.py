@@ -72,7 +72,7 @@ class ApiShapeTest(unittest.TestCase):
     def test_traces_limit(self):
         self.assertEqual(len(api.list_traces(limit=1)["traces"]), 1)
         with self.assertRaises(HTTPException) as ctx:
-            api.list_traces(limit=200)
+            api.list_traces(limit=2000)
         self.assertEqual(ctx.exception.status_code, 422)
 
     def test_trace_detail_and_404(self):
