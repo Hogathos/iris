@@ -244,12 +244,19 @@ class SteerRedButtonTest(unittest.TestCase):
                 self.assertNotIn("Authorization", row_text)
                 self.assertNotIn("Bearer", row_text)
             # Every live tunnel is cut: no further bytes flow, for any Run.
+            # A cut tunnel ends two ways, by OS: the send or the read
+            # raises, or the read returns a clean end of file. macOS
+            # takes the second path. Both mean the tunnel is dead.
             for sock in (sock1, sock2):
-                with self.assertRaises((OSError, socket.timeout)):
-                    sock.settimeout(2)
+                sock.settimeout(2)
+                try:
                     sock.sendall(b"run-after-red-button")
-                    self.assertEqual(
-                        self.echo_roundtrip(sock, b"run-after-red-button"), b"")
+                    got = self.echo_roundtrip(sock, b"run-after-red-button")
+                except (OSError, socket.timeout):
+                    got = None
+                self.assertIn(
+                    got, (None, b""),
+                    "a cut tunnel must not echo bytes back")
 
             # Step 6: a new Run started after Red button, without a fresh
             # human approval and Verify, is refused and journaled. The

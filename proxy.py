@@ -441,6 +441,32 @@ class ProxyState:
         with self._lock:
             return self._cut.pop(sock, None)
 
+    def _cut_socket(self, sock, kind: str) -> None:
+        """Mark a socket cut, then shut it down and close it.
+
+        Mark the cut where it happens, the same as every steer
+        action: without the mark the close row falls through to
+        the steer_cut branch, which only fires when the relay did
+        not end cleanly, so the row reads allowed or paused
+        depending on timing. Marked, it always reads cut.
+        Shutdown alone does not wake a thread that waits in
+        select on Windows. The relay then sits until its 30
+        second idle timeout, and the tunnel close row lands too
+        late. Closing the socket wakes the relay on every OS, so
+        the close row lands at once. The handler still owns the
+        socket object and closes it again in its own finally.
+        Close is safe to call twice.
+        """
+        self._mark_cut(sock, kind)
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            sock.close()
+        except OSError:
+            pass
+
     def redirect_run(self, trace_id: str, new_dest: str,
                      reason: str = "human redirect") -> bool:
         """Move one Run to a new allowlisted destination. Journal first.
@@ -490,11 +516,7 @@ class ProxyState:
             self._verified.pop(trace_id, None)
             live = self._live.pop(trace_id, {})
         for sock in live:
-            self._mark_cut(sock, "redirect")
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            self._cut_socket(sock, "redirect")
         return True
 
     def cap_rule(self, dest_label: str):
@@ -633,16 +655,7 @@ class ProxyState:
             socks = [sock for tid in live
                      for sock in self._live.pop(tid, {}).keys()]
         for sock in socks:
-            # Mark the cut where it happens, the same as pause_run:
-            # without the mark the close row falls through to the
-            # steer_cut branch, which only fires when the relay did
-            # not end cleanly, so the row reads allowed or paused
-            # depending on timing. Marked, it always reads paused.
-            self._mark_cut(sock, "pause")
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            self._cut_socket(sock, "pause")
 
     def override_rule(self, dest_label: str):
         """Override rule for one destination, or None when there is none.
@@ -713,16 +726,7 @@ class ProxyState:
             live = [sock for tid in live_traces
                     for sock in self._live.pop(tid, {}).keys()]
         for sock in live:
-            # Mark the cut where it happens, the same as pause_run:
-            # without the mark the close row falls through to the
-            # steer_cut branch, which only fires when the relay did
-            # not end cleanly, so the row reads allowed or paused
-            # depending on timing. Marked, it always reads paused.
-            self._mark_cut(sock, "pause")
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            self._cut_socket(sock, "pause")
         return True
 
     def _control_row(self, trace_id: str, method: str, dest_host: str,
@@ -821,11 +825,7 @@ class ProxyState:
                 self._control_row(trace_id, "CONNECT", late_dest, late_dest,
                                   "unknown", "paused", reason, "paused")
         for sock in live:
-            self._mark_cut(sock, "pause")
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            self._cut_socket(sock, "pause")
         return True
 
     def red_button(self, reason: str = "human red button") -> bool:
@@ -881,14 +881,7 @@ class ProxyState:
             live = [sock for socks in self._live.values() for sock in socks]
             self._live.clear()
         for sock in live:
-            # Mark the cut first, then shut the socket down: the close
-            # path reads the mark, so the tunnel's close row says
-            # stopped, never allowed.
-            self._mark_cut(sock, "stop")
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            self._cut_socket(sock, "stop")
         return True
 
     def approve_run(self, trace_id: str, done_clause=None) -> bool:
@@ -1245,10 +1238,15 @@ def _relay(client: socket.socket, upstream: socket.socket,
     bytes_in = bytes_out = 0
     sockets = [client, upstream]
     while True:
-        readable, _, _ = select.select(sockets, [], [], timeout)
-        if not readable:
+        # The error set matters on Windows: a socket closed by a
+        # cut can show up there instead of in the readable set.
+        # Read it the same way. Its recv raises, so the relay ends
+        # as broken and the close row lands at once.
+        readable, _, errored = select.select(
+            sockets, [], sockets, timeout)
+        if not readable and not errored:
             raise _RelayTimeout(bytes_in, bytes_out)
-        for sock in readable:
+        for sock in readable + [s for s in errored if s not in readable]:
             try:
                 data = sock.recv(65536)
             except OSError:
