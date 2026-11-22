@@ -41,6 +41,19 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 BANNER = ("dev only, not the consumer app: every button here acts on "
           "the live proxy on this machine")
 
+_STYLE = (
+    "<style>"
+    "body { font-family: sans-serif; margin: 1.5em; line-height: 1.4; }"
+    "table { border-collapse: collapse; margin-top: 1em; }"
+    "th, td { border: 1px solid #999; padding: 0.3em 0.6em; "
+    "text-align: left; }"
+    "button { padding: 0.3em 0.9em; }"
+    "input { padding: 0.2em 0.4em; }"
+    "section { margin: 1.5em 0; }"
+    ".danger { border: 2px solid #8b0000; padding: 1em; "
+    "max-width: 40em; }"
+    "</style>")
+
 
 def _short(trace_id: str) -> str:
     """Human name for a Run: short, plain, no jargon."""
@@ -187,8 +200,32 @@ def index(request: Request, run: str = "", dest: str = "",
             f'value="{state.relay_timeout:g}"> '
             '<button type="submit">Set cutoff</button></form>')
     totals = api_module.stats()
+    controls_part = (
+        "<section><h2>Controls</h2>"
+        "<h3>Spend cap</h3>"
+        "<p>Set the most one network may spend. Iris warns at 80% "
+        "and blocks at 100%.</p>"
+        '<form method="post" action="/settings/spend-cap">'
+        'Destination: <input name="dest"> '
+        'Dollars: <input name="dollars"> '
+        "<button type=\"submit\">Set cap</button></form>"
+        "<h3>Block this network</h3>"
+        "<p>Stop every Run on one network until a human verifies "
+        "it.</p>"
+        '<form method="post" action="/settings/block-network">'
+        'Destination: <input name="dest"> '
+        "<button type=\"submit\">Block this network</button></form>"
+        "</section>")
+    stop_part = (
+        '<section class="danger"><h2>Emergency stop</h2>'
+        "<p>Stop every Run at once. Nothing restarts without a "
+        "fresh human word.</p>"
+        '<form method="get" action="/controls/emergency-stop">'
+        "<button type=\"submit\">Emergency stop</button></form>"
+        "</section>")
     return (
-        "<html><head><title>Iris devtool panel, dev only</title></head>"
+        "<html><head><title>Iris devtool panel, dev only</title>"
+        + _STYLE + "</head>"
         "<body>"
         f"<p><strong>{_esc(BANNER)}</strong></p>"
         "<h1>Runs, live</h1>"
@@ -203,7 +240,7 @@ def index(request: Request, run: str = "", dest: str = "",
         f'{" checked" if blocked else ""}> blocked only</label> '
         '<button type="submit">Filter</button>'
         "</form>"
-        + cutoff_part +
+        + cutoff_part + controls_part + stop_part +
         "<table>"
         "<tr><th>Run</th><th>Destination</th><th>Method</th><th>What</th>"
         "<th>Bytes</th><th>Seconds</th><th>Cost</th><th>Verdict</th>"
@@ -244,14 +281,23 @@ def run_detail(trace_id: str):
         "<p>Pressing Pause stops this run unless a human verifies "
         "everything is fine.</p>"
         if live else f"<p>{_esc(why)}</p>")
+    redirect_part = (
+        "<h2>Redirect this Run</h2>"
+        "<p>Send this Run to a different safe destination.</p>"
+        f'<form method="post" action="/runs/{_esc(trace_id)}/redirect">'
+        'New destination: <input name="new_dest"> '
+        "<button type=\"submit\">Redirect</button></form>"
+        if live else "")
     return (
-        "<html><head><title>Run detail, dev only</title></head><body>"
+        "<html><head><title>Run detail, dev only</title>"
+        + _STYLE + "</head><body>"
         f"<p><strong>{_esc(BANNER)}</strong></p>"
         f"<h1>{_esc(_short(trace_id))}</h1>"
         f"<p>Run state: {_esc(state)}. "
         f"Verdict: {_esc(verdict)}.</p>"
         f"<p>Next step: {_esc(states_module.next_step(state, verdict))}</p>"
         f"{pause_part}"
+        f"{redirect_part}"
         "<h2>Journal, oldest first</h2>"
         "<table><tr><th>When</th><th>Destination</th><th>Method</th>"
         "<th>What</th><th>Bytes</th><th>Money spent</th></tr>"
@@ -302,6 +348,124 @@ def relay_timeout_button(request: Request, seconds: str = Form("")):
         "seconds, a plain number.</p>"
         '<p><a href="/">Back to runs</a></p></body></html>',
         status_code=400)
+
+
+@app.post("/runs/{trace_id}/redirect")
+def redirect_button(trace_id: str, request: Request,
+                    new_dest: str = Form("")):
+    """The redirect form: calls the plain human-only setter, nothing else.
+
+    Dev only, loopback only. Same shape as the Pause button: the panel
+    app holds the live proxy state, and the route calls the setter on
+    it. A refused destination changes nothing and says so on its own
+    page.
+    """
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        return HTMLResponse(
+            "<html><body><p>Panel is watching only: start it beside "
+            "a live proxy to redirect.</p>"
+            '<p><a href="/">Back to runs</a></p></body></html>',
+            status_code=503)
+    if state.redirect_run(trace_id, new_dest):
+        return RedirectResponse(f"/runs/{trace_id}", status_code=303)
+    return HTMLResponse(
+        "<html><body><p>That redirect was refused. Use a destination "
+        "Iris already allows.</p>"
+        f'<p><a href="/runs/{trace_id}">Back to run</a></p></body></html>',
+        status_code=400)
+
+
+@app.post("/settings/spend-cap")
+def cap_button(request: Request, dest: str = Form(""),
+               dollars: str = Form("")):
+    """The cap form: calls the plain human-only setter, nothing else.
+
+    Dev only, loopback only. Same shape as the Pause button. A refused
+    value changes nothing and says so on its own page.
+    """
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        return HTMLResponse(
+            "<html><body><p>Panel is watching only: start it beside "
+            "a live proxy to set a cap.</p>"
+            '<p><a href="/">Back to runs</a></p></body></html>',
+            status_code=503)
+    if state.set_cap(dest, dollars):
+        return RedirectResponse("/", status_code=303)
+    return HTMLResponse(
+        "<html><body><p>That cap was refused. Use a destination Iris "
+        "already allows and a plain dollar number above zero.</p>"
+        '<p><a href="/">Back to runs</a></p></body></html>',
+        status_code=400)
+
+
+@app.post("/settings/block-network")
+def block_network_button(request: Request, dest: str = Form("")):
+    """The block form: calls the plain human-only setter, nothing else.
+
+    Dev only, loopback only. Same shape as the Pause button. A refused
+    destination changes nothing and says so on its own page.
+    """
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        return HTMLResponse(
+            "<html><body><p>Panel is watching only: start it beside "
+            "a live proxy to block a network.</p>"
+            '<p><a href="/">Back to runs</a></p></body></html>',
+            status_code=503)
+    if state.set_override(dest):
+        return RedirectResponse("/", status_code=303)
+    return HTMLResponse(
+        "<html><body><p>That block was refused. Use a destination "
+        "Iris already allows.</p>"
+        '<p><a href="/">Back to runs</a></p></body></html>',
+        status_code=400)
+
+
+@app.get("/controls/emergency-stop", response_class=HTMLResponse)
+def emergency_stop_confirm(request: Request):
+    """The stop confirm page: looking changes nothing.
+
+    Dev only, loopback only. GET only shows the page. The stop itself
+    happens on POST, so no link or refresh can stop everything by
+    accident.
+    """
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        return HTMLResponse(
+            "<html><body><p>Panel is watching only: start it beside "
+            "a live proxy to stop everything.</p>"
+            '<p><a href="/">Back to runs</a></p></body></html>',
+            status_code=503)
+    return HTMLResponse(
+        "<html><head><title>Stop everything, dev only</title>"
+        + _STYLE + "</head><body>"
+        "<h1>Stop everything?</h1>"
+        "<p>This stops every Run at once. Nothing restarts without "
+        "a fresh human word.</p>"
+        '<form method="post" action="/controls/emergency-stop">'
+        "<button type=\"submit\">Yes, stop everything</button></form>"
+        '<p><a href="/">No, back to runs</a></p>'
+        "</body></html>")
+
+
+@app.post("/controls/emergency-stop")
+def emergency_stop_execute(request: Request):
+    """The stop button: calls the plain human-only setter, nothing else.
+
+    Dev only, loopback only. Same shape as the Pause button, with one
+    difference: the human already confirmed on the GET page.
+    """
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        return HTMLResponse(
+            "<html><body><p>Panel is watching only: start it beside "
+            "a live proxy to stop everything.</p>"
+            '<p><a href="/">Back to runs</a></p></body></html>',
+            status_code=503)
+    state.red_button()
+    return RedirectResponse("/", status_code=303)
 
 
 def serve_dev(host: str = "127.0.0.1", panel_port: int = 8000,
