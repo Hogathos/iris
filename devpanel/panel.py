@@ -1,6 +1,6 @@
 """Devtool panel, dev only, not the consumer app.
 
-Wireshark-like live view of what Iris sees, plus one Pause button, for
+Wireshark-like live view of what Iris sees, plus the control buttons, for
 the human running Iris on this machine. Loopback only. Metadata only:
 no bodies, no keys, no real hostnames. Human-visible text uses plain
 words only: no billable vendor, no priced cost, no attempt_cost, no
@@ -110,17 +110,6 @@ def _rows_for(trace_id: str) -> list:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
             (trace_id,))]
-    finally:
-        conn.close()
-
-
-def _all_rows() -> list:
-    """Every journal row, oldest first. Read only."""
-    conn = sqlite3.connect(api_module.DB_PATH)
-    try:
-        conn.row_factory = sqlite3.Row
-        return [dict(r) for r in conn.execute(
-            "SELECT * FROM attempts ORDER BY id")]
     finally:
         conn.close()
 
@@ -311,7 +300,7 @@ def run_detail(trace_id: str):
 def pause_button(trace_id: str, request: Request):
     """The Pause button: calls the plain human-only function, nothing else.
 
-    Dev only, loopback only. This is the one control route in the whole
+    Dev only, loopback only. This is one of the control routes in the
     panel app, and the main API stays GET-only: no agent can reach it
     through the proxy, and nothing here is reachable off this machine.
     """
