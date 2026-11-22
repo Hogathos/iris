@@ -2,7 +2,7 @@
 
 How the proxy works: milestones, trace propagation, policy, and schema.
 For commands, see [running](running.md). Status: M4 + visualizer v2 +
-T1–T9 fixes, suite 60/60.
+T1–T9 fixes, suite 182 tests.
 
 ## Milestones
 
@@ -84,3 +84,4 @@ schema change.
 reports `usage`; `cost_dollars` stays 0.0 — never invented.
 Authorization headers, API keys, and request/response bodies are
 forwarded but never logged.
+
