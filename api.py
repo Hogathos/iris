@@ -391,6 +391,8 @@ function closeWords(v) {
   if (v === "verified") return "verified";
   if (v === "warned") return "warned";
   if (v === "capped") return "capped";
+  if (v === "timeout") return "silent cutoff set";
+  if (v.indexOf("closed after ") === 0) return v;
   if (v === "relay_timeout") return "tunnel went quiet past the timeout";
   if (v === "success") return "finished";
   return "unknown";

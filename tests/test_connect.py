@@ -167,7 +167,8 @@ class M2ConnectTest(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             # A silent tunnel blames no one: unknown, never failed.
             self.assertEqual(rows[0]["status"], "unknown")
-            self.assertEqual(rows[0]["close_reason"], "relay_timeout")
+            self.assertEqual(rows[0]["close_reason"],
+                             "closed after 0.3s silent")
             self.assertEqual((rows[0]["bytes_in"], rows[0]["bytes_out"]), (0, 0))
         finally:
             proxy.shutdown()
