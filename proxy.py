@@ -84,6 +84,11 @@ RATE_LIMIT = 100            # max forwarded requests per destination ...
 RATE_WINDOW_SECONDS = 10.0  # ... inside this sliding window
 RELAY_IDLE_TIMEOUT_SECONDS = 30.0  # tunnel silence before relay gives up
 
+
+def _timeout_words(seconds) -> str:
+    """Plain words for a tunnel the cutoff closed, with the seconds."""
+    return f"closed after {float(seconds):g}s silent"
+
 MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024  # bigger request bodies get a plain-words 413, never silent truncation
 MAX_REQUEST_LINE_BYTES = 8192  # longer request lines get a plain-words 400
 MAX_HEADER_BYTES = 65536  # more header bytes total get a plain-words 400
@@ -590,6 +595,34 @@ class ProxyState:
             self._cap_warned.discard(label)
         self._control_row("", "CAP", label, label,
                           "unknown", "", f"cap set ${amount:.2f}", "capped")
+        return True
+
+    def set_relay_timeout(self, seconds,
+                          reason: str = "human timeout") -> bool:
+        """Set the silent tunnel cutoff in seconds. Journal first.
+
+        Human-only: a plain method on the local proxy state, never an
+        HTTP route, so proxied agent traffic cannot set one. The value
+        must be a number from 5 to 3600 seconds; anything else is
+        refused with no row and no change. On success the journal row
+        commits first (outcome empty, reason "silent cutoff set to
+        Xs"), then the value changes. Tunnels opened after the change
+        use the new cutoff. Tunnels already running keep the cutoff
+        they started with.
+        """
+        if reason != "human timeout":
+            return False
+        try:
+            value = float(seconds)
+        except (TypeError, ValueError):
+            return False
+        if not 5.0 <= value <= 3600.0:
+            return False
+        self._control_row("", "TIMEOUT", "", "",
+                          "unknown", "",
+                          f"silent cutoff set to {value:g}s", "timeout")
+        with self._lock:
+            self.relay_timeout = value
         return True
 
     def unblock_cap(self, dest_label: str,
@@ -1542,7 +1575,7 @@ def make_handler(state: ProxyState):
                 # so the status stays unknown, never failed.
                 status = "unknown"
                 bytes_in, bytes_out = exc.bytes_in, exc.bytes_out
-                close_reason = "relay_timeout"
+                close_reason = _timeout_words(state.relay_timeout)
             except _RelayBroken as exc:
                 status = "failure"
                 bytes_in, bytes_out = exc.bytes_in, exc.bytes_out

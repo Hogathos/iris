@@ -35,7 +35,7 @@ import api as api_module
 import proxy as proxy_module
 from devpanel import pause_run as seam_pause_run
 from devpanel import states as states_module
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 BANNER = ("dev only, not the consumer app: every button here acts on "
@@ -172,6 +172,20 @@ def index(request: Request, run: str = "", dest: str = "",
             f"<td>{_esc(item['verdict'])}</td>"
             f"<td>{pause_cell}</td>"
             "</tr>")
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        cutoff_part = (
+            "<p>Silent tunnel cutoff: panel is watching only, start it "
+            "beside a live proxy to change it.</p>")
+    else:
+        cutoff_part = (
+            "<h2>Silent tunnel cutoff</h2>"
+            "<p>Iris closes a tunnel after this long with no bytes "
+            "either way. Raise it for slow model turns.</p>"
+            '<form method="post" action="/settings/relay-timeout">'
+            f'Cutoff in seconds: <input name="seconds" '
+            f'value="{state.relay_timeout:g}"> '
+            '<button type="submit">Set cutoff</button></form>')
     totals = api_module.stats()
     return (
         "<html><head><title>Iris devtool panel, dev only</title></head>"
@@ -189,6 +203,7 @@ def index(request: Request, run: str = "", dest: str = "",
         f'{" checked" if blocked else ""}> blocked only</label> '
         '<button type="submit">Filter</button>'
         "</form>"
+        + cutoff_part +
         "<table>"
         "<tr><th>Run</th><th>Destination</th><th>Method</th><th>What</th>"
         "<th>Bytes</th><th>Seconds</th><th>Cost</th><th>Verdict</th>"
@@ -263,6 +278,30 @@ def pause_button(trace_id: str, request: Request):
             status_code=503)
     seam_pause_run(state, trace_id, reason="human pause")
     return RedirectResponse(f"/runs/{trace_id}", status_code=303)
+
+
+@app.post("/settings/relay-timeout")
+def relay_timeout_button(request: Request, seconds: str = Form("")):
+    """The cutoff form: calls the plain human-only setter, nothing else.
+
+    Dev only, loopback only. Same shape as the Pause button: the panel
+    app holds the live proxy state, and the route calls the setter on
+    it. A refused value changes nothing and says so on its own page.
+    """
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        return HTMLResponse(
+            "<html><body><p>Panel is watching only: start it beside "
+            "a live proxy to change the cutoff.</p>"
+            '<p><a href="/">Back to runs</a></p></body></html>',
+            status_code=503)
+    if state.set_relay_timeout(seconds):
+        return RedirectResponse("/", status_code=303)
+    return HTMLResponse(
+        "<html><body><p>That cutoff was refused. Use 5 to 3600 "
+        "seconds, a plain number.</p>"
+        '<p><a href="/">Back to runs</a></p></body></html>',
+        status_code=400)
 
 
 def serve_dev(host: str = "127.0.0.1", panel_port: int = 8000,
