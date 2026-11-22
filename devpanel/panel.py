@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import api as api_module
 import proxy as proxy_module
+from devpanel import map as map_module
 from devpanel import pause_run as seam_pause_run
 from devpanel import states as states_module
 from devpanel import verify_run as seam_verify_run
@@ -133,7 +134,8 @@ def index(request: Request, run: str = "", dest: str = "",
         run_verdict = states_module.verdict_for(rows)
         if run and run not in trace_id:
             continue
-        if dest and dest not in (summary.get("dest_host") or ""):
+        if dest and not any(
+                dest in (r.get("dest_host") or "") for r in rows):
             continue
         if verdict and verdict != run_verdict:
             continue
@@ -219,6 +221,7 @@ def index(request: Request, run: str = "", dest: str = "",
         "<body>"
         f"<p><strong>{_esc(BANNER)}</strong></p>"
         "<h1>Runs, live</h1>"
+        '<p><a href="/map">Swarm map</a></p>'
         '<form method="get" action="/">'
         f'Run contains: <input name="run" value="{_esc(run)}"> '
         f'Destination contains: <input name="dest" value="{_esc(dest)}"> '
@@ -240,6 +243,29 @@ def index(request: Request, run: str = "", dest: str = "",
         f"<p>What you paid across {totals['total_attempts']} tries: "
         f"{_money(totals['total_cost'])}.</p>"
         "</body></html>")
+
+
+@app.get("/map", response_class=HTMLResponse)
+def swarm_map(request: Request):
+    """The swarm map: one inline SVG, zero JavaScript.
+
+    Dev only, loopback only. A read of the journal, nothing more:
+    the latest 20 Runs, one node per Run, one node per destination.
+    """
+    summaries = api_module.list_traces(limit=20)["traces"]
+    traces = [{"trace_id": s["trace_id"], "rows": _rows_for(s["trace_id"])}
+              for s in summaries]
+    built = map_module.build_map(traces)
+    return HTMLResponse(
+        "<html><head><title>Swarm map, dev only</title>"
+        + _STYLE + "</head><body>"
+        f"<p><strong>{_esc(BANNER)}</strong></p>"
+        "<h1>Swarm map</h1>"
+        "<p>The map below is showing the latest 20 Runs. Click a Run "
+        "to open it. Click a destination to filter the run list to "
+        "it.</p>"
+        + map_module.to_svg(built) +
+        '<p><a href="/">Back to runs</a></p></body></html>')
 
 
 @app.get("/runs/{trace_id}", response_class=HTMLResponse)
