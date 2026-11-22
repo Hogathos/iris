@@ -835,7 +835,8 @@ class ProxyState:
         HTTP route, so proxied agent traffic cannot call it. Every known
         Run gets a stop row first (outcome stopped, status unknown:
         Unverified explicitly), then every live tunnel on every Run is
-        cut. Paused Runs get a stop row too. The journal is only added
+        cut, and each cut is marked so its close row reads stopped.
+        Paused Runs get a stop row too. The journal is only added
         to, never deleted. Fresh approvals and Verifies are cleared, so
         nothing restarts without a fresh human word. Every press is
         journaled: audit everything, never silently.
@@ -880,6 +881,10 @@ class ProxyState:
             live = [sock for socks in self._live.values() for sock in socks]
             self._live.clear()
         for sock in live:
+            # Mark the cut first, then shut the socket down: the close
+            # path reads the mark, so the tunnel's close row says
+            # stopped, never allowed.
+            self._mark_cut(sock, "stop")
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -965,7 +970,10 @@ class ProxyState:
 
         Returns (allowed, reason). A blocked retry is journaled: reason
         "verify required before retry", or "red button stopped" for an
-        old Run with no fresh approval. An allowed retry (fresh Verify
+        old Run with no fresh approval. A stopped Run is stopped first:
+        a Run the button stopped retries as stopped even when it is
+        still paused or redirected, and no Verify stamp brings it back
+        without a fresh approval. An allowed retry (fresh Verify
         after the pause, redirect, or Red-button approval) resumes the
         Run and journals that. A pause is forgotten on resume; a redirect
         stays on its human-chosen destination, and the Verify stamp stays
@@ -977,7 +985,14 @@ class ProxyState:
         with self._lock:
             approved_at = self._approved.get(trace_id)
             verified_at = self._verified.get(trace_id)
-            if trace_id in self._paused:
+            if (self._stopped is not None
+                    and trace_id in self._stopped_traces
+                    and not approved_at):
+                # A stopped Run is stopped first, even when it is still
+                # paused or redirected: it never retries as paused or
+                # redirected, and no Verify stamp brings it back.
+                kind, since = "stopped", self._stopped["created_at"]
+            elif trace_id in self._paused:
                 kind, since = "paused", self._paused[trace_id]["created_at"]
             elif trace_id in self._redirects:
                 kind = "redirected"
@@ -996,7 +1011,7 @@ class ProxyState:
         # pause, redirect, or Red-button press (a new one clears it), so
         # presence means fresh. The timestamp check is a backstop,
         # same-second stamps included.
-        if not verified_at or verified_at < since:
+        if kind == "stopped" or not verified_at or verified_at < since:
             if kind == "stopped" and not approved_at:
                 reason = "red button stopped"
             else:
@@ -1522,14 +1537,23 @@ def make_handler(state: ProxyState):
             tunnel_cut = state._take_cut(self.connection)
             if tunnel_cut is not None:
                 # This socket was cut by a steer action: the close row
-                # says what happened, outcome paused or redirected,
-                # status unknown, bytes kept. It is not allowed. The
-                # kind is the verb ("pause"); the outcome is the past
-                # tense ("paused"), same as the control rows.
+                # says what happened, outcome paused, redirected, or
+                # stopped, status unknown, bytes kept. It is not
+                # allowed. The kind is the verb ("pause"); the outcome
+                # is the past tense ("paused"), same as the control
+                # rows.
                 cut_outcome = {"pause": "paused",
-                               "redirect": "redirected"}[tunnel_cut]
+                               "redirect": "redirected",
+                               "stop": "stopped"}[tunnel_cut]
+                if tunnel_cut == "stop" and state._stopped is not None:
+                    # The close row says what the stop row says: the
+                    # reason of the press. A tunnel cut by the button
+                    # reads the same words however its row is written.
+                    cut_reason = state._stopped["reason"]
+                else:
+                    cut_reason = f"tunnel cut by {tunnel_cut}"
                 log_connect("unknown", cut_outcome,
-                            f"tunnel cut by {tunnel_cut}", None,
+                            cut_reason, None,
                             bytes_in, bytes_out, cut_outcome, connect_ms)
             elif cut is not None and status != "success":
                 # Cut mid-flight by Pause or Redirect: the tunnel did not
