@@ -7,7 +7,9 @@ panel. A read of the journal, nothing more. It collects no new data.
 Nodes are Runs, not named agents: the journal carries no agent
 identity, so the map never invents a name for one. Time runs left to
 right. Each node keeps its own lane, so no two nodes share a place.
-Same journal, same places, every time.
+A Run node's fill is its worst outcome color, the same rule its
+edges use, so the map reads at a glance. Same journal, same places,
+every time.
 
 Metadata only in the rows it reads. No bodies, no keys, no
 Authorization headers, no real hostnames beyond the loopback
@@ -69,6 +71,20 @@ def _short(trace_id: str) -> str:
     return "Run " + trace_id[:8]
 
 
+def _worst_color(rows: list) -> str:
+    """Worst outcome color over a run's call rows: red over amber
+    over green, the same rule the edges use. Control rows are not
+    calls and never set the color; a run with no call rows is green.
+    """
+    colors = {_row_color(r) for r in rows
+              if (r.get("method") or "") not in CONTROL_METHODS}
+    if "red" in colors:
+        return "red"
+    if "amber" in colors:
+        return "amber"
+    return "green"
+
+
 def build_map(traces: list) -> dict:
     """Build the map data from journal traces, newest 20 Runs only.
 
@@ -115,6 +131,7 @@ def build_map(traces: list) -> dict:
             "id": node_id, "kind": "run",
             "label": _short(trace_id),
             "href": f"/runs/{trace_id}",
+            "color": _worst_color(rows),
             "x": x_for(first), "y": TOP + lane * LANE_HEIGHT,
         }
         lane += 1
@@ -195,10 +212,11 @@ def to_svg(built: dict) -> str:
         label = html.escape(node["label"])
         if node["kind"] == "run":
             shape = (f'<circle cx="{node["x"]}" cy="{node["y"]}" '
-                     f'r="8" fill="none" stroke="black" />')
+                     f'r="8" fill="{node["color"]}" '
+                     f'stroke="black" />')
         else:
             shape = (f'<rect x="{node["x"] - 8}" y="{node["y"] - 8}" '
-                     f'width="16" height="16" fill="none" '
+                     f'width="16" height="16" fill="white" '
                      f'stroke="black" />')
         parts.append(
             f'<a href="{href}">{shape}'
