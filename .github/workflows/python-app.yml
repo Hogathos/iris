@@ -1,4 +1,6 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# This workflow runs the tests and lint on a matrix of operating
+# systems and Python versions. The matrix is the platform test:
+# one OS and one Python version is not a matrix.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
 name: Python application
@@ -14,14 +16,28 @@ permissions:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    strategy:
+      # Fail-fast off: a failing combo must not hide the other five.
+      # The matrix reports green per combo, not green overall.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        # The install step uses bash test syntax. Windows runners
+        # default to PowerShell, so pin bash on every OS.
+        shell: bash
 
     steps:
     - uses: actions/checkout@v5
-    - name: Set up Python 3.10
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v6
       with:
-        python-version: "3.10"
+        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
