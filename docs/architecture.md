@@ -33,9 +33,9 @@ configurable allowlist are forwarded (default local test hosts
 `host:port` entry matches only that exact port. A non-allowlisted
 destination is blocked at the proxy and never forwarded: HTTP gets
 403, a CONNECT tunnel is never opened, and the attempt is logged
-`outcome=blocked`, `reason=not_allowlisted`. More than the configured
+`outcome=blocked`, `reason=not_allowlisted`. Requests over the configured
 rate limit (`--rate-limit`, default 100 per `--rate-window` 10s, per
-destination) gets 429 and is logged `outcome=rate_limited`,
+destination) get 429 and are logged `outcome=rate_limited`,
 `reason=rate_limited`; after the window passes, requests pass again.
 Forwarded attempts log `outcome=allowed`. `report.py` prints allowed /
 blocked / rate_limited counts next to the headline metrics.
@@ -45,17 +45,17 @@ blocked / rate_limited counts next to the headline metrics.
 An incoming `X-Trace-Id` is forwarded unchanged; otherwise the proxy
 generates one, adds it upstream, and returns it in the response.
 Repeats of the same trace + endpoint + method inside 10 s are logged
-as attempt 2, 3, ... with `retry_reason='retry'`. Requests the proxy
+as attempt 2, 3, ... with `retry_reason='retry'`. Requests that the proxy
 refuses (blocked, rate-limited, malformed headers) log a counted but
 never consumed attempt number, so they never shift later numbering.
 Each trace keeps one task number: the first claim wins, duplicates
-across traces fall back to auto-assignment, and explicit numbers push
+across traces fall back to auto-assignment, and explicit numbers move
 the auto counter past themselves.
 
 Malformed requests get a 400 plus an audit row
 (`reason=malformed_header`), never a dropped connection. The proxy's
 own control headers (`X-Task-Number`, `X-Strategy`) are consumed
-locally and stripped before forwarding; only `X-Trace-Id` rides
+locally and stripped before forwarding; only `X-Trace-Id` goes
 upstream.
 
 ## Visualizer
@@ -70,11 +70,11 @@ or bodies.
 ## Schema note (why db.py differs from raw v0.3)
 
 The v0.3 `attempts` table is reused in the same `attempts.db` file —
-all 11 original columns verbatim. Logging destination host,
-endpoint/method, and bytes in/out (required by the sketch) has no
-column to go into in v0.3, so `db.py` appends only those fields:
+all 11 original columns verbatim. The sketch needs a log of destination host,
+endpoint/method, and bytes in/out. The v0.3 table has no column for
+that, so `db.py` appends only those fields:
 `dest_host`, `endpoint`, `method`, `bytes_in`, `bytes_out`, plus
-`http_status` so the numeric code survives alongside the
+`http_status` so the numeric code is kept alongside the
 success/failure `status`. M4 appends `outcome` and `reason` the same
 way. Existing databases are migrated in place with `ALTER TABLE`
 (safe for two processes opening at once). No new database, no other

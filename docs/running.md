@@ -25,8 +25,8 @@ closes it and logs it as a failure. Any byte resets the silence clock, so
 busy tunnels are unaffected. Raise it when an upstream turn legitimately
 goes quiet for longer than 30 s before answering, e.g. a long grounded
 search or slow model turn that sends nothing while it works: `300` gives
-such a turn five minutes of silence instead of killing it mid-turn at 30 s.
-Lower it only to reap dead tunnels sooner. The default preserves the
+such a turn five minutes of silence instead of closing it mid-turn at 30 s.
+Lower it only to close dead tunnels sooner. The default preserves the
 original 30 s behaviour.
 
 ## M3: two-agent trace
