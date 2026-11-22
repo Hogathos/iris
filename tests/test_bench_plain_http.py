@@ -156,8 +156,11 @@ class PlainHttpBenchTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "main.db")
         cls.gates_db = os.path.join(cls.tmp.name, "gates.db")
-        db_module.init_db(cls.db_path)
-        db_module.init_db(cls.gates_db)
+        # init_db returns the connection: close it here. A discarded
+        # connection is cyclic garbage, reclaimed only when the cyclic
+        # GC runs, and on Windows the open file blocks cleanup.
+        db_module.init_db(cls.db_path).close()
+        db_module.init_db(cls.gates_db).close()
 
         cls.http_main = ThreadingHTTPServer(
             ("127.0.0.1", 0), _HttpMainHandler)
@@ -452,7 +455,11 @@ class PlainHttpBenchTest(unittest.TestCase):
         trace = "bench-plain-float"
         tmp = tempfile.TemporaryDirectory()
         db_path = os.path.join(tmp.name, "float.db")
-        db_module.init_db(db_path)
+        # init_db returns the connection: close it here. A discarded
+        # connection stays open until the cyclic GC runs, and on
+        # Windows 3.13 that is after tmp.cleanup(), which then cannot
+        # delete float.db (WinError 32, PR #22).
+        db_module.init_db(db_path).close()
         float_proxy = None
         try:
             float_proxy = proxy_module.serve(
