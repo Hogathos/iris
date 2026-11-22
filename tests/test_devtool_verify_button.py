@@ -190,8 +190,9 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
             self.assertTrue(allowed, f"retry stayed shut: {why}")
             rows = self._rows_for(trace)
             self.assertTrue(
-                any(r["reason"] == "verify ok" for r in rows),
-                "no verify ok row in the journal")
+                any(r["reason"].startswith("verify ok")
+                    and READ_BACK in r["reason"] for r in rows),
+                "no verify ok row carrying the read-back in the journal")
             self.assertTrue(
                 any(r["reason"] == "retry allowed after verify"
                     for r in rows),
@@ -241,7 +242,7 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
             self.assertEqual(why, "not paused")
             rows = self._rows_for(trace)
             self.assertFalse(
-                any(r["reason"] == "verify ok" for r in rows),
+                any(r["reason"].startswith("verify ok") for r in rows),
                 "a refused Verify must stamp nothing")
         finally:
             panel_module.app.state.proxy_state = None

@@ -313,7 +313,7 @@ class SteerRedirectOneRunTest(unittest.TestCase):
             self.assertTrue(verified, "fresh Verify must pass")
             self.assertTrue(
                 [r for r in self.rows_for(trace1)
-                 if r["reason"] == "verify ok"],
+                 if r["reason"].startswith("verify ok")],
                 "fresh Verify must be journaled",
             )
             allowed, _ = self.proxy.state.retry_run(trace1)
