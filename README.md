@@ -10,7 +10,7 @@ Local proxy that watches agent traffic and logs what happened, metadata only.
 
 What is built, and what is planned, in one short doc: [FEATURES.md](FEATURES.md). Read that first, no code reading needed.
 
-Status: main 68252ed, CI run 82 green, 94 tests. Steer Tier 1 and Tier 2 built, spend caps built, Verify local file and SQLite built, dev panel built (dev only).
+Status: main 62edc7a, CI run 60 green, 182 tests. Steer Tier 1 and Tier 2 built, spend caps built, Verify local file and SQLite built, dev panel built (dev only).
 
 ## Quick start
 
@@ -24,7 +24,7 @@ python report.py --db attempts.db    # headline metrics
 ## Tests
 
 ```powershell
-python -m unittest discover -s tests -v   # 94 tests
+python -m unittest discover -s tests -v   # 182 tests
 ```
 
 ## Docs
@@ -47,4 +47,5 @@ How to read a trace: `python report.py --db attempts.db` (see `report.py`): one 
 
 What it can't see: TLS is opaque — a CONNECT tunnel logs destination / timing / size only, no decrypted payload, no per-request detail inside a tunnel.
 
-Evidence: suite 94 tests, CI run 82 green; Locust 37.1 req/s with 0 failures in 1427; dogfood Day 1 3/3; Day 2 12 attempts / 5 success; kill-switch passed fail-closed; eval report + golden dataset v2 in `evals`, commits 7e39e2c and e4fca47. Second live workflow, Nov 16: GET to A then POST to B, both legs Correct, exfil refused 403, cost $0.00.
+Evidence: suite 182 tests, CI run 60 green; Locust 37.1 req/s with 0 failures in 1427; dogfood Day 1 3/3; Day 2 12 attempts / 5 success; kill-switch passed fail-closed; eval report + golden dataset v2 in `evals`, commits 7e39e2c and e4fca47. Second live workflow, Nov 16: GET to A then POST to B, both legs Correct, exfil refused 403, cost $0.00.
+
