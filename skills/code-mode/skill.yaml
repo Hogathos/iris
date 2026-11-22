@@ -1,0 +1,5 @@
+name: code-mode
+title: 'Code mode: decide, then write code that does the work'
+description: Prefer writing code that does the work over calling tools one by one — load on demand, filter and loop in code, redact sensitive data by default, save working code as skills, and run no outside effect without a human sign-off.
+category: Work and knowledge
+include_in_prompt: false
