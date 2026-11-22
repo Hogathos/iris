@@ -67,6 +67,20 @@ STEP_TIMEOUT = 5.0
 WINDOW_SLEEP = 1.2  # past the 1s rate window, inside the 10s retry window
 
 
+class _FrozenClock:
+    """A clock the test moves by hand, so the rate window never moves
+    on its own. Test helper only."""
+
+    def __init__(self):
+        self.now_seconds = time.time()
+
+    def now(self):
+        return self.now_seconds
+
+    def advance(self, seconds):
+        self.now_seconds += seconds
+
+
 class _HttpEchoHandler(BaseHTTPRequestHandler):
     """Loopback HTTP upstream. Counts hits, so a blocked request that
     reached the upstream would show up. Test helper only."""
@@ -128,9 +142,13 @@ class AllowlistRateLimitBenchTest(unittest.TestCase):
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         # Burst proxy: 5 requests per 1s window, like the M4 demo limit.
+        # The window runs on a frozen clock the test moves by hand, so
+        # a slow runner can never stretch a burst past the window.
+        cls.burst_clock = _FrozenClock()
         cls.burst_db = os.path.join(cls.tmp.name, "burst.db")
         cls.burst = proxy_module.serve(
-            "127.0.0.1", 0, cls.burst_db, rate_limit=5, rate_window=1.0)
+            "127.0.0.1", 0, cls.burst_db, rate_limit=5, rate_window=1.0,
+            rate_clock=cls.burst_clock.now)
         cls.burst_port = cls.burst.server_address[1]
         threading.Thread(target=cls.burst.serve_forever, daemon=True).start()
         # Host:port proxy: only one exact port on loopback is allowlisted.
@@ -273,7 +291,7 @@ class AllowlistRateLimitBenchTest(unittest.TestCase):
                 self.tcp_dest, self.burst_port, trace)
             self.assertEqual(status, 429, "the 6th tunnel must not open")
             sock.close()
-            time.sleep(WINDOW_SLEEP)  # past the 1s window
+            self.burst_clock.advance(WINDOW_SLEEP)  # past the 1s window
             sockets.append(self.connect_and_exchange(
                 self.tcp_dest, self.burst_port, trace))
         finally:
@@ -440,7 +458,7 @@ class AllowlistRateLimitBenchTest(unittest.TestCase):
         the next forwarded request keeps the same number.
         """
         trace = "bench-precedence"
-        time.sleep(WINDOW_SLEEP)  # clear the A window from the burst check
+        self.burst_clock.advance(WINDOW_SLEEP)  # clear the A window from the burst check
         for _ in range(5):
             self.assertEqual(
                 self.call(self.base_a, self.burst_port, trace), 200)
@@ -473,13 +491,16 @@ class AllowlistRateLimitBenchTest(unittest.TestCase):
         # A rate-limited arrival takes no attempt number: the next
         # forwarded request on the same trace keeps the same number.
         retry_trace = "bench-attempt-number"
-        time.sleep(WINDOW_SLEEP)  # clear the A window from the pause check
+        self.burst_clock.advance(WINDOW_SLEEP)  # clear the A window from the pause check
         for _ in range(5):
             self.assertEqual(
                 self.call(self.base_a, self.burst_port, retry_trace), 200)
         self.assertEqual(
             self.call(self.base_a, self.burst_port, retry_trace), 429)
-        time.sleep(WINDOW_SLEEP)  # past the rate window, inside the retry window
+        # Past the rate window, inside the retry window: the advance
+        # moves the rate clock only, the retry window reads real time
+        # and the next GET follows at once.
+        self.burst_clock.advance(WINDOW_SLEEP)
         self.assertEqual(
             self.call(self.base_a, self.burst_port, retry_trace), 200)
         retry_rows = self.wait_for_rows(self.burst_db, retry_trace, 7)

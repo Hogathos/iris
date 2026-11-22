@@ -256,7 +256,8 @@ class ProxyState:
     def __init__(self, db_path: str, retry_window: float = 10.0,
                  allowlist=None, rate_limit: int = RATE_LIMIT,
                  rate_window: float = RATE_WINDOW_SECONDS,
-                 relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS):
+                 relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
+                 rate_clock=time.time):
         self.conn = db_module.init_db(db_path)
         self.retry_window = retry_window
         self.allowlist = tuple(
@@ -277,6 +278,10 @@ class ProxyState:
         self.rate_limit = int(rate_limit)
         self.rate_window = float(rate_window)
         self.relay_timeout = float(relay_timeout)
+        # Test seam: the rate check reads the window through this
+        # clock. Default is real time. A test can pass a frozen clock
+        # so the window moves only when the test moves it.
+        self._rate_clock = rate_clock
         self._lock = threading.Lock()
         # Steer Pause one Run: paused Runs by trace_id (survive restart,
         # never auto-resume), fresh Verify stamps, live tunnel sockets.
@@ -339,7 +344,7 @@ class ProxyState:
 
     def check_rate(self, dest_label: str) -> bool:
         """Sliding window per destination; True = this request may pass."""
-        now = time.time()
+        now = self._rate_clock()
         with self._lock:
             stamps = self._rate_stamps.setdefault(dest_label, [])
             stamps[:] = [s for s in stamps if now - s <= self.rate_window]
@@ -2210,11 +2215,13 @@ def serve(host: str = "127.0.0.1", port: int = 8888,
           db_path: str = "attempts.db", allowlist=None,
           rate_limit: int = RATE_LIMIT,
           rate_window: float = RATE_WINDOW_SECONDS,
-          relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS
+          relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
+          rate_clock=time.time
           ) -> ProxyServer:
     state = ProxyState(db_path, allowlist=allowlist,
                        rate_limit=rate_limit, rate_window=rate_window,
-                       relay_timeout=relay_timeout)
+                       relay_timeout=relay_timeout,
+                       rate_clock=rate_clock)
     server = ProxyServer((host, port), make_handler(state))
     server.state = state
     return server
