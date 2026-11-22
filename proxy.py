@@ -441,6 +441,16 @@ class ProxyState:
         with self._lock:
             return self._cut.pop(sock, None)
 
+    def is_cut(self, sock) -> bool:
+        """True when this socket was cut by a steer action.
+
+        The relay polls this: neither shutdown nor close wakes a
+        select that waits on Windows, so the mark is the signal
+        the relay can trust on every OS.
+        """
+        with self._lock:
+            return sock in self._cut
+
     def _cut_socket(self, sock, kind: str) -> None:
         """Mark a socket cut, then shut it down and close it.
 
@@ -449,13 +459,11 @@ class ProxyState:
         the steer_cut branch, which only fires when the relay did
         not end cleanly, so the row reads allowed or paused
         depending on timing. Marked, it always reads cut.
-        Shutdown alone does not wake a thread that waits in
-        select on Windows. The relay then sits until its 30
-        second idle timeout, and the tunnel close row lands too
-        late. Closing the socket wakes the relay on every OS, so
-        the close row lands at once. The handler still owns the
-        socket object and closes it again in its own finally.
-        Close is safe to call twice.
+        Shutdown and close free the socket, but neither wakes a
+        select that waits on Windows. The relay ends because it
+        polls the cut mark, not because the socket woke it. The
+        handler still owns the socket object and closes it again
+        in its own finally. Close is safe to call twice.
         """
         self._mark_cut(sock, kind)
         try:
@@ -1226,26 +1234,39 @@ class _RelayBroken(Exception):
 
 
 def _relay(client: socket.socket, upstream: socket.socket,
-           timeout: float = RELAY_IDLE_TIMEOUT_SECONDS
+           timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
+           is_cut=None
            ) -> tuple[int, int, str]:
     """Relay raw bytes both ways; return (bytes_in, bytes_out, close_reason).
 
     Bytes are counted, never inspected, stored, or logged. bytes_in is
     client -> destination, bytes_out is destination -> client. Silence
     longer than timeout raises _RelayTimeout with partial counts; a
-    socket error raises _RelayBroken naming the side that broke.
+    socket error raises _RelayBroken naming the side that broke. A cut
+    socket ends the relay as broken: the relay polls is_cut, because
+    neither shutdown nor close wakes a select that waits on Windows.
     """
     bytes_in = bytes_out = 0
     sockets = [client, upstream]
+    deadline = time.monotonic() + timeout
     while True:
+        if is_cut is not None and is_cut():
+            raise _RelayBroken(bytes_in, bytes_out, "client_eof")
+        # Short slices, not one long wait: a cut must end the relay
+        # at once, and the idle timeout still runs to its deadline.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _RelayTimeout(bytes_in, bytes_out)
         # The error set matters on Windows: a socket closed by a
         # cut can show up there instead of in the readable set.
         # Read it the same way. Its recv raises, so the relay ends
         # as broken and the close row lands at once.
         readable, _, errored = select.select(
-            sockets, [], sockets, timeout)
+            sockets, [], sockets, min(remaining, 0.5))
+        if is_cut is not None and is_cut():
+            raise _RelayBroken(bytes_in, bytes_out, "client_eof")
         if not readable and not errored:
-            raise _RelayTimeout(bytes_in, bytes_out)
+            continue
         for sock in readable + [s for s in errored if s not in readable]:
             try:
                 data = sock.recv(65536)
@@ -1514,7 +1535,8 @@ def make_handler(state: ProxyState):
             status, bytes_in, bytes_out, close_reason = "success", 0, 0, "success"
             try:
                 bytes_in, bytes_out, close_reason = _relay(
-                    self.connection, upstream, timeout=state.relay_timeout)
+                    self.connection, upstream, timeout=state.relay_timeout,
+                    is_cut=lambda: state.is_cut(self.connection))
             except _RelayTimeout as exc:
                 # A silent tunnel tells us nothing about who is at fault,
                 # so the status stays unknown, never failed.
