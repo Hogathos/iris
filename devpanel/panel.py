@@ -95,6 +95,9 @@ def _row_words(row: dict) -> str:
         if row["status"] == "failure":
             return "verified Incorrect: read back contradicted the claim."
         return "unverified: read back could not be done."
+    if row.get("method") == "VERIFY" and row.get(
+            "reason", "").startswith("verify ok:"):
+        return row["reason"]
     if row["outcome"] == "warned":
         return "warned, money spent at 80% of cap."
     if row["status"] == "success":
@@ -124,7 +127,9 @@ app = FastAPI(title="Iris devtool panel (dev only)",
 def index(request: Request, run: str = "", dest: str = "",
           verdict: str = "", blocked: str = ""):
     """Live run list with filters. GET only: looking changes nothing."""
-    summaries = api_module.list_traces(limit=100)["traces"]
+    filtering = bool(run or dest or verdict or blocked)
+    summaries = api_module.list_traces(
+        limit=1000 if filtering else 100)["traces"]
     shown = []
     for summary in summaries:
         trace_id = summary["trace_id"]
@@ -158,6 +163,7 @@ def index(request: Request, run: str = "", dest: str = "",
             "pause_live": live,
             "pause_why": why,
         })
+    shown = shown[:100]
     cards = []
     for item in shown:
         tid = item["trace_id"]
@@ -199,6 +205,7 @@ def index(request: Request, run: str = "", dest: str = "",
         "and blocks at 100%.</p>"
         '<form method="post" action="/settings/spend-cap">'
         'Destination: <input name="dest"> '
+        '(a destination label, like 127.0.0.1:18080) '
         'Dollars: <input name="dollars"> '
         "<button type=\"submit\">Set cap</button></form>"
         "<h3>Block this network</h3>"
@@ -206,6 +213,7 @@ def index(request: Request, run: str = "", dest: str = "",
         "it.</p>"
         '<form method="post" action="/settings/block-network">'
         'Destination: <input name="dest"> '
+        '(a destination label, like 127.0.0.1:18080) '
         "<button type=\"submit\">Block this network</button></form>"
         "</section>")
     stop_part = (
@@ -446,8 +454,9 @@ def cap_button(request: Request, dest: str = Form(""),
     if state.set_cap(dest, dollars):
         return RedirectResponse("/", status_code=303)
     return HTMLResponse(
-        "<html><body><p>That cap was refused. Use a destination Iris "
-        "already allows and a plain dollar number above zero.</p>"
+        "<html><body><p>That cap was refused. Use a destination label "
+        "Iris already allows, like 127.0.0.1:18080, not a web address, "
+        "and a plain dollar number above zero.</p>"
         '<p><a href="/">Back to runs</a></p></body></html>',
         status_code=400)
 
@@ -470,7 +479,8 @@ def block_network_button(request: Request, dest: str = Form("")):
         return RedirectResponse("/", status_code=303)
     return HTMLResponse(
         "<html><body><p>That block was refused. Use a destination "
-        "Iris already allows.</p>"
+        "label Iris already allows, like 127.0.0.1:18080, not a web "
+        "address.</p>"
         '<p><a href="/">Back to runs</a></p></body></html>',
         status_code=400)
 
