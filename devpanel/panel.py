@@ -35,6 +35,7 @@ import api as api_module
 import proxy as proxy_module
 from devpanel import pause_run as seam_pause_run
 from devpanel import states as states_module
+from devpanel import verify_run as seam_verify_run
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -277,6 +278,15 @@ def run_detail(trace_id: str):
         'New destination: <input name="new_dest"> '
         "<button type=\"submit\">Redirect</button></form>"
         if live else "")
+    verify_part = (
+        "<h2>Verify this Run</h2>"
+        "<p>What did you check? Type it in plain words, then press "
+        "Verify. Only a fresh Verify after the pause or redirect lets "
+        "the Run go again.</p>"
+        f'<form method="post" action="/runs/{_esc(trace_id)}/verify">'
+        'What was checked: <input name="read_back"> '
+        "<button type=\"submit\">Verify</button></form>"
+        if state in ("PAUSED", "REDIRECTED") else "")
     return (
         "<html><head><title>Run detail, dev only</title>"
         + _STYLE + "</head><body>"
@@ -287,6 +297,7 @@ def run_detail(trace_id: str):
         f"<p>Next step: {_esc(states_module.next_step(state, verdict))}</p>"
         f"{pause_part}"
         f"{redirect_part}"
+        f"{verify_part}"
         "<h2>Journal, oldest first</h2>"
         "<table><tr><th>When</th><th>Destination</th><th>Method</th>"
         "<th>What</th><th>Bytes</th><th>Money spent</th></tr>"
@@ -313,6 +324,32 @@ def pause_button(trace_id: str, request: Request):
             status_code=503)
     seam_pause_run(state, trace_id, reason="human pause")
     return RedirectResponse(f"/runs/{trace_id}", status_code=303)
+
+
+@app.post("/runs/{trace_id}/verify")
+def verify_button(trace_id: str, request: Request,
+                  read_back: str = Form("")):
+    """The Verify button: stamps the gate, nothing else.
+
+    Dev only, loopback only. Same shape as the Pause button: the panel
+    app holds the live proxy state, and the route calls the seam on
+    it. A refused Verify changes nothing and says so on its own page.
+    """
+    state = getattr(request.app.state, "proxy_state", None)
+    if state is None:
+        return HTMLResponse(
+            "<html><body><p>Panel is watching only: start it beside "
+            "a live proxy to verify.</p>"
+            '<p><a href="/">Back to runs</a></p></body></html>',
+            status_code=503)
+    if seam_verify_run(state, trace_id, read_back=read_back):
+        return RedirectResponse(f"/runs/{trace_id}", status_code=303)
+    return HTMLResponse(
+        "<html><body><p>That Verify was refused. The Run must be "
+        "paused or redirected, and the read-back must say what was "
+        "checked.</p>"
+        f'<p><a href="/runs/{trace_id}">Back to run</a></p></body></html>',
+        status_code=400)
 
 
 @app.post("/settings/relay-timeout")
