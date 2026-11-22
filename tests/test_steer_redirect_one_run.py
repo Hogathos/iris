@@ -204,11 +204,19 @@ class SteerRedirectOneRunTest(unittest.TestCase):
             # reason human redirect, verdict Unverified explicitly:
             # status unknown, never Correct, never Incorrect. C is
             # allowlisted loopback; the count proves where bytes went.
-            with self.assertRaises((OSError, socket.timeout)):
-                sock1.settimeout(2)
+            # The old tunnel is cut: no further bytes flow for Run 1.
+            # A cut tunnel ends two ways, by OS: the send or the read
+            # raises, or the read returns a clean end of file. macOS
+            # takes the second path. Both mean the tunnel is dead.
+            sock1.settimeout(2)
+            try:
                 sock1.sendall(b"run1-after-redirect")
-                self.assertEqual(
-                    self.echo_roundtrip(sock1, b"run1-after-redirect"), b"")
+                got = self.echo_roundtrip(sock1, b"run1-after-redirect")
+            except (OSError, socket.timeout):
+                got = None
+            self.assertIn(
+                got, (None, b""),
+                "a cut tunnel must not echo bytes back")
             redirect_rows = [
                 r for r in self.rows_for(trace1)
                 if r["outcome"] == "redirected"
