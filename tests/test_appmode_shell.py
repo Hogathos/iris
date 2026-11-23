@@ -256,18 +256,24 @@ class WindowTest(unittest.TestCase):
 
     def tearDown(self):
         if self.window is not None:
-            # TEST (sendPostedEvents teardown): deleteLater posts a
-            # DeferredDelete event; sendPostedEvents delivers it
-            # without running the full event loop. A full pump
-            # crashes the offscreen WebView2 backend on Windows,
-            # and a synchronous shiboken6.delete leaves state that
-            # crashes the 3.11 bench test. Deleting the view's
-            # container first segfaults outright. If this passes
-            # on both Windows and 3.11, it is the teardown.
-            from PySide6.QtWidgets import QApplication
+            # Platform-conditional teardown. No single teardown
+            # works on both Windows and 3.11. shiboken6.delete
+            # fixes the Windows shutdown segfault but leaves state
+            # that crashes the 3.11 bench test. deleteLater plus
+            # sendPostedEvents fixes 3.11 but leaves the WebView
+            # native surface alive and Windows segfaults at exit.
+            # A full pump crashes the offscreen WebView2 backend.
+            # Deleting the view's container first segfaults
+            # outright. Each platform gets the teardown that
+            # works for it. sys.platform is "win32" on Windows.
             self.window.close()
-            self.window.deleteLater()
-            QApplication.sendPostedEvents()
+            if sys.platform == "win32":
+                from shiboken6 import delete as _delete_qobject
+                _delete_qobject(self.window)
+            else:
+                from PySide6.QtWidgets import QApplication
+                self.window.deleteLater()
+                QApplication.sendPostedEvents()
             self.window = None
 
     def _window(self, ask_words=None, ask_confirm=None):
