@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -99,6 +100,26 @@ def read_config(agent_id: str, path: str) -> object:
     return _parse_config(agent_id, _read_bytes(path).decode("utf-8"))
 
 
+def _check_proxy_url(proxy_url: str) -> str:
+    """The proxy URL, cleaned, or refusal when it is not loopback.
+
+    Iris is loopback only: scheme http or https, host 127.0.0.1
+    or localhost. Anything else would send the agent's traffic
+    off this machine, so Iris refuses and changes nothing. No
+    backup, no write.
+    """
+    cleaned = (proxy_url or "").strip()
+    parts = urlsplit(cleaned)
+    if (parts.scheme not in ("http", "https")
+            or (parts.hostname or "").lower()
+            not in ("127.0.0.1", "localhost")):
+        raise Refused(
+            f"Iris only routes to this machine: {proxy_url} is "
+            f"not a loopback URL with scheme http or https. "
+            f"Iris changed nothing.")
+    return cleaned
+
+
 def _read_bytes(path: str) -> bytes:
     """The file's raw bytes, for a byte-for-byte backup."""
     with open(path, "rb") as handle:
@@ -174,7 +195,9 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
     fields only, never the whole config, so no secret leaks.
     """
     name = _agent_name(agent_id)
+    proxy_url = _check_proxy_url(proxy_url)
     path = config_path(agent_id, home)
+    backup_path = path + BACKUP_SUFFIX
     if not os.path.exists(path):
         raise Refused(
             f"{name} has no config file at {path}. "
@@ -197,6 +220,11 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
             f"{name} config at {path} changed while Iris was "
             f"connecting. Iris kept the agent's change and "
             f"wrote nothing.")
+    if os.path.exists(backup_path):
+        raise Refused(
+            f"{name} is already connected: a backup is waiting "
+            f"at {backup_path}. Disconnect first to restore it, "
+            f"or delete the backup, then connect again.")
     if agent_id == "claude-code":
         existing = _claude_existing(config.get("env") or {})
     elif agent_id == "cursor":
@@ -209,6 +237,7 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
             f"Iris changed nothing. Disconnect that proxy first, "
             f"then connect again.")
     backup_path = _write_backup(path, original)
+    note = ""
     if agent_id == "claude-code":
         env = config.get("env") or {}
         env["HTTP_PROXY"] = proxy_url
@@ -226,6 +255,9 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
             json.dump(config, handle, indent=2)
             handle.write("\n")
         change = f"http.proxy and http.proxySupport to {proxy_url}"
+        note = (" Note: override sends Cursor updates and "
+                "extension downloads through Iris too, and Iris "
+                "blocks destinations it does not allow.")
     else:
         for model in config["models"]:
             if not isinstance(model, dict):
@@ -251,7 +283,7 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
     return (
         f"{name} now routes through {proxy_url}. Set {change} "
         f"in {path}. Backup at {backup_path}. Restart {name} "
-        f"so it picks up the change.")
+        f"so it picks up the change.{note}")
 
 
 def disconnect_agent(agent_id: str, home: str) -> str:
