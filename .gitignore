@@ -1,0 +1,20 @@
+# IDE and editor state.
+.idea/
+
+# Python bytecode and caches.
+__pycache__/
+.pytest_cache/
+
+# Virtual environment.
+.venv/
+
+# Build and packaging output.
+dist/
+build/
+*.spec
+*.exe
+
+# Databases. Never commit a journal or a demo database.
+*.db
+*.db-shm
+*.db-wal

@@ -77,6 +77,20 @@ def _option(value: str, selected: bool) -> str:
             + shown + "</option>")
 
 
+def _tier_query(tier: str) -> str:
+    """Query string that keeps the tier, or empty when no tier."""
+    return f"?tier={tier}" if tier else ""
+
+
+def _is_simple(tier: str) -> bool:
+    """True only for Simple: hide diagnostics, cutoff, Redirect.
+
+    No tier means show everything, so the dev panel works exactly as
+    before. An unknown tier also shows everything, never a blank.
+    """
+    return tier == "simple"
+
+
 def _row_words(row: dict) -> str:
     """One plain-words line for a journal row."""
     if row["outcome"] == "paused":
@@ -125,8 +139,14 @@ app = FastAPI(title="Iris devtool panel (dev only)",
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, run: str = "", dest: str = "",
-          verdict: str = "", blocked: str = ""):
-    """Live run list with filters. GET only: looking changes nothing."""
+          verdict: str = "", blocked: str = "", tier: str = ""):
+    """Live run list with filters. GET only: looking changes nothing.
+
+    Simple hides Method, Bytes, Seconds, and the cutoff form. Block,
+    Pause, and Verify stay. No tier means show everything.
+    """
+    tierq = _tier_query(tier)
+    simple = _is_simple(tier)
     filtering = bool(run or dest or verdict or blocked)
     summaries = api_module.list_traces(
         limit=1000 if filtering else 100)["traces"]
@@ -168,23 +188,39 @@ def index(request: Request, run: str = "", dest: str = "",
     for item in shown:
         tid = item["trace_id"]
         pause_cell = (
-            '<form method="post" action="/runs/' + tid + '/pause">'
+            '<form method="post" action="/runs/' + tid + '/pause'
+            + tierq + '">'
             '<button type="submit">Pause</button></form>'
             if item["pause_live"] else _esc(item["pause_why"]))
-        cards.append(
-            "<tr>"
-            f'<td><a href="/runs/{tid}">{_esc(item["label"])}</a></td>'
-            f"<td>{_esc(item['dest'])}</td>"
-            f"<td>{_esc(item['method'])}</td>"
-            f"<td>{_esc(item['words'])}</td>"
-            f"<td>{item['bytes_in']} in / {item['bytes_out']} out</td>"
-            f"<td>{item['latency']}s</td>"
-            f"<td>Money spent {_money(item['cost'])}</td>"
-            f"<td>{_esc(item['verdict'])}</td>"
-            f"<td>{pause_cell}</td>"
-            "</tr>")
+        if simple:
+            cards.append(
+                "<tr>"
+                f'<td><a href="/runs/{tid}{tierq}">'
+                f'{_esc(item["label"])}</a></td>'
+                f"<td>{_esc(item['dest'])}</td>"
+                f"<td>{_esc(item['words'])}</td>"
+                f"<td>Money spent {_money(item['cost'])}</td>"
+                f"<td>{_esc(item['verdict'])}</td>"
+                f"<td>{pause_cell}</td>"
+                "</tr>")
+        else:
+            cards.append(
+                "<tr>"
+                f'<td><a href="/runs/{tid}{tierq}">'
+                f'{_esc(item["label"])}</a></td>'
+                f"<td>{_esc(item['dest'])}</td>"
+                f"<td>{_esc(item['method'])}</td>"
+                f"<td>{_esc(item['words'])}</td>"
+                f"<td>{item['bytes_in']} in / {item['bytes_out']} out</td>"
+                f"<td>{item['latency']}s</td>"
+                f"<td>Money spent {_money(item['cost'])}</td>"
+                f"<td>{_esc(item['verdict'])}</td>"
+                f"<td>{pause_cell}</td>"
+                "</tr>")
     state = getattr(request.app.state, "proxy_state", None)
-    if state is None:
+    if simple:
+        cutoff_part = ""
+    elif state is None:
         cutoff_part = (
             "<p>Silent tunnel cutoff: panel is watching only, start it "
             "beside a live proxy to change it.</p>")
@@ -229,8 +265,10 @@ def index(request: Request, run: str = "", dest: str = "",
         "<body>"
         f"<p><strong>{_esc(BANNER)}</strong></p>"
         "<h1>Runs, live</h1>"
-        '<p><a href="/map">Swarm map</a></p>'
+        f'<p><a href="/map{tierq}">Swarm map</a></p>'
         '<form method="get" action="/">'
+        + (f'<input type="hidden" name="tier" value="{_esc(tier)}">'
+           if tier else "") +
         f'Run contains: <input name="run" value="{_esc(run)}"> '
         f'Destination contains: <input name="dest" value="{_esc(dest)}"> '
         '<label>Verdict <select name="verdict">'
@@ -243,9 +281,12 @@ def index(request: Request, run: str = "", dest: str = "",
         "</form>"
         + cutoff_part + controls_part + stop_part +
         "<table>"
-        "<tr><th>Run</th><th>Destination</th><th>Method</th><th>What</th>"
-        "<th>Bytes</th><th>Seconds</th><th>Cost</th><th>Verdict</th>"
-        "<th>Pause</th></tr>"
+        + ("<tr><th>Run</th><th>Destination</th><th>What</th>"
+           "<th>Cost</th><th>Verdict</th><th>Pause</th></tr>"
+           if simple else
+           "<tr><th>Run</th><th>Destination</th><th>Method</th><th>What</th>"
+           "<th>Bytes</th><th>Seconds</th><th>Cost</th><th>Verdict</th>"
+           "<th>Pause</th></tr>")
         + "".join(cards) +
         "</table>"
         f"<p>What you paid across {totals['total_attempts']} tries: "
@@ -254,11 +295,12 @@ def index(request: Request, run: str = "", dest: str = "",
 
 
 @app.get("/map", response_class=HTMLResponse)
-def swarm_map(request: Request):
+def swarm_map(request: Request, tier: str = ""):
     """The swarm map: one inline SVG, zero JavaScript.
 
     Dev only, loopback only. A read of the journal, nothing more:
     the latest 20 Runs, one node per Run, one node per destination.
+    The tier only rides the back link home.
     """
     summaries = api_module.list_traces(limit=20)["traces"]
     traces = [{"trace_id": s["trace_id"], "rows": _rows_for(s["trace_id"])}
@@ -273,17 +315,24 @@ def swarm_map(request: Request):
         "to open it. Click a destination to filter the run list to "
         "it.</p>"
         + map_module.to_svg(built) +
-        '<p><a href="/">Back to runs</a></p></body></html>')
+        f'<p><a href="/{_tier_query(tier)}">Back to runs</a></p>'
+        "</body></html>")
 
 
 @app.get("/runs/{trace_id}", response_class=HTMLResponse)
-def run_detail(trace_id: str):
-    """One Run: every journal row, the plain-words card, next step."""
+def run_detail(trace_id: str, tier: str = ""):
+    """One Run: every journal row, the plain-words card, next step.
+
+    Simple hides Redirect. Pause and Verify stay. No tier means show
+    everything.
+    """
+    tierq = _tier_query(tier)
+    simple = _is_simple(tier)
     rows = _rows_for(trace_id)
     if not rows:
         return HTMLResponse(
             "<html><body><p>Unknown run.</p>"
-            '<p><a href="/">Back to runs</a></p></body></html>',
+            f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=404)
     state = states_module.run_state(rows)
     verdict = states_module.verdict_for(rows)
@@ -300,7 +349,7 @@ def run_detail(trace_id: str):
             f"<td>Money spent {_money(api_module.attempt_cost(row))}</td>"
             "</tr>")
     pause_part = (
-        f'<form method="post" action="/runs/{_esc(trace_id)}/pause">'
+        f'<form method="post" action="/runs/{_esc(trace_id)}/pause{tierq}">'
         "<button type=\"submit\">Pause this Run</button></form>"
         "<p>Pressing Pause stops this run unless a human verifies "
         "everything is fine.</p>"
@@ -308,16 +357,17 @@ def run_detail(trace_id: str):
     redirect_part = (
         "<h2>Redirect this Run</h2>"
         "<p>Send this Run to a different safe destination.</p>"
-        f'<form method="post" action="/runs/{_esc(trace_id)}/redirect">'
+        f'<form method="post" action="/runs/{_esc(trace_id)}/redirect'
+        f'{tierq}">'
         'New destination: <input name="new_dest"> '
         "<button type=\"submit\">Redirect</button></form>"
-        if live else "")
+        if live and not simple else "")
     verify_part = (
         "<h2>Verify this Run</h2>"
         "<p>What did you check? Type it in plain words, then press "
         "Verify. Only a fresh Verify after the pause or redirect lets "
         "the Run go again.</p>"
-        f'<form method="post" action="/runs/{_esc(trace_id)}/verify">'
+        f'<form method="post" action="/runs/{_esc(trace_id)}/verify{tierq}">'
         'What was checked: <input name="read_back"> '
         "<button type=\"submit\">Verify</button></form>"
         if state in ("PAUSED", "REDIRECTED") else "")
@@ -337,52 +387,58 @@ def run_detail(trace_id: str):
         "<th>What</th><th>Bytes</th><th>Money spent</th></tr>"
         + "".join(lines) +
         "</table>"
-        '<p><a href="/">Back to runs</a></p>'
+        f'<p><a href="/{tierq}">Back to runs</a></p>'
         "</body></html>")
 
 
 @app.post("/runs/{trace_id}/pause")
-def pause_button(trace_id: str, request: Request):
+def pause_button(trace_id: str, request: Request, tier: str = ""):
     """The Pause button: calls the plain human-only function, nothing else.
 
     Dev only, loopback only. This is one of the control routes in the
     panel app, and the main API stays GET-only: no agent can reach it
     through the proxy, and nothing here is reachable off this machine.
+    The tier rides the redirect back to the same tier.
     """
+    tierq = _tier_query(tier)
     state = getattr(request.app.state, "proxy_state", None)
     if state is None:
         return HTMLResponse(
             "<html><body><p>Panel is watching only: start it beside "
             "a live proxy to pause.</p>"
-            '<p><a href="/">Back to runs</a></p></body></html>',
+            f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=503)
     seam_pause_run(state, trace_id, reason="human pause")
-    return RedirectResponse(f"/runs/{trace_id}", status_code=303)
+    return RedirectResponse(f"/runs/{trace_id}{tierq}", status_code=303)
 
 
 @app.post("/runs/{trace_id}/verify")
 def verify_button(trace_id: str, request: Request,
-                  read_back: str = Form("")):
+                  read_back: str = Form(""), tier: str = ""):
     """The Verify button: stamps the gate, nothing else.
 
     Dev only, loopback only. Same shape as the Pause button: the panel
     app holds the live proxy state, and the route calls the seam on
     it. A refused Verify changes nothing and says so on its own page.
+    The tier rides the redirect back to the same tier.
     """
+    tierq = _tier_query(tier)
     state = getattr(request.app.state, "proxy_state", None)
     if state is None:
         return HTMLResponse(
             "<html><body><p>Panel is watching only: start it beside "
             "a live proxy to verify.</p>"
-            '<p><a href="/">Back to runs</a></p></body></html>',
+            f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=503)
     if seam_verify_run(state, trace_id, read_back=read_back):
-        return RedirectResponse(f"/runs/{trace_id}", status_code=303)
+        return RedirectResponse(f"/runs/{trace_id}{tierq}",
+                                status_code=303)
     return HTMLResponse(
         "<html><body><p>That Verify was refused. The Run must be "
         "paused or redirected, and the read-back must say what was "
         "checked.</p>"
-        f'<p><a href="/runs/{trace_id}">Back to run</a></p></body></html>',
+        f'<p><a href="/runs/{trace_id}{tierq}">Back to run</a></p>'
+        "</body></html>",
         status_code=400)
 
 
@@ -412,27 +468,30 @@ def relay_timeout_button(request: Request, seconds: str = Form("")):
 
 @app.post("/runs/{trace_id}/redirect")
 def redirect_button(trace_id: str, request: Request,
-                    new_dest: str = Form("")):
+                    new_dest: str = Form(""), tier: str = ""):
     """The redirect form: calls the plain human-only setter, nothing else.
 
     Dev only, loopback only. Same shape as the Pause button: the panel
     app holds the live proxy state, and the route calls the setter on
     it. A refused destination changes nothing and says so on its own
-    page.
+    page. The tier rides the redirect back to the same tier.
     """
+    tierq = _tier_query(tier)
     state = getattr(request.app.state, "proxy_state", None)
     if state is None:
         return HTMLResponse(
             "<html><body><p>Panel is watching only: start it beside "
             "a live proxy to redirect.</p>"
-            '<p><a href="/">Back to runs</a></p></body></html>',
+            f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=503)
     if state.redirect_run(trace_id, new_dest):
-        return RedirectResponse(f"/runs/{trace_id}", status_code=303)
+        return RedirectResponse(f"/runs/{trace_id}{tierq}",
+                                status_code=303)
     return HTMLResponse(
         "<html><body><p>That redirect was refused. Use a destination "
         "Iris already allows.</p>"
-        f'<p><a href="/runs/{trace_id}">Back to run</a></p></body></html>',
+        f'<p><a href="/runs/{trace_id}{tierq}">Back to run</a></p>'
+        "</body></html>",
         status_code=400)
 
 
