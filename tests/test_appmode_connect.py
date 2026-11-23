@@ -22,6 +22,17 @@ Rules under test (from specs/app-mode-connect/requirements.md):
 - One click disconnects. Iris restores the backup.
 - Every agent needs a restart to pick up a proxy change. The
   restart is part of the flow, not part of these tests.
+- The result never carries a secret. The read-back names the
+  proxy only, never the whole config (review pass, Nov 23).
+- A Continue config with no models has nothing to point at the
+  proxy. Iris refuses instead of reporting a success that
+  changed nothing (review pass, Nov 23).
+- An existing NO_PROXY or noProxy list gains localhost and
+  127.0.0.1 when they are missing. The agent must not send
+  Iris's own loopback traffic back through the proxy (review
+  pass, Nov 23).
+- A config that parses but is not a dict is broken. Iris refuses
+  instead of replacing it (review pass, Nov 23).
 
 Tests use a temp home dir, never the real one. Config paths come
 from the module, given a home dir, so the same test runs on all
@@ -215,6 +226,72 @@ class ConnectTest(unittest.TestCase):
                 os.path.abspath(path).startswith(
                     os.path.abspath(self.home)),
                 f"{agent_id} path escapes home: {path}")
+
+    def test_connect_result_does_not_leak_secrets(self):
+        # The Continue config holds a model apiKey. The result
+        # must not carry it: the read-back names the proxy only,
+        # never the whole config.
+        path = self._write(
+            "continue", json.dumps(_continue_config()))
+        result = connect_module.connect_agent(
+            "continue", PROXY_URL, self.home)
+        self.assertNotIn("sk-test-only", result)
+        self.assertIn(PROXY_URL, result)
+
+    def test_continue_connect_refuses_when_no_models(self):
+        # A Continue config with no models has nothing to point
+        # at the proxy. Iris refuses in plain words instead of
+        # reporting a success that changed nothing.
+        path = self._write("continue", json.dumps({"models": []}))
+        original = self._read(path)
+        with self.assertRaises(connect_module.Refused) as ctx:
+            connect_module.connect_agent(
+                "continue", PROXY_URL, self.home)
+        self.assertIn("Continue", str(ctx.exception))
+        # Nothing changed, and no backup was made.
+        self.assertEqual(self._read(path), original)
+        self.assertFalse(os.path.exists(path + ".iris-backup"))
+
+    def test_claude_connect_appends_loopback_to_no_proxy(self):
+        # An existing NO_PROXY without localhost must gain it: the
+        # agent must not send Iris's own loopback traffic back
+        # through the proxy.
+        settings = _claude_settings()
+        settings["env"] = {"NO_PROXY": "example.com"}
+        path = self._write("claude-code", json.dumps(settings))
+        connect_module.connect_agent(
+            "claude-code", PROXY_URL, self.home)
+        settings = json.loads(self._read(path))
+        no_proxy = settings["env"]["NO_PROXY"]
+        self.assertIn("example.com", no_proxy)
+        self.assertIn("localhost", no_proxy)
+        self.assertIn("127.0.0.1", no_proxy)
+
+    def test_continue_connect_appends_loopback_to_no_proxy(self):
+        # An existing noProxy list without localhost must gain it.
+        config = _continue_config()
+        config["models"][0]["requestOptions"] = {
+            "noProxy": ["example.com"]}
+        path = self._write("continue", json.dumps(config))
+        connect_module.connect_agent(
+            "continue", PROXY_URL, self.home)
+        config = connect_module.read_config("continue", path)
+        no_proxy = config["models"][0]["requestOptions"]["noProxy"]
+        self.assertIn("example.com", no_proxy)
+        self.assertIn("localhost", no_proxy)
+        self.assertIn("127.0.0.1", no_proxy)
+
+    def test_connect_refuses_non_dict_config(self):
+        # A config that parses but is not a dict is broken. Iris
+        # refuses instead of replacing it with a fresh dict.
+        path = self._write(
+            "claude-code", json.dumps(["not", "a", "dict"]))
+        original = self._read(path)
+        with self.assertRaises(connect_module.Refused):
+            connect_module.connect_agent(
+                "claude-code", PROXY_URL, self.home)
+        self.assertEqual(self._read(path), original)
+        self.assertFalse(os.path.exists(path + ".iris-backup"))
 
 
 if __name__ == "__main__":
