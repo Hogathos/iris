@@ -95,6 +95,56 @@ def _app():
     return app
 
 
+def _delete_window(window):
+    """Destroy a window now, on the rule that works for this OS.
+
+    No single teardown works on both Windows and 3.11.
+    shiboken6.delete fixes the Windows shutdown segfault but
+    leaves state that crashes the 3.11 bench test. deleteLater
+    plus sendPostedEvents fixes 3.11 but leaves the WebView
+    native surface alive and Windows segfaults at exit. A full
+    pump crashes the offscreen WebView2 backend. Deleting the
+    view's container first segfaults outright. Each platform
+    gets the teardown that works for it. sys.platform is
+    "win32" on Windows.
+    """
+    window.close()
+    if sys.platform == "win32":
+        from shiboken6 import delete as _delete_qobject
+        _delete_qobject(window)
+    else:
+        from PySide6.QtWidgets import QApplication
+        window.deleteLater()
+        QApplication.sendPostedEvents()
+
+
+def tearDownModule():
+    """Destroy all Qt state so none leaks into the next module.
+
+    The QApplication lives past this module otherwise, and on
+    Python 3.14 the collector tears its leftover wrappers down
+    in the wrong order during the next module's tests, which
+    crashes the process. The bench test passes alone on 3.14
+    and crashes only after these tests run, so the leak is
+    here. Destroying the app here, then forcing a collection,
+    leaves the next module a clean slate.
+    """
+    import gc
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is not None:
+        for widget in app.topLevelWidgets():
+            widget.close()
+        if sys.platform == "win32":
+            from shiboken6 import delete as _delete_qobject
+            _delete_qobject(app)
+        else:
+            app.deleteLater()
+            QApplication.sendPostedEvents()
+        del app
+    gc.collect()
+
+
 def _wait_until(deadline, cond):
     """Wait until cond holds or the deadline hits.
 
@@ -256,24 +306,7 @@ class WindowTest(unittest.TestCase):
 
     def tearDown(self):
         if self.window is not None:
-            # Platform-conditional teardown. No single teardown
-            # works on both Windows and 3.11. shiboken6.delete
-            # fixes the Windows shutdown segfault but leaves state
-            # that crashes the 3.11 bench test. deleteLater plus
-            # sendPostedEvents fixes 3.11 but leaves the WebView
-            # native surface alive and Windows segfaults at exit.
-            # A full pump crashes the offscreen WebView2 backend.
-            # Deleting the view's container first segfaults
-            # outright. Each platform gets the teardown that
-            # works for it. sys.platform is "win32" on Windows.
-            self.window.close()
-            if sys.platform == "win32":
-                from shiboken6 import delete as _delete_qobject
-                _delete_qobject(self.window)
-            else:
-                from PySide6.QtWidgets import QApplication
-                self.window.deleteLater()
-                QApplication.sendPostedEvents()
+            _delete_window(self.window)
             self.window = None
 
     def _window(self, ask_words=None, ask_confirm=None):
@@ -341,6 +374,10 @@ class WindowTest(unittest.TestCase):
         # controller stops at once. No pump.
         win.close()
         self.assertEqual(self.controller.stopped, 1)
+        # Delete the window here, not just close it. A closed
+        # window left for the collector becomes garbage the next
+        # module trips over on Python 3.14. Same rule as tearDown.
+        _delete_window(win)
         self.window = None
 
     def test_verify_uses_the_typed_words(self):
