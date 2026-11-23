@@ -35,7 +35,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWebView import QtWebView, QWebView
 from PySide6.QtWidgets import (
     QCheckBox, QHBoxLayout, QInputDialog, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget)
+    QSizePolicy, QVBoxLayout, QWidget)
 
 # Default ports: the panel beside the proxy, both loopback only.
 DEFAULT_PANEL_PORT = 8000
@@ -133,9 +133,11 @@ class AppController:
                  proxy_port: int | None = None,
                  instance_name: str = "iris-app-mode"):
         self.db_path = db_path or api_module.DB_PATH
+        # Port 0 is a real port: only None means the default.
         self.panel_port: int | None = (
-            panel_port if panel_port else DEFAULT_PANEL_PORT)
-        self.proxy_port = proxy_port if proxy_port else DEFAULT_PROXY_PORT
+            panel_port if panel_port is not None else DEFAULT_PANEL_PORT)
+        self.proxy_port = (
+            proxy_port if proxy_port is not None else DEFAULT_PROXY_PORT)
         self.instance_name = instance_name
         self.already_running = False
         self.start_error = ""
@@ -180,11 +182,23 @@ class AppController:
         self._beacon_stop.clear()
         try:
             self._open_beacon()
-        except OSError:
+        except FileExistsError:
             self._fail(
                 f"Iris is already running on this machine "
                 f"({self.instance_name}).",
                 already_running=True)
+            return False
+        except (FileNotFoundError, PermissionError):
+            folder = os.path.dirname(
+                os.path.abspath(self.db_path)) or "."
+            self._fail(
+                f"Iris could not start: the folder {folder} is not "
+                f"writable, so Iris cannot claim this machine. Make "
+                f"the folder writable, then start Iris again.")
+            return False
+        except OSError as exc:
+            self._fail(
+                f"Iris could not start: {exc}.")
             return False
         if not _port_free(panel_port):
             self._fail(
@@ -436,11 +450,19 @@ class IrisWindow(QWidget):
         top.addWidget(self.tier_switch)
         layout = QVBoxLayout(self)
         layout.addLayout(top)
-        # QWebView is a QWindow, not a QWidget, and the offscreen
-        # platform plugin has no setParent: hosting it in a widget
-        # container segfaults there (and in CI), so the view stays a
-        # bare member. It still loads the panel on setUrl, and the
-        # native buttons drive it from outside.
+        # QWebView is a QWindow, not a QWidget. The container
+        # hosts its native surface inside the widget layout, below
+        # the top bar, so the dashboard paints inside the window.
+        # Same engine, same view object the tests drive.
+        self.view_host = QWidget.createWindowContainer(self.view, self)
+        # The hosted window brings no size of its own: without an
+        # expanding policy the layout collapses it to zero height and
+        # the window shows only the button bar.
+        self.view_host.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.view_host.setMinimumSize(640, 480)
+        layout.addWidget(self.view_host)
+        self.resize(1024, 768)
         self.verify_button.clicked.connect(self._on_verify)
         self.pause_button.clicked.connect(self._on_pause)
         self.stop_button.clicked.connect(self._on_stop)

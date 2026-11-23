@@ -14,6 +14,18 @@ shell. The shell had to satisfy the tests exactly as written.
 
 ## Choices made during the build
 
+### 0. Correction, 2026-11-23: host the view in a container
+Choice: `IrisWindow` hosts the QWebView with
+`QWidget.createWindowContainer`, expanding, minimum 640x480, window
+1024x768. Rejected: a bare QWebView member. Why: the first build
+kept the view bare because the container segfaulted offscreen on
+Windows. That crash is sandbox-only: the offscreen plugin has no
+setParent. On Linux offscreen the container works, and only the
+container paints the dashboard inside the window. A bare view left
+a button bar with nothing under it. The window tests check this
+directly and run on Linux CI. The earlier decision 2 below was
+wrong and is superseded.
+
 ### 1. Single-instance lock beside the journal
 Choice: the lock file lives next to the journal file, named
 `<db>.iris-<instance>.lock`, with a loopback beacon port inside.

@@ -100,9 +100,10 @@ them, pauses them, and stops everything, all in the window.
   Rejected: a lock in the system temp folder or a fixed port per
   name. Why: the proxy must write the journal, so the journal
   folder is writable by definition.
-- 2026-11-23, view stays a bare QWebView member. Choice: the
-  window's view is a plain QWebView, not embedded in the widget
-  layout. Rejected: host it with QWidget.createWindowContainer.
-  Why: the offscreen platform plugin has no setParent, and the call
-  segfaults there, which would crash CI too. The view still loads
-  the panel on setUrl.
+- 2026-11-23, host the view in a container (corrected). Choice:
+  the window hosts the QWebView with QWidget.createWindowContainer,
+  expanding, minimum 640 by 480. Rejected: a bare QWebView member.
+  Why: only the container paints the dashboard inside the window.
+  The earlier bare-view choice rested on a Windows-sandbox offscreen
+  segfault. That crash is sandbox-only. Linux offscreen holds, and
+  the window tests run there.
