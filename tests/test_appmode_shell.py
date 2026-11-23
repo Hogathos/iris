@@ -243,7 +243,11 @@ class WindowTest(unittest.TestCase):
 
     def tearDown(self):
         if self.window is not None:
+            # Close is not enough: the hosted view keeps its native
+            # surface and its renderer alive. Delete the window so
+            # the next module starts clean.
             self.window.close()
+            self.window.deleteLater()
             self.app.processEvents()
 
     def _window(self, ask_words=None, ask_confirm=None):
