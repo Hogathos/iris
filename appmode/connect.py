@@ -24,8 +24,8 @@ import yaml
 # The backup suffix: the original bytes, kept beside the config.
 BACKUP_SUFFIX = ".iris-backup"
 
-# Loopback bypass for a fresh Claude Code proxy block. The agent
-# must not send Iris's own traffic back through the proxy.
+# Loopback bypass for a fresh proxy block. The agent must not send
+# Iris's own traffic back through the proxy.
 LOOPBACK_BYPASS = "localhost,127.0.0.1"
 
 # Known agents: id to plain display name. The id is the file key.
@@ -80,19 +80,23 @@ def config_path(agent_id: str, home: str) -> str:
         home, ".config", "Cursor", "User", "settings.json")
 
 
-def read_config(agent_id: str, path: str) -> dict:
-    """Parse the config file: YAML for Continue, JSON for the rest.
+def _parse_config(agent_id: str, text: str):
+    """Parse raw config text: YAML for Continue, JSON for the rest.
 
-    Continue's file is YAML. JSON is valid YAML, so a
-    JSON-written file parses fine too. The rest are plain JSON.
+    JSON is valid YAML, so a JSON-written Continue file parses
+    fine too. Returns whatever the text holds: a value that is
+    not a dict is broken, and connect refuses it instead of
+    replacing it with a fresh dict.
     """
     _agent_name(agent_id)
-    with open(path, encoding="utf-8") as handle:
-        if agent_id == "continue":
-            config = yaml.safe_load(handle)
-        else:
-            config = json.load(handle)
-    return config if isinstance(config, dict) else {}
+    if agent_id == "continue":
+        return yaml.safe_load(text)
+    return json.loads(text)
+
+
+def read_config(agent_id: str, path: str) -> object:
+    """Parse the config file: YAML for Continue, JSON for the rest."""
+    return _parse_config(agent_id, _read_bytes(path).decode("utf-8"))
 
 
 def _read_bytes(path: str) -> bytes:
@@ -107,6 +111,34 @@ def _write_backup(path: str, original: bytes) -> str:
     with open(backup_path, "wb") as handle:
         handle.write(original)
     return backup_path
+
+
+def _with_loopback_str(value: str | None) -> str:
+    """A comma bypass list with localhost and 127.0.0.1 in it.
+
+    Keeps the user's entries, appends what is missing, never
+    duplicates what is there.
+    """
+    seen = [part.strip() for part in (value or "").split(",")]
+    seen = [part for part in seen if part]
+    for host in ("localhost", "127.0.0.1"):
+        if host not in seen:
+            seen.append(host)
+    return ",".join(seen)
+
+
+def _with_loopback_list(value) -> list:
+    """A bypass list with localhost and 127.0.0.1 in it.
+
+    Same promise as the string form: keep, append, never
+    duplicate. The list shape stays a list.
+    """
+    seen = [str(item).strip() for item in (value or [])]
+    seen = [item for item in seen if item]
+    for host in ("localhost", "127.0.0.1"):
+        if host not in seen:
+            seen.append(host)
+    return seen
 
 
 def _claude_existing(env: dict) -> str | None:
@@ -134,10 +166,12 @@ def _continue_existing(config: dict) -> str | None:
 def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
     """Point the agent at the Iris proxy. Return plain words.
 
-    Back up first, write second, read back third. Refuse when the
-    agent already has a proxy setting, when its config file is
-    missing, or when the agent is unknown. A refusal changes
-    nothing and makes no backup.
+    Read first, re-read just before writing. Refuse when the file
+    changed mid-connect, when it holds no dict, when Continue
+    holds no models, when a proxy is already set, when the file
+    is missing, or when the agent is unknown. A refusal changes
+    nothing and makes no backup. The result names the proxy
+    fields only, never the whole config, so no secret leaks.
     """
     name = _agent_name(agent_id)
     path = config_path(agent_id, home)
@@ -145,7 +179,24 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
         raise Refused(
             f"{name} has no config file at {path}. "
             f"Open {name} once so it writes one, then connect again.")
-    config = read_config(agent_id, path)
+    original = _read_bytes(path)
+    config = _parse_config(agent_id, original.decode("utf-8"))
+    if not isinstance(config, dict):
+        raise Refused(
+            f"{name} config at {path} is not a settings file "
+            f"Iris can read. Iris changed nothing.")
+    if agent_id == "continue":
+        models = config.get("models")
+        if not isinstance(models, list) or not models:
+            raise Refused(
+                f"{name} has no models in {path}. "
+                f"Iris changed nothing.")
+    fresh = _read_bytes(path)
+    if fresh != original:
+        raise Refused(
+            f"{name} config at {path} changed while Iris was "
+            f"connecting. Iris kept the agent's change and "
+            f"wrote nothing.")
     if agent_id == "claude-code":
         existing = _claude_existing(config.get("env") or {})
     elif agent_id == "cursor":
@@ -157,40 +208,50 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
             f"{name} already routes through {existing}. "
             f"Iris changed nothing. Disconnect that proxy first, "
             f"then connect again.")
-    original = _read_bytes(path)
     backup_path = _write_backup(path, original)
     if agent_id == "claude-code":
         env = config.get("env") or {}
         env["HTTP_PROXY"] = proxy_url
         env["HTTPS_PROXY"] = proxy_url
-        env["NO_PROXY"] = env.get("NO_PROXY") or LOOPBACK_BYPASS
+        env["NO_PROXY"] = _with_loopback_str(env.get("NO_PROXY"))
         config["env"] = env
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(config, handle, indent=2)
             handle.write("\n")
+        change = f"HTTP_PROXY and HTTPS_PROXY to {proxy_url}"
     elif agent_id == "cursor":
         config["http.proxy"] = proxy_url
         config["http.proxySupport"] = "override"
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(config, handle, indent=2)
             handle.write("\n")
+        change = f"http.proxy and http.proxySupport to {proxy_url}"
     else:
-        for model in config.get("models") or []:
+        for model in config["models"]:
             if not isinstance(model, dict):
                 continue
             options = model.get("requestOptions") or {}
             options["proxy"] = proxy_url
-            options["noProxy"] = options.get("noProxy") or [
-                "localhost", "127.0.0.1"]
+            bypass = options.get("noProxy")
+            if isinstance(bypass, str):
+                options["noProxy"] = _with_loopback_str(bypass)
+            elif isinstance(bypass, list):
+                options["noProxy"] = _with_loopback_list(bypass)
+            else:
+                options["noProxy"] = ["localhost", "127.0.0.1"]
             model["requestOptions"] = options
         with open(path, "w", encoding="utf-8") as handle:
             yaml.safe_dump(config, handle, sort_keys=False)
-    read_back = read_config(agent_id, path)
+        count = sum(
+            1 for model in config["models"]
+            if isinstance(model, dict))
+        change = (f"requestOptions.proxy to {proxy_url} "
+                  f"on {count} model(s)")
+    _read_back = read_config(agent_id, path)
     return (
-        f"{name} now routes through {proxy_url}. "
-        f"Updated {path}. Backup at {backup_path}. "
-        f"Restart {name} so it picks up the change. "
-        f"Read back: {read_back}.")
+        f"{name} now routes through {proxy_url}. Set {change} "
+        f"in {path}. Backup at {backup_path}. Restart {name} "
+        f"so it picks up the change.")
 
 
 def disconnect_agent(agent_id: str, home: str) -> str:
