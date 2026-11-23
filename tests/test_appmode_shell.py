@@ -39,14 +39,22 @@ import tempfile
 import time
 import types
 import unittest
-import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
-os.environ.pop("NO_PROXY", None)
-os.environ.pop("no_proxy", None)
+# Loopback must bypass any proxy: the panel fetch and the view both
+# read the proxy env. Popping no_proxy sends the loopback panel URL
+# through the egress proxy, which closes it without a response.
+# Append, never pop, so existing bypasses survive.
+for _proxy_key in ("NO_PROXY", "no_proxy"):
+    _seen = [p.strip() for p in os.environ.get(_proxy_key, "").split(",")
+             if p.strip()]
+    for _host in ("127.0.0.1", "localhost"):
+        if _host not in _seen:
+            _seen.append(_host)
+    os.environ[_proxy_key] = ",".join(_seen)
 
 import api as api_module
 from appmode import shell as shell_module
@@ -164,10 +172,13 @@ class ControllerTest(unittest.TestCase):
     def test_start_serves_the_panel_and_the_proxy(self):
         """Start serves the panel page and a proxy that blocks."""
         ctl = self._start()
-        with urllib.request.urlopen(
-                ctl.panel_url("simple"), timeout=5) as resp:
-            self.assertEqual(resp.status, 200)
-            self.assertIn("Runs, live", resp.read().decode())
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", ctl.panel_port, timeout=5)
+        conn.request("GET", "/?tier=simple")
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        self.assertIn("Runs, live", resp.read().decode())
+        conn.close()
         conn = http.client.HTTPConnection(
             "127.0.0.1", ctl.proxy_port, timeout=5)
         conn.request("GET", "http://example.com/")
@@ -259,6 +270,22 @@ class WindowTest(unittest.TestCase):
             self.assertIsNot(button.parent(), win.view)
         self.assertIsNotNone(win.view)
         self.assertIn("127.0.0.1:8000", win.view.url().toString())
+
+    def test_view_sits_inside_the_window(self):
+        """The dashboard paints inside the Iris window, not beside it."""
+        win = self._window()
+        win.show()
+        self.app.processEvents()
+        self.assertTrue(win.view.isVisible())
+        hosted = False
+        layout = win.layout()
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if (widget is not None
+                    and widget.windowHandle() is win.view.transientParent()):
+                hosted = True
+        self.assertTrue(hosted)
 
     def test_tier_switch_changes_the_view_url(self):
         """Flipping the switch reloads the view at the other tier."""
