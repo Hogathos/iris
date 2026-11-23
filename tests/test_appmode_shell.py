@@ -78,15 +78,17 @@ def _app():
     return app
 
 
-def _pump_until(deadline, cond):
-    """Pump the Qt event loop until cond holds or the deadline hits."""
-    app = _app()
+def _wait_until(deadline, cond):
+    """Wait until cond holds or the deadline hits.
+
+    Plain sleep, no event pump. The condition is set by a worker
+    thread, not by Qt events, and pumping the loop crashes the
+    offscreen WebView2 backend on Windows.
+    """
     while time.time() < deadline:
-        app.processEvents()
         if cond():
             return True
         time.sleep(0.05)
-    app.processEvents()
     return cond()
 
 
@@ -208,7 +210,7 @@ class ControllerTest(unittest.TestCase):
         self.assertFalse(second.start())
         self.assertTrue(second.already_running)
         self.assertIsNone(second.panel_port)
-        self.assertTrue(_pump_until(
+        self.assertTrue(_wait_until(
             time.time() + 5, lambda: first.second_instance_seen))
 
     def test_port_taken_is_plain_words_and_leaves_nothing(self):
@@ -243,12 +245,18 @@ class WindowTest(unittest.TestCase):
 
     def tearDown(self):
         if self.window is not None:
-            # Close is not enough: the hosted view keeps its native
-            # surface and its renderer alive. Delete the window so
-            # the next module starts clean.
+            # Close, then destroy the C++ window at once.
+            # deleteLater needs an event pump to run, and pumping
+            # the loop crashes the offscreen WebView2 backend on
+            # Windows. shiboken6.delete destroys it synchronously,
+            # no pump. Without the destroy, the hosted view's
+            # native surface stays alive and the process segfaults
+            # at exit. The window is never shown, so the renderer
+            # never starts.
+            from shiboken6 import delete as _delete_qobject
             self.window.close()
-            self.window.deleteLater()
-            self.app.processEvents()
+            _delete_qobject(self.window)
+            self.window = None
 
     def _window(self, ask_words=None, ask_confirm=None):
         self.window = shell_module.IrisWindow(
@@ -260,8 +268,10 @@ class WindowTest(unittest.TestCase):
         from PySide6.QtCore import QUrl
         url = ("http://127.0.0.1:8000/runs/" + trace_id
                if trace_id else "http://127.0.0.1:8000/")
+        # setUrl updates the view URL synchronously. No event pump:
+        # pumping the loop crashes the offscreen WebView2 backend
+        # on Windows.
         self.window.view.setUrl(QUrl(url))
-        self.app.processEvents()
 
     def test_buttons_live_outside_the_view(self):
         """Verify, Pause, and Emergency stop are Qt widgets, not web."""
@@ -299,18 +309,19 @@ class WindowTest(unittest.TestCase):
         """Flipping the switch reloads the view at the other tier."""
         win = self._window()
         self.assertIn("tier=simple", win.view.url().toString())
+        # setChecked delivers the toggled signal synchronously in
+        # this thread, so the view URL updates at once. No pump.
         win.tier_switch.setChecked(True)
-        self.app.processEvents()
         self.assertIn("tier=advanced", win.view.url().toString())
         win.tier_switch.setChecked(False)
-        self.app.processEvents()
         self.assertIn("tier=simple", win.view.url().toString())
 
     def test_close_stops_the_controller(self):
         """Closing the window stops the proxy and the panel."""
         win = self._window()
+        # close delivers the close event synchronously, so the
+        # controller stops at once. No pump.
         win.close()
-        self.app.processEvents()
         self.assertEqual(self.controller.stopped, 1)
         self.window = None
 
