@@ -69,6 +69,23 @@ def _free_port():
     return port
 
 
+def _assert_port_free(testcase, port):
+    """Fail unless this loopback port binds free right now.
+
+    A re-bind, not a connect. A connect probe needs the stack to
+    refuse closed ports, and a filtered loopback drops the SYN
+    instead, so the probe times out. A bind needs no network
+    answer, so it proves freedom on a filtered loopback too.
+    """
+    probe = socket.socket()
+    try:
+        probe.bind(("127.0.0.1", port))
+    except OSError as exc:
+        testcase.fail(f"port {port} is still held: {exc}")
+    finally:
+        probe.close()
+
+
 def _app():
     """The one QApplication for this module, offscreen, reused."""
     from PySide6.QtWidgets import QApplication
@@ -193,12 +210,8 @@ class ControllerTest(unittest.TestCase):
         panel_port, proxy_port = ctl.panel_port, ctl.proxy_port
         ctl.stop()
         self.controller = None
-        with self.assertRaises(ConnectionRefusedError):
-            socket.create_connection(
-                ("127.0.0.1", proxy_port), timeout=2).close()
-        with self.assertRaises(ConnectionRefusedError):
-            socket.create_connection(
-                ("127.0.0.1", panel_port), timeout=2).close()
+        _assert_port_free(self, proxy_port)
+        _assert_port_free(self, panel_port)
 
     def test_second_start_refuses_and_starts_nothing(self):
         """A second controller refuses; the first one sees it."""
@@ -229,9 +242,7 @@ class ControllerTest(unittest.TestCase):
         self.assertIn(str(panel_port), ctl.start_error)
         self.assertNotIn("Traceback", ctl.start_error)
         self.controller = ctl
-        with self.assertRaises(ConnectionRefusedError):
-            socket.create_connection(
-                ("127.0.0.1", proxy_port), timeout=2).close()
+        _assert_port_free(self, proxy_port)
 
 
 class WindowTest(unittest.TestCase):
