@@ -36,6 +36,16 @@ Rules under test (from specs/app-mode-connect/requirements.md):
 - If the config file changes while Iris is connecting (the agent
   rewrote it), Iris refuses instead of writing over the agent's
   change with stale data (review pass, Nov 23).
+- A backup means a previous connect was never disconnected. Iris
+  refuses instead of overwriting the backup, so disconnect still
+  restores the original state (review pass, Nov 23).
+- Iris is loopback only. A proxy URL that points elsewhere, or
+  that is not a URL at all, is refused, and nothing is written
+  (review pass, Nov 23).
+- Cursor's http.proxySupport "override" sends updates and
+  extension downloads through Iris too, and Iris blocks
+  non-allowlisted destinations. The result says so in plain
+  words (review pass, Nov 23).
 
 Tests use a temp home dir, never the real one. Config paths come
 from the module, given a home dir, so the same test runs on all
@@ -329,6 +339,67 @@ class ConnectTest(unittest.TestCase):
         # The agent's change is intact, and no backup was made.
         self.assertEqual(self._read(path), changed)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
+
+    def test_connect_refuses_when_backup_already_exists(self):
+        # A backup means a previous connect was never
+        # disconnected. Iris refuses instead of overwriting the
+        # backup with a new one, so disconnect still restores
+        # the original state.
+        path = self._write(
+            "claude-code", json.dumps(_claude_settings()))
+        connect_module.connect_agent(
+            "claude-code", PROXY_URL, self.home)
+        # The user removes the proxy by hand, so a second
+        # connect would proceed, but the backup is still there.
+        settings = json.loads(self._read(path))
+        del settings["env"]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(settings))
+        with self.assertRaises(connect_module.Refused) as ctx:
+            connect_module.connect_agent(
+                "claude-code", PROXY_URL, self.home)
+        self.assertIn("backup", str(ctx.exception).lower())
+        # Nothing changed, and the original backup is intact.
+        self.assertEqual(self._read(path), json.dumps(settings))
+        self.assertEqual(
+            self._read(path + ".iris-backup"),
+            json.dumps(_claude_settings()))
+
+    def test_connect_refuses_non_loopback_proxy_url(self):
+        # Iris is loopback only. A proxy URL that points
+        # elsewhere is refused in plain words, and nothing is
+        # written.
+        path = self._write(
+            "claude-code", json.dumps(_claude_settings()))
+        original = self._read(path)
+        with self.assertRaises(connect_module.Refused):
+            connect_module.connect_agent(
+                "claude-code", "http://proxy.example.com:8080",
+                self.home)
+        self.assertEqual(self._read(path), original)
+        self.assertFalse(os.path.exists(path + ".iris-backup"))
+
+    def test_connect_refuses_malformed_proxy_url(self):
+        # A proxy URL that is not a URL at all is refused.
+        path = self._write(
+            "claude-code", json.dumps(_claude_settings()))
+        original = self._read(path)
+        with self.assertRaises(connect_module.Refused):
+            connect_module.connect_agent(
+                "claude-code", "not-a-url", self.home)
+        self.assertEqual(self._read(path), original)
+        self.assertFalse(os.path.exists(path + ".iris-backup"))
+
+    def test_cursor_connect_notes_override_side_effect(self):
+        # Cursor's http.proxySupport "override" sends updates
+        # and extension downloads through Iris too, and Iris
+        # blocks non-allowlisted destinations. The result says
+        # so in plain words, so the user is not surprised.
+        path = self._write(
+            "cursor", json.dumps(_cursor_settings()))
+        result = connect_module.connect_agent(
+            "cursor", PROXY_URL, self.home)
+        self.assertIn("update", result.lower())
 
 
 if __name__ == "__main__":
