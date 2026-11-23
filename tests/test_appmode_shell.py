@@ -256,17 +256,18 @@ class WindowTest(unittest.TestCase):
 
     def tearDown(self):
         if self.window is not None:
-            # Close, then destroy the C++ window at once.
-            # deleteLater needs an event pump to run, and pumping
-            # the loop crashes the offscreen WebView2 backend on
-            # Windows. shiboken6.delete destroys it synchronously,
-            # no pump. Without the destroy, the hosted view's
-            # native surface stays alive and the process segfaults
-            # at exit. The window is never shown, so the renderer
-            # never starts.
-            from shiboken6 import delete as _delete_qobject
+            # TEST (teardown hypothesis): revert to deleteLater + pump
+            # to test whether shiboken6.delete caused the 3.11
+            # bench-test segfault. 3.11 passed on CI before commit
+            # 794f751 (deleteLater + pump) and fails after it
+            # (shiboken6.delete). If 3.11 passes on CI with this
+            # revert, shiboken6.delete is the cause. If Windows
+            # segfaults at shutdown again, deleteLater + pump is
+            # bad for Windows and a third teardown is needed.
+            from PySide6.QtWidgets import QApplication
             self.window.close()
-            _delete_qobject(self.window)
+            self.window.deleteLater()
+            QApplication.processEvents()
             self.window = None
 
     def _window(self, ask_words=None, ask_confirm=None):
