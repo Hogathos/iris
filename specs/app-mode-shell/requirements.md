@@ -94,3 +94,15 @@ them, pauses them, and stops everything, all in the window.
   tier change alters the dev panel default. Why: the tier change must
   add, not change, the dev panel. The existing panel tests must stay
   green.
+- 2026-11-23, single-instance lock beside the journal. Choice: the
+  lock file lives next to the journal, named
+  `<db>.iris-<instance>.lock`, with a loopback beacon port inside.
+  Rejected: a lock in the system temp folder or a fixed port per
+  name. Why: the proxy must write the journal, so the journal
+  folder is writable by definition.
+- 2026-11-23, view stays a bare QWebView member. Choice: the
+  window's view is a plain QWebView, not embedded in the widget
+  layout. Rejected: host it with QWidget.createWindowContainer.
+  Why: the offscreen platform plugin has no setParent, and the call
+  segfaults there, which would crash CI too. The view still loads
+  the panel on setUrl.
