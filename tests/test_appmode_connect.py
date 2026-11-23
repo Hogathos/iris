@@ -33,6 +33,9 @@ Rules under test (from specs/app-mode-connect/requirements.md):
   pass, Nov 23).
 - A config that parses but is not a dict is broken. Iris refuses
   instead of replacing it (review pass, Nov 23).
+- If the config file changes while Iris is connecting (the agent
+  rewrote it), Iris refuses instead of writing over the agent's
+  change with stale data (review pass, Nov 23).
 
 Tests use a temp home dir, never the real one. Config paths come
 from the module, given a home dir, so the same test runs on all
@@ -291,6 +294,40 @@ class ConnectTest(unittest.TestCase):
             connect_module.connect_agent(
                 "claude-code", PROXY_URL, self.home)
         self.assertEqual(self._read(path), original)
+        self.assertFalse(os.path.exists(path + ".iris-backup"))
+
+    def test_connect_refuses_when_config_changes_mid_connect(self):
+        # If the config file changes while Iris is connecting (the
+        # agent rewrote it), Iris refuses instead of writing over
+        # the agent's change with stale data. Iris re-reads the
+        # file just before writing and refuses when the bytes
+        # differ from what it read at the start.
+        from unittest import mock
+        path = self._write(
+            "claude-code", json.dumps(_claude_settings()))
+        changed = json.dumps(
+            {**_claude_settings(), "theme": "light"})
+        calls = []
+        real_read_bytes = connect_module._read_bytes
+
+        def _changing_read(path_arg):
+            data = real_read_bytes(path_arg)
+            calls.append(data)
+            if len(calls) == 1:
+                # The agent rewrites its config after Iris read it.
+                with open(path_arg, "w", encoding="utf-8") as f:
+                    f.write(changed)
+            return data
+
+        with mock.patch.object(
+                connect_module, "_read_bytes",
+                side_effect=_changing_read):
+            with self.assertRaises(connect_module.Refused) as ctx:
+                connect_module.connect_agent(
+                    "claude-code", PROXY_URL, self.home)
+        self.assertIn("changed", str(ctx.exception).lower())
+        # The agent's change is intact, and no backup was made.
+        self.assertEqual(self._read(path), changed)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
 
