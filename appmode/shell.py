@@ -532,6 +532,11 @@ class IrisWindow(QWidget):
         except connect_module.Refused as exc:
             self._show_message(str(exc))
             return
+        except Exception as exc:
+            self._show_message(
+                f"Connect did not run: {exc}. "
+                f"The agent is not connected.")
+            return
         self._show_message(result)
         name = connect_module.AGENT_NAMES.get(agent_id, agent_id)
         choice = self._ask_restart(name)
