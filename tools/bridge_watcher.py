@@ -256,18 +256,50 @@ def download_file(url, dest_path, timeout=_REQUEST_TIMEOUT):
         handle.write(body)
 
 
-def run_muse(prompt_path, timeout=None):
-    """Run Muse Code headless on one prompt file. Returns its
-    exit code. None means wait as long as it takes."""
+def run_muse(command, timeout=None):
+    """Run Muse Code headless with a built command list.
+
+    Takes the command list itself (see build_command), not a
+    prompt path: run_once builds the command and hands it over.
+    The timeout is in seconds; None waits as long as the run
+    takes. Returns the exit code.
+    """
     proc = subprocess.run(
-        build_command(prompt_path), timeout=timeout,
+        command, timeout=timeout,
         capture_output=True, text=True)
     return proc.returncode
+
+
+def _is_baseline_run(state_file):
+    """True when no seen-list file exists yet: the very first
+    poll must baseline instead of running. An existing file,
+    even an empty list, means baseline already happened."""
+    return not os.path.exists(state_file)
+
+
+def _baseline_branch(config, branch, files, now):
+    """Mark every listed file seen without running any of them.
+
+    Returns the names marked. Nothing is downloaded and
+    nothing runs: old prompts stay done. The caller saves the
+    seen-list once every watched branch listed cleanly.
+    """
+    names = [item["name"] for item in files if item.get("name")]
+    parent = os.path.dirname(os.path.abspath(config["log_file"]))
+    os.makedirs(parent, exist_ok=True)
+    with open(config["log_file"], "a", encoding="utf-8") as handle:
+        handle.write(f"{now} baseline branch={branch} "
+                     f"files={len(names)} ran=none\n")
+    return names
 
 
 def run_once(config, lister, downloader, runner, now):
     """One poll: list, download the new, run each once, log it.
 
+    The very first poll baselines instead of running: with no
+    seen-list file yet, every file found is marked seen and
+    nothing runs, so old prompts are never re-done. A later
+    poll runs only files that appeared after the baseline.
     Only watched branches are listed. A listing failure skips
     that branch and retries next poll. A download failure leaves
     the file unmarked, so a later poll retries it. A Muse run
@@ -275,11 +307,15 @@ def run_once(config, lister, downloader, runner, now):
     prompt twice. Every launch is logged with time, branch,
     file, and exit code.
     """
-    seen = load_seen(config["state_file"])
+    state_file = config["state_file"]
+    baselining = _is_baseline_run(state_file)
+    seen = load_seen(state_file)
     os.makedirs(config["download_dir"], exist_ok=True)
     launched = []
     skipped_branches = []
     failed_downloads = []
+    baselined = []
+    all_listed = True
     for branch in config["branches"]:
         if not is_watched(branch, config["branches"]):
             continue
@@ -287,6 +323,16 @@ def run_once(config, lister, downloader, runner, now):
             files = lister(branch)
         except Exception:
             skipped_branches.append(branch)
+            all_listed = False
+            continue
+        if baselining:
+            # First run: mark everything found, run nothing.
+            # The save happens below, only when every watched
+            # branch listed cleanly, so a blip keeps the next
+            # poll in baseline mode instead of running old
+            # prompts as if they were new.
+            baselined.extend(_baseline_branch(
+                config, branch, files, now))
             continue
         for item in files:
             name = item["name"]
@@ -311,9 +357,17 @@ def run_once(config, lister, downloader, runner, now):
             log_launch(config["log_file"], now, branch, name,
                        code)
             launched.append((branch, name, code))
+    if baselining and all_listed:
+        # Baseline complete, even when nothing was found: an
+        # empty saved list still ends baseline mode, so a file
+        # appearing later runs exactly once.
+        for name in baselined:
+            seen = mark_seen(seen, name)
+        save_seen(state_file, seen)
     return {"launched": launched,
             "skipped_branches": skipped_branches,
-            "failed_downloads": failed_downloads}
+            "failed_downloads": failed_downloads,
+            "baselined": baselined if baselining else []}
 
 
 def build_parser():
