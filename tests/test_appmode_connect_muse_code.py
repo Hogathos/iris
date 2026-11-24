@@ -181,6 +181,18 @@ class MuseCodeConnectTest(unittest.TestCase):
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
+    def test_muse_code_connect_refuses_non_dict_endpoint_transport(self):
+        settings = _muse_settings()
+        settings["endpoint_transport"] = "not-a-dict"
+        path = self._write(json.dumps(settings))
+        original = self._read(path)
+        with self.assertRaises(connect_module.Refused) as ctx:
+            connect_module.connect_agent(
+                "muse-code", PROXY_URL, self.home)
+        self.assertIn("endpoint_transport", str(ctx.exception))
+        self.assertEqual(self._read(path), original)
+        self.assertFalse(os.path.exists(path + ".iris-backup"))
+
     def test_muse_code_connect_refuses_when_backup_already_exists(self):
         path = self._write(json.dumps(_muse_settings()))
         connect_module.connect_agent(
