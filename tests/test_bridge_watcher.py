@@ -264,6 +264,7 @@ class RunOnceTest(unittest.TestCase):
 
     def test_second_poll_runs_nothing(self):
         """The seen-list survives: a rerun finds no work."""
+        watcher.save_seen(self.state, set())
         watcher.run_once(
             self.config, self._lister(["new.md"]),
             self._downloader(), self._runner(),
@@ -278,6 +279,7 @@ class RunOnceTest(unittest.TestCase):
     def test_failed_run_is_still_marked_seen(self):
         """A failed Muse run is logged with its code and never
         runs again. Iris never double-runs a prompt."""
+        watcher.save_seen(self.state, set())
         report = watcher.run_once(
             self.config, self._lister(["new.md"]),
             self._downloader(), self._runner(code=3),
@@ -314,6 +316,8 @@ class RunOnceTest(unittest.TestCase):
     def test_failed_download_retries_next_poll(self):
         """A file that cannot download is not marked seen, so a
         later poll retries it. The other new file still runs."""
+        watcher.save_seen(self.state, set())
+
         def download(url, dest):
             if url.endswith("bad.md"):
                 raise ConnectionError("blip")
@@ -328,6 +332,116 @@ class RunOnceTest(unittest.TestCase):
         self.assertIn("good.md", self.ran[0][3])
         self.assertEqual(watcher.load_seen(self.state), {"good.md"})
         self.assertEqual(report["failed_downloads"], ["bad.md"])
+
+
+class RunMuseCommandTest(unittest.TestCase):
+    """run_muse takes a command list, not a prompt path (Bug 1).
+
+    Regression: run_once passes a built command list, but the
+    old run_muse built a second command around it, nesting the
+    list, and subprocess raised TypeError. The runner contract
+    (a command list) is correct and stays.
+    """
+
+    def test_run_muse_runs_command_list_directly(self):
+        from unittest import mock
+
+        seen = []
+
+        def _fake_run(cmd, **kwargs):
+            for part in cmd:
+                if not isinstance(part, (str, bytes, os.PathLike)):
+                    raise TypeError(
+                        "expected str, bytes or os.PathLike "
+                        f"object, not {type(part).__name__}")
+            seen.append((cmd, dict(kwargs)))
+            return mock.Mock(returncode=3)
+
+        cmd = ["muse", "exec", "--prompt-file", "p.md",
+               "--disable-approval"]
+        with mock.patch.object(watcher.subprocess, "run",
+                               side_effect=_fake_run):
+            code = watcher.run_muse(cmd)
+        self.assertEqual(code, 3)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][0], cmd)
+
+
+class BaselineTest(unittest.TestCase):
+    """First run baselines: mark everything, run nothing (Bug 2).
+
+    Regression: the first poll ran every old prompt file. Now
+    the first poll, with no seen-list file yet, only baselines.
+    A file appearing later runs exactly once.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "seen.json")
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.downloads = os.path.join(self.tmp.name, "prompts")
+        self.config = {
+            "branches": ["app-mode/x"],
+            "repo": "Hogathos/iris",
+            "prompts_dir": "prompts",
+            "poll_interval_seconds": 120,
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.downloads,
+        }
+        self.ran = []
+        self.downloaded = []
+
+    def _lister(self, files):
+        def listing(branch):
+            assert branch == "app-mode/x"
+            return [{"name": name,
+                     "url": "https://example.invalid/" + name}
+                    for name in files]
+        return listing
+
+    def _downloader(self):
+        def download(url, dest):
+            self.downloaded.append(dest)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as handle:
+                handle.write("prompt")
+        return download
+
+    def test_first_run_marks_seen_without_running(self):
+        """No seen-list file: both files marked, neither runs,
+        the log says baseline, the next identical poll is quiet,
+        and a file appearing later runs exactly once."""
+        self.assertFalse(os.path.exists(self.state))
+        first = watcher.run_once(
+            self.config, self._lister(["a.md", "b.md"]),
+            self._downloader(),
+            lambda cmd: self.ran.append(cmd) or 0,
+            now="2026-11-24T00:00:00Z")
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"a.md", "b.md"})
+        self.assertEqual(first["launched"], [])
+        with open(self.log, encoding="utf-8") as handle:
+            self.assertIn("baseline", handle.read().lower())
+        second = watcher.run_once(
+            self.config, self._lister(["a.md", "b.md"]),
+            self._downloader(),
+            lambda cmd: self.ran.append(cmd) or 0,
+            now="2026-11-24T00:01:00Z")
+        self.assertEqual(self.ran, [])
+        self.assertEqual(second["launched"], [])
+        third = watcher.run_once(
+            self.config, self._lister(["a.md", "b.md", "c.md"]),
+            self._downloader(),
+            lambda cmd: self.ran.append(cmd) or 0,
+            now="2026-11-24T00:02:00Z")
+        self.assertEqual(len(self.ran), 1)
+        self.assertIn("c.md", self.ran[0][3])
+        self.assertEqual(third["launched"],
+                         [("app-mode/x", "c.md", 0)])
 
 
 if __name__ == "__main__":
