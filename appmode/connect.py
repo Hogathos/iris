@@ -7,9 +7,10 @@ If the agent already has a proxy setting, Iris refuses in plain
 words and changes nothing. If the agent is not known, Iris says so
 in plain words.
 
-Agents in v1: Claude Code, Cursor, Continue. Each stores its proxy
-in a plain file, so Iris edits the file. Config paths take a home
-dir, so tests run under a temp home and never touch a live config.
+Agents in v1: Claude Code, Cursor, Continue, Muse Code. Each
+stores its proxy in a plain file, so Iris edits the file. Config
+paths take a home dir, so tests run under a temp home and never
+touch a live config.
 
 Loopback only. Metadata only. No bodies, no keys. Plain words only.
 """
@@ -35,6 +36,7 @@ AGENT_NAMES = {
     "claude-code": "Claude Code",
     "cursor": "Cursor",
     "continue": "Continue",
+    "muse-code": "Muse Code",
 }
 
 
@@ -69,6 +71,8 @@ def config_path(agent_id: str, home: str) -> str:
         return os.path.join(home, ".claude", "settings.json")
     if agent_id == "continue":
         return os.path.join(home, ".continue", "config.yaml")
+    if agent_id == "muse-code":
+        return os.path.join(home, ".config", "muse", "settings.json")
     if sys.platform == "win32":
         return os.path.join(
             home, "AppData", "Roaming", "Cursor", "User",
@@ -172,6 +176,14 @@ def _cursor_existing(settings: dict) -> str | None:
     return settings.get("http.proxy") or None
 
 
+def _muse_existing(settings: dict) -> str | None:
+    """The proxy Muse Code already uses, if any."""
+    transport = settings.get("endpoint_transport") or {}
+    if not isinstance(transport, dict):
+        return None
+    return transport.get("proxy") or None
+
+
 def _continue_existing(config: dict) -> str | None:
     """The first proxy a Continue model already uses, if any."""
     models = config.get("models") or []
@@ -214,6 +226,16 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
             raise Refused(
                 f"{name} has no models in {path}. "
                 f"Iris changed nothing.")
+    if agent_id == "muse-code":
+        if config.get("schema_version") != 1:
+            raise Refused(
+                f"{name} config at {path} needs schema_version 1. "
+                f"Iris changed nothing.")
+        transport = config.get("endpoint_transport")
+        if transport is not None and not isinstance(transport, dict):
+            raise Refused(
+                f"{name} config at {path} has an endpoint_transport "
+                f"block Iris cannot read. Iris changed nothing.")
     fresh = _read_bytes(path)
     if fresh != original:
         raise Refused(
@@ -229,6 +251,8 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
         existing = _claude_existing(config.get("env") or {})
     elif agent_id == "cursor":
         existing = _cursor_existing(config)
+    elif agent_id == "muse-code":
+        existing = _muse_existing(config)
     else:
         existing = _continue_existing(config)
     if existing:
@@ -258,6 +282,14 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
         note = (" Note: override sends Cursor updates and "
                 "extension downloads through Iris too, and Iris "
                 "blocks destinations it does not allow.")
+    elif agent_id == "muse-code":
+        transport = config.get("endpoint_transport") or {}
+        transport["proxy"] = proxy_url
+        config["endpoint_transport"] = transport
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(config, handle, indent=2)
+            handle.write("\n")
+        change = f"endpoint_transport.proxy to {proxy_url}"
     else:
         for model in config["models"]:
             if not isinstance(model, dict):

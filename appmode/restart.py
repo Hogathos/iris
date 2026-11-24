@@ -1,10 +1,11 @@
 """Restart an agent after connect, or say how in plain words.
 
 v1: Cursor on Windows gets a real restart. Iris closes Cursor
-and reopens it. Claude Code runs in a terminal, Continue runs
-inside VS Code: Iris cannot restart those from outside, so Iris
-says how in plain words instead. Cursor off Windows gets the
-same manual instruction. Unknown agents refuse in plain words.
+and reopens it. Claude Code and Muse Code run in a terminal,
+Continue runs inside VS Code: Iris cannot restart those from
+outside, so Iris says how in plain words instead. Cursor off
+Windows gets the same manual instruction. Unknown agents refuse
+in plain words.
 
 The restart decision is injectable: find_exe locates the agent
 binary, restart_process kills and relaunches it. Tests stub both,
@@ -78,6 +79,10 @@ def _manual_instruction(agent_id: str) -> str:
     """Plain-words restart steps for an agent Iris cannot restart."""
     if agent_id == "claude-code":
         return ("Claude Code runs in your terminal. Quit this "
+                "session and start a new one to pick up the "
+                "proxy change.")
+    if agent_id == "muse-code":
+        return ("Muse Code runs in your terminal. Quit this "
                 "session and start a new one to pick up the "
                 "proxy change.")
     if agent_id == "continue":
