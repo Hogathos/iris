@@ -577,5 +577,188 @@ class BaselineTest(unittest.TestCase):
                          [("app-mode/x", "c.md", 0)])
 
 
+class BranchCheckoutTest(unittest.TestCase):
+    """run_once checks out the prompt branch before running (Bug 6).
+
+    Regression: the watcher ran Muse Code in repo_dir as-is, without
+    checking out the prompt branch first. The spec and tests on the
+    prompt branch were missing, so Muse implemented from the prompt
+    text alone. run_once must switch the working tree to branch B
+    before running a prompt from B, with safeguards that skip the
+    run and leave the prompt unmarked.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "seen.json")
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.downloads = os.path.join(self.tmp.name, "prompts")
+        self.repo_dir = os.path.join(self.tmp.name, "repo")
+        os.makedirs(self.repo_dir, exist_ok=True)
+        self.branch = "feature/b"
+        self.config = {
+            "branches": [self.branch],
+            "repo": "Hogathos/iris",
+            "prompts_dir": "prompts",
+            "poll_interval_seconds": 120,
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.downloads,
+            "repo_dir": self.repo_dir,
+        }
+        self.order = []
+
+    def _lister(self, files):
+        def listing(branch):
+            self.assertEqual(branch, self.branch)
+            return [{"name": name,
+                     "url": "https://example.invalid/" + name}
+                    for name in files]
+        return listing
+
+    def _downloader(self):
+        def download(url, dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as handle:
+                handle.write("prompt")
+        return download
+
+    def _runner(self, code=0):
+        def run(cmd):
+            self.order.append("run")
+            return code
+        return run
+
+    def _read_log(self):
+        with open(self.log, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_checkout_happens_before_run_on_other_branch(self):
+        """A tree on another branch is switched before the run."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch") as current, \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                return_value=True), \
+            mock.patch.object(
+                watcher, "checkout_branch",
+                side_effect=lambda d, b: self.order.append("checkout")):
+            report = watcher.run_once(
+                self.config, self._lister(["new.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(current.call_args[0][0], self.repo_dir)
+        self.assertEqual(self.order, ["checkout", "run"])
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+
+    def test_no_checkout_when_already_on_branch(self):
+        """A tree already on B runs with no checkout."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value=self.branch), \
+            mock.patch.object(watcher, "checkout_branch") as checkout:
+            report = watcher.run_once(
+                self.config, self._lister(["new.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        checkout.assert_not_called()
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+
+    def test_dirty_tree_skips_run_and_leaves_unmarked(self):
+        """Uncommitted changes that a checkout would lose skip the
+        run. The prompt stays unmarked for a later poll."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=True), \
+            mock.patch.object(watcher, "checkout_branch") as checkout:
+            report = watcher.run_once(
+                self.config, self._lister(["new.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        checkout.assert_not_called()
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+        logged = self._read_log().lower()
+        self.assertIn("uncommitted", logged)
+        self.assertIn(self.branch.lower(), logged)
+
+    def test_missing_local_branch_skips_run_and_leaves_unmarked(self):
+        """A branch with no local copy skips the run. No fetch: the
+        watcher has no credentials for that. The prompt stays
+        unmarked."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                return_value=False), \
+            mock.patch.object(watcher, "checkout_branch") as checkout:
+            report = watcher.run_once(
+                self.config, self._lister(["new.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        checkout.assert_not_called()
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+        logged = self._read_log().lower()
+        self.assertIn(self.branch.lower(), logged)
+
+    def test_failed_checkout_skips_run_and_leaves_unmarked(self):
+        """A checkout that fails skips the run. The prompt stays
+        unmarked for a later poll."""
+        from unittest import mock
+        import subprocess
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                return_value=True), \
+            mock.patch.object(
+                watcher, "checkout_branch",
+                side_effect=subprocess.CalledProcessError(1, "git")):
+            report = watcher.run_once(
+                self.config, self._lister(["new.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+        logged = self._read_log().lower()
+        self.assertIn("checkout", logged)
+        self.assertIn(self.branch.lower(), logged)
+
+
 if __name__ == "__main__":
     unittest.main()
