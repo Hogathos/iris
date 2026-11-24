@@ -219,7 +219,7 @@ def is_watched(branch, branches):
 def build_command(prompt_path):
     """The headless Muse Code command for one prompt file."""
     return ["muse", "exec", "--prompt-file", prompt_path,
-            "--disable-approval"]
+            "--disable-approval", "--trust-workspace"]
 
 
 def log_launch(log_path, when, branch, filename, exit_code):
