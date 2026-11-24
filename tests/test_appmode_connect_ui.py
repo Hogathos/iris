@@ -38,6 +38,8 @@ import os
 import sys
 import unittest
 
+from hypothesis import given, strategies as st
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -367,3 +369,38 @@ class RestartTest(unittest.TestCase):
         from appmode import restart as restart_module
         with self.assertRaises(Refused):
             restart_module.restart_agent("unknown-agent")
+
+    @given(
+        agent_id=st.sampled_from(["claude-code", "cursor", "continue"]),
+        platform=st.sampled_from(["win32", "darwin", "linux"]),
+        exe_found=st.booleans(),
+    )
+    def test_restart_agent_property(self, agent_id, platform, exe_found):
+        """Property: restart_agent restarts only Cursor on Windows.
+
+        For every known agent and platform, restart_agent either
+        performs a real restart or returns a manual instruction.
+        It never calls the process function for a non-Cursor agent,
+        a non-Windows platform, or a missing exe. This is the
+        oracle for this feature: one independent check of the
+        restart decision, beyond the unit tests.
+        """
+        from appmode import restart as restart_module
+        calls = []
+
+        def _find_exe(agent):
+            return "C:\\fake\\Cursor.exe" if exe_found else None
+
+        def _restart_process(exe_path, process_name):
+            calls.append((exe_path, process_name))
+            return True
+
+        result = restart_module.restart_agent(
+            agent_id, platform=platform, find_exe=_find_exe,
+            restart_process=_restart_process)
+        if agent_id == "cursor" and platform == "win32" and exe_found:
+            self.assertEqual(len(calls), 1)
+            self.assertIn("restart", result.lower())
+        else:
+            self.assertEqual(calls, [])
+            self.assertTrue(result)

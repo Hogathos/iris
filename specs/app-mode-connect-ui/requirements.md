@@ -48,6 +48,15 @@ agent now. "Cancel" closes the dialog and restarts nothing.
 - Restart never happens without the warning and the confirmation.
 - Closing the picker without picking an agent does nothing.
 
+## Oracle
+
+The oracle is one property test over `restart_agent`.
+It checks the restart decision for every known agent and
+platform. A real restart happens only for Cursor on Windows
+with an exe found. Every other case returns a manual
+instruction and calls no process function. The property test
+runs in the review pass.
+
 ## Non-goals
 
 - A Disconnect button.

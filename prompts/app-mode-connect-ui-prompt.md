@@ -3,7 +3,7 @@
 ## Task
 
 Implement the Connect button plus the agent-restart step in the app
-window, per the spec. Make all 13 failing tests pass. Keep the full
+window, per the spec. Make all 14 failing tests pass. Keep the full
 suite green. Report, push the branch, stop.
 
 This is a full-context run. Read every file named below before you
@@ -14,11 +14,12 @@ this repo, on this branch.
 ## Read first, in this order
 
 1. `specs/app-mode-connect-ui/requirements.md` — the spec. What the
-   button does, its success criteria, its non-goals, its decisions,
+   button does, its success criteria, its oracle, its non-goals,
+   its decisions,
    and the exact words of the restart warning dialog. Follow the
    spec. The dialog text in the spec is exact. Use those words and
    no others.
-2. `tests/test_appmode_connect_ui.py` — the 13 failing tests. They
+2. `tests/test_appmode_connect_ui.py` — the 14 failing tests. They
    are the contract. Make them pass. Do not change the tests.
 3. `AGENTS.md` — the repo working rules. They win over this prompt
    unless Charles says otherwise in words. Pay attention to: plan
@@ -32,7 +33,11 @@ this repo, on this branch.
    drop the separate unittest runner; pytest collects
    unittest.TestCase since 9.0, so one pytest run covers both);
    never quote a test count from memory; check CI for the exact
-   commit.
+   commit; commit the tests separately, never edit them during
+   implementation; one property-based test for pure logic (the
+   oracle for this feature is the restart property test, named in
+   the spec, run it in the review pass); escalate after 3 failed
+   rounds.
 4. `specs/app-mode-connect/requirements.md` — the one-click connect
    spec. It defines the connect module you call. Read its Decisions
    section. The button calls the existing `connect_agent` and
@@ -91,12 +96,12 @@ this repo, on this branch.
 
 1. Read every file named above.
 2. Implement `appmode/restart.py` and the window changes in
-   `appmode/shell.py` so the 13 tests pass.
+   `appmode/shell.py` so the 14 tests pass.
 3. Run the full suite with pytest, plus ruff, flake8, and
    pyright. All must pass. Do not quote a test count from memory.
    Run the suite and read the result.
 4. Run the new test file on its own first, then the full suite.
-   Confirm the 13 new tests pass and nothing else broke.
+   Confirm the 14 new tests pass and nothing else broke.
 5. Commit the changed files only (named files, never `git add -A`).
    Push the branch `app-mode/connect-ui`. Do not open a pull
    request. Do not merge. Charles approves the merge in words.
@@ -113,6 +118,9 @@ generic review.
   then see if it fails. Boundary, invalid input, partial failure.
   A review that only confirms what is already believed adds
   nothing.
+- Oracle: run the property test in the review pass. It is the
+  independent check of the restart decision. It must pass, and it
+  must fail if the decision logic is wrong.
 - Unplanned files: did the change create any file that was not in
   the plan? Did it split existing code into a new file that was
   not planned? A new file that was in the plan is fine.
