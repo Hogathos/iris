@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import threading
 import time
 from urllib.parse import urlsplit, urlunsplit
@@ -59,6 +60,23 @@ BEACON_PING_TIMEOUT = 2.0
 def panel_url(panel_port: int, tier: str = "simple") -> str:
     """The view URL: the loopback panel, at one tier."""
     return f"http://127.0.0.1:{panel_port}/?tier={tier}"
+
+
+def _default_db_path() -> str:
+    """Journal path: beside the API module, unless frozen.
+
+    Frozen (the packaged exe): the bundle is versioned output,
+    so the journal lives in per-user data outside it. The
+    installer creates the folder; the app creates it too, so a
+    first run without the installer still works.
+    """
+    if getattr(sys, "frozen", False):
+        data_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "Iris Guardian")
+        os.makedirs(data_dir, exist_ok=True)
+        return os.path.join(data_dir, "attempts.db")
+    return api_module.DB_PATH
 
 
 def _safe_name(text: str) -> str:
@@ -134,7 +152,7 @@ class AppController:
                  panel_port: int | None = None,
                  proxy_port: int | None = None,
                  instance_name: str = "iris-app-mode"):
-        self.db_path = db_path or api_module.DB_PATH
+        self.db_path = db_path or _default_db_path()
         # Port 0 is a real port: only None means the default.
         self.panel_port: int | None = (
             panel_port if panel_port is not None else DEFAULT_PANEL_PORT)

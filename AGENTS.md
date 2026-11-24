@@ -54,6 +54,7 @@ Challenge bad, weak, rushed, or rule-breaking ideas before building. Give the pl
 
 - Stage named files only. Never `git add -A`. Never `git commit -a`.
 - Never commit `.exe`, `dist/`, `build/`, `attempts.db`, `*.db`, `.pytest_cache/`, `*.spec`, or secrets.
+- Exception (Charles, Nov 24, 2026): the checked-in `iris.spec` (PyInstaller spec for app-mode packaging) is a hand-written source file with relative paths, not a generated artifact. It is committed. A generated `.spec` file from a bare `pyinstaller` run stays banned.
 - Check `git check-ignore -v` before any commit that touches those paths.
 - Check `git status` first. Check CI for the exact commit before claiming green.
 - Report the commit hash, the push result, and the test results. Then stop.

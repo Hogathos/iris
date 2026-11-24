@@ -10,7 +10,42 @@ sets QT_QPA_PLATFORM: a real window needs a real display.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+
+
+def _ensure_stdio():
+    """Point broken standard streams at the null device, frozen only.
+
+    A packaged --noconsole exe launched from a console inherits
+    standard handles for a console it never attached to. The
+    first write to one (a log line, a warning, a print) raises
+    and kills startup. A redirected stream is a real file or
+    pipe, so it stays. Only a broken one is replaced, before
+    any other module runs. os.fstat proves the handle without
+    writing a byte.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    modes = (("stdin", "r"), ("stdout", "w"), ("stderr", "w"))
+    for name, mode in modes:
+        stream = getattr(sys, name, None)
+        if stream is None:
+            broken = True
+        else:
+            try:
+                os.fstat(stream.fileno())
+                broken = False
+            except Exception:
+                broken = True
+        if broken:
+            try:
+                setattr(sys, name, open(os.devnull, mode))
+            except OSError:
+                pass
+
+
+_ensure_stdio()
 
 from appmode.shell import (
     DEFAULT_PANEL_PORT, DEFAULT_PROXY_PORT, AppController, IrisWindow)
