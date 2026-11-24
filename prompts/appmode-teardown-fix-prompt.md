@@ -80,3 +80,17 @@ reviewer does not forget it.
 - Do not merge, do not open a PR, do not touch any other branch.
   Commit and push the branch only. Report the commit hash, the test
   results, and the teardown order you chose, then stop.
+
+## Report
+
+Write your report to a file on this branch, in addition to
+printing it in the terminal. The file is
+`prompts/appmode-teardown-fix-report.md`. Push it as its own
+commit after the implementation, so the reviewer can read it from
+GitHub without anyone copying it out of the terminal. The report
+carries: the commit hashes (tests and implementation), the test
+results (new tests fail-before and pass-after, full suite count),
+what changed, the teardown order you chose and why, what you
+verified, and what is still open (including the Dell Windows 3.14
+hand check). The reviewer decides whether the report file stays or
+is dropped before merge.
