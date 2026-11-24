@@ -1,6 +1,10 @@
-# This workflow runs the tests and lint on a matrix of operating
-# systems and Python versions. The matrix is the platform test:
-# one OS and one Python version is not a matrix.
+# This workflow runs the tests and lint. The matrix is tiered by
+# task: pull requests run a quick subset for fast feedback, and
+# pushes to main run the full matrix for complete coverage. A
+# pull request that touches platform-sensitive code (Qt,
+# packaging, teardown, Windows-specific) gets the full matrix too,
+# by running this workflow manually on its branch
+# (Actions > Python application > Run workflow).
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
 name: Python application
@@ -9,13 +13,85 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  build-quick:
+    # Pull requests only. Five runs: all three OS on Python 3.12,
+    # plus the oldest and newest Python on Ubuntu. This catches
+    # OS-specific and Python-version issues without running all 15.
+    if: github.event_name == 'pull_request'
+    strategy:
+      # Fail-fast off: a failing combo must not hide the others.
+      # The matrix reports green per combo, not green overall.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.14"
 
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        # The install step uses bash test syntax. Windows runners
+        # default to PowerShell, so pin bash on every OS.
+        shell: bash
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install Qt system libraries (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libfontconfig1 libxkbcommon0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 libxi6 libxtst6 libgtk-3-0 libglib2.0-0 libdbus-1-3
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff pyright flake8 pytest hypothesis fastapi uvicorn
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Lint with Ruff
+      run: |
+        # stop the build on hard errors only (ruff.toml: E9, F63, F7, F82)
+        ruff check . --statistics
+        # the rest is warnings only, never a build failure
+        ruff check . --select=E,F --exit-zero --statistics
+    - name: Lint with flake8
+      # always runs so both linters report, even if Ruff failed
+      if: always()
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Type-check with Pyright
+      run: |
+        pyright
+    - name: Test with pytest
+      env:
+        PYTHONPATH: .
+      run: |
+        python -m pytest tests/ -q
+
+  build-full:
+    # Pushes to main, and manual runs on any branch. The full
+    # matrix: three OS times five Python versions, fifteen runs.
+    # The matrix is the platform test: one OS and one Python
+    # version is not a matrix.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       # Fail-fast off: a failing combo must not hide the other fourteen.
       # The matrix reports green per combo, not green overall.
