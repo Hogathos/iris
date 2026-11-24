@@ -185,7 +185,14 @@ class LaunchCommandTest(unittest.TestCase):
         self.assertEqual(
             watcher.build_command("/tmp/p.md"),
             ["muse", "exec", "--prompt-file", "/tmp/p.md",
-             "--disable-approval"])
+             "--disable-approval", "--trust-workspace"])
+
+    def test_build_command_trusts_workspace(self):
+        """The watcher runs the user's own repo, so the command
+        trusts the workspace: project rules, delegation, and
+        project MCP servers load instead of being skipped."""
+        self.assertIn("--trust-workspace",
+                      watcher.build_command("/tmp/p.md"))
 
 
 class RunOnceTest(unittest.TestCase):
@@ -243,7 +250,7 @@ class RunOnceTest(unittest.TestCase):
             self.ran[0],
             ["muse", "exec", "--prompt-file",
              os.path.join(self.downloads, "new.md"),
-             "--disable-approval"])
+             "--disable-approval", "--trust-workspace"])
         with open(self.log, encoding="utf-8") as handle:
             logged = handle.read()
         self.assertIn("2026-11-24T00:00:00Z", logged)
