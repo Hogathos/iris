@@ -28,8 +28,11 @@ this repo, on this branch.
    files only; never commit `.exe`, `dist/`, `build/`, `*.db`,
    `.pytest_cache/`, `*.spec`, or secrets; work on a branch, open
    a pull request, merge only after CI is green and Charles
-   approves in words; run both test runners; never quote a test
-   count from memory; check CI for the exact commit.
+   approves in words; run pytest only (Charles decided Nov 23 to
+   drop the separate unittest runner; pytest collects
+   unittest.TestCase since 9.0, so one pytest run covers both);
+   never quote a test count from memory; check CI for the exact
+   commit.
 4. `specs/app-mode-connect/requirements.md` — the one-click connect
    spec. It defines the connect module you call. Read its Decisions
    section. The button calls the existing `connect_agent` and
@@ -89,7 +92,7 @@ this repo, on this branch.
 1. Read every file named above.
 2. Implement `appmode/restart.py` and the window changes in
    `appmode/shell.py` so the 13 tests pass.
-3. Run the full suite with both runners, plus ruff, flake8, and
+3. Run the full suite with pytest, plus ruff, flake8, and
    pyright. All must pass. Do not quote a test count from memory.
    Run the suite and read the result.
 4. Run the new test file on its own first, then the full suite.
@@ -98,7 +101,7 @@ this repo, on this branch.
    Push the branch `app-mode/connect-ui`. Do not open a pull
    request. Do not merge. Charles approves the merge in words.
 6. Report: the commit hash, the push result, the test results
-   (both runners, lint results), and what is still open. Then
+   (pytest, lint results), and what is still open. Then
    stop.
 
 ## Review pass (do this before you report)
