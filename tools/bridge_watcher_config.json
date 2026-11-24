@@ -1,0 +1,9 @@
+{
+  "branches": ["app-mode/packaging"],
+  "repo": "Hogathos/iris",
+  "prompts_dir": "prompts",
+  "poll_interval_seconds": 120,
+  "state_file": "bridge_watcher_seen.json",
+  "log_file": "bridge_watcher.log",
+  "download_dir": "bridge_prompts"
+}
