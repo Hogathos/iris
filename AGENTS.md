@@ -39,7 +39,12 @@ Challenge bad, weak, rushed, or rule-breaking ideas before building. Give the pl
 - Plan first for any change that touches two or more modules. List files, order, risks, and out of scope. No code yet. Charles approves the plan.
 - Each feature keeps a short spec in `specs/<feature>/requirements.md`. State what it does, its success criteria, and its non-goals. Keep it a few hundred words. No implementation detail in the spec.
 - New behavior: write the failing test first. Show it. Charles reviews the test. Then implement. Use this for new behavior, not for refactors.
-- After implementation: one review pass that names specific risks. Security, edge cases, efficiency. Not a generic "review this".
+- Commit the tests separately from the implementation. Never edit the tests during implementation.
+- For pure logic, add one property-based test (Hypothesis). It finds bugs that unit tests miss.
+- After implementation: one review pass that names specific risks. Security, edge cases, efficiency. Not a generic "review this". Falsification (set 2026-11-23, from @y0us91's Qiita article): do not ask whether the implementation is correct. Ask for a test that proves it wrong — boundary, concurrency, retry, timeout, invalid input, partial failure, race conditions. Shift from confirmation to falsification. Unplanned files (set 2026-11-23, from Paolo @paoloanzn's code-locality thread): in the review pass, check whether the change created any file not in the approved plan, and specifically whether it split existing code into a new file that was not planned. A new file that was in the plan is fine. No per-file check — the plan already names the files, and a per-file gate would break one-go runs.
+- Oracle per feature (set 2026-11-23, from best-practices research): every feature gets one independent check of the answer, not just the tests. For pure logic, that check is a property test. For the proxy, it is the read-back. Name it in the spec, run it in the review pass.
+- PR lens (set 2026-11-23): when opening a PR, structure first. Plain-words summary of what changed and why. Tree of changed modules with one line each. Test results. Named risks left over. Then the diff below for detail. The summary carries the verdict shape: what the change claims, what the tests actually proved, what stays Unknown. Tiered: small PRs get a one-liner, big ones get the full lens. Verification scales with the size of the change.
+- Escalate after 3 failed rounds (set 2026-11-23, from best-practices research): if the agent fails the same check 3 times, stop and escalate to Charles. Do not keep retrying.
 - After correctness and teach-back, check efficiency. Spot unnecessary, redundant, or over-processing code. Steer generated code toward high performance.
 - Keep verbose comments and docstrings. A human found or wrote them. They are part of the code, not slop. Do not strip them to look terse.
 - Do not use Linear for Iris. GitHub Issues plus specs already do it.
@@ -60,7 +65,7 @@ Challenge bad, weak, rushed, or rule-breaking ideas before building. Give the pl
 - Do not commit with a failing or skipped test you have not disclosed.
 - Run the suite end to end, including any report or visualizer script.
 - Report files changed, test count, demo numbers, secrets result, and what is still open. Then stop.
-- Run tests with: `python -m unittest discover -s tests -v` and `python -m pytest tests/ -q`. Both must pass.
+- Run tests with: `python -m pytest tests/ -q`. Pytest collects unittest.TestCase since 9.0, so one pytest run covers both. The separate unittest runner is dropped (Charles, Nov 23).
 - Do not quote a test count from memory. Run the suite and read the result. Check CI Actions for the exact commit.
 
 ## Iris principles
