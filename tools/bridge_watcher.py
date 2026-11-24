@@ -281,6 +281,58 @@ def run_muse(command, repo_dir, timeout=None):
     return proc.returncode
 
 
+def get_current_branch(repo_dir):
+    """The branch the working tree is on now, in plain words on failure.
+
+    Raises when git cannot answer: the caller skips the run instead
+    of guessing.
+    """
+    proc = subprocess.run(
+        ["git", "-C", repo_dir, "rev-parse", "--abbrev-ref",
+         "HEAD"],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, proc.args, output=proc.stdout,
+            stderr=proc.stderr)
+    return proc.stdout.strip()
+
+
+def branch_exists_locally(repo_dir, branch):
+    """True when refs/heads/branch exists locally. No fetch: the
+    watcher has no credentials for that."""
+    proc = subprocess.run(
+        ["git", "-C", repo_dir, "rev-parse", "--verify",
+         "--quiet", "refs/heads/" + branch],
+        capture_output=True, text=True)
+    return proc.returncode == 0
+
+
+def working_tree_dirty(repo_dir):
+    """True when git status shows uncommitted changes."""
+    proc = subprocess.run(
+        ["git", "-C", repo_dir, "status", "--porcelain"],
+        capture_output=True, text=True, check=True)
+    return bool(proc.stdout.strip())
+
+
+def checkout_branch(repo_dir, branch):
+    """Switch the working tree to a local branch. Raises when git
+    cannot switch."""
+    subprocess.run(
+        ["git", "-C", repo_dir, "checkout", branch],
+        capture_output=True, text=True, check=True)
+
+
+def _log_skip(log_path, now, branch, name, reason):
+    """One plain-words skip line: time, branch, file, reason."""
+    parent = os.path.dirname(os.path.abspath(log_path))
+    os.makedirs(parent, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(f"{now} skip branch={branch} file={name} "
+                     f"reason={reason}\n")
+
+
 def _is_baseline_run(state_file):
     """True when no seen-list file exists yet: the very first
     poll must baseline instead of running. An existing file,
@@ -312,11 +364,14 @@ def run_once(config, lister, downloader, runner, now):
     nothing runs, so old prompts are never re-done. A later
     poll runs only files that appeared after the baseline.
     Only watched branches are listed. A listing failure skips
-    that branch and retries next poll. A download failure leaves
-    the file unmarked, so a later poll retries it. A Muse run
-    is marked seen whatever its exit code: Iris never runs a
-    prompt twice. Every launch is logged with time, branch,
-    file, and exit code.
+    that branch and retries next poll. Before running a prompt
+    from branch B, the working tree in repo_dir is switched to
+    B with a local checkout. A checkout skip leaves the prompt
+    unmarked, so a later poll retries it. A download failure
+    leaves the file unmarked, so a later poll retries it. A
+    Muse run is marked seen whatever its exit code: Iris never
+    runs a prompt twice. Every launch is logged with time,
+    branch, file, and exit code.
     """
     state_file = config["state_file"]
     baselining = _is_baseline_run(state_file)
@@ -325,6 +380,7 @@ def run_once(config, lister, downloader, runner, now):
     launched = []
     skipped_branches = []
     failed_downloads = []
+    skipped_checkouts = []
     baselined = []
     all_listed = True
     for branch in config["branches"]:
@@ -345,6 +401,65 @@ def run_once(config, lister, downloader, runner, now):
             baselined.extend(_baseline_branch(
                 config, branch, files, now))
             continue
+        pending = [item for item in files
+                   if item.get("name") not in seen
+                   and os.path.basename(item.get("name", "")) ==
+                   item.get("name", "")
+                   and item.get("name") not in (".", "..")]
+        if pending and config.get("repo_dir"):
+            repo_dir = config["repo_dir"]
+            try:
+                current = get_current_branch(repo_dir)
+            except Exception as exc:
+                reason = ("cannot read current branch, "
+                          f"checkout to {branch} skipped ({exc})")
+                for item in pending:
+                    _log_skip(config["log_file"], now, branch,
+                              item["name"], reason)
+                    skipped_checkouts.append(
+                        (branch, item["name"], reason))
+                continue
+            if current != branch:
+                try:
+                    dirty = working_tree_dirty(repo_dir)
+                except Exception as exc:
+                    reason = ("cannot check for uncommitted changes, "
+                              f"checkout to {branch} skipped ({exc})")
+                    for item in pending:
+                        _log_skip(config["log_file"], now, branch,
+                                  item["name"], reason)
+                        skipped_checkouts.append(
+                            (branch, item["name"], reason))
+                    continue
+                if dirty:
+                    reason = ("uncommitted changes would be lost "
+                              f"by checkout to {branch}, run skipped")
+                    for item in pending:
+                        _log_skip(config["log_file"], now, branch,
+                                  item["name"], reason)
+                        skipped_checkouts.append(
+                            (branch, item["name"], reason))
+                    continue
+                if not branch_exists_locally(repo_dir, branch):
+                    reason = (f"no local branch {branch}, no fetch "
+                              f"attempted, run skipped")
+                    for item in pending:
+                        _log_skip(config["log_file"], now, branch,
+                                  item["name"], reason)
+                        skipped_checkouts.append(
+                            (branch, item["name"], reason))
+                    continue
+                try:
+                    checkout_branch(repo_dir, branch)
+                except Exception as exc:
+                    reason = (f"checkout to {branch} failed "
+                              f"({exc}), run skipped")
+                    for item in pending:
+                        _log_skip(config["log_file"], now, branch,
+                                  item["name"], reason)
+                        skipped_checkouts.append(
+                            (branch, item["name"], reason))
+                    continue
         for item in files:
             name = item["name"]
             if name in seen:
@@ -378,6 +493,7 @@ def run_once(config, lister, downloader, runner, now):
     return {"launched": launched,
             "skipped_branches": skipped_branches,
             "failed_downloads": failed_downloads,
+            "skipped_checkouts": skipped_checkouts,
             "baselined": baselined if baselining else []}
 
 
