@@ -264,6 +264,7 @@ class RunOnceTest(unittest.TestCase):
 
     def test_second_poll_runs_nothing(self):
         """The seen-list survives: a rerun finds no work."""
+        watcher.save_seen(self.state, set())
         watcher.run_once(
             self.config, self._lister(["new.md"]),
             self._downloader(), self._runner(),
@@ -278,6 +279,7 @@ class RunOnceTest(unittest.TestCase):
     def test_failed_run_is_still_marked_seen(self):
         """A failed Muse run is logged with its code and never
         runs again. Iris never double-runs a prompt."""
+        watcher.save_seen(self.state, set())
         report = watcher.run_once(
             self.config, self._lister(["new.md"]),
             self._downloader(), self._runner(code=3),
@@ -314,6 +316,8 @@ class RunOnceTest(unittest.TestCase):
     def test_failed_download_retries_next_poll(self):
         """A file that cannot download is not marked seen, so a
         later poll retries it. The other new file still runs."""
+        watcher.save_seen(self.state, set())
+
         def download(url, dest):
             if url.endswith("bad.md"):
                 raise ConnectionError("blip")
