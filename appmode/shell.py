@@ -28,6 +28,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import api as api_module
 import proxy as proxy_module
+from appmode import connect as connect_module
+from appmode import restart as restart_module
 from devpanel import panel as panel_module
 from devpanel import pause_run as seam_pause_run
 from devpanel import verify_run as seam_verify_run
@@ -426,7 +428,9 @@ class IrisWindow(QWidget):
     """
 
     def __init__(self, controller, seams=None, ask_words=None,
-                 ask_confirm=None, parent=None):
+                 ask_confirm=None, pick_agent=None, show_message=None,
+                 ask_restart=None, connect_fn=None, restart_fn=None,
+                 parent=None):
         super().__init__(parent)
         self._controller = controller
         if seams is None:
@@ -434,6 +438,13 @@ class IrisWindow(QWidget):
         self._seams = seams
         self._ask_words = ask_words or self._ask_words_dialog
         self._ask_confirm = ask_confirm or self._ask_confirm_dialog
+        self._pick_agent = pick_agent or self._pick_agent_dialog
+        self._show_message = show_message or self._show_message_dialog
+        self._ask_restart = ask_restart or self._ask_restart_dialog
+        self._connect_fn = connect_fn or connect_module.connect_agent
+        self._restart_fn = (restart_fn
+                            or (lambda agent_id:
+                                restart_module.restart_agent(agent_id)))
         self.setWindowTitle("Iris")
         QtWebView.initialize()
         self.view = QWebView()
@@ -441,11 +452,13 @@ class IrisWindow(QWidget):
         self.verify_button = QPushButton("Verify")
         self.pause_button = QPushButton("Pause")
         self.stop_button = QPushButton("Emergency stop")
+        self.connect_button = QPushButton("Connect")
         self.tier_switch = QCheckBox("Advanced")
         top = QHBoxLayout()
         top.addWidget(self.verify_button)
         top.addWidget(self.pause_button)
         top.addWidget(self.stop_button)
+        top.addWidget(self.connect_button)
         top.addStretch(1)
         top.addWidget(self.tier_switch)
         layout = QVBoxLayout(self)
@@ -466,6 +479,7 @@ class IrisWindow(QWidget):
         self.verify_button.clicked.connect(self._on_verify)
         self.pause_button.clicked.connect(self._on_pause)
         self.stop_button.clicked.connect(self._on_stop)
+        self.connect_button.clicked.connect(self._on_connect)
         self.tier_switch.toggled.connect(self._on_tier)
 
     def _current_run(self):
@@ -498,6 +512,48 @@ class IrisWindow(QWidget):
         if self._ask_confirm():
             self._seams.red_button()
 
+    def _on_connect(self):
+        """Connect one agent, show the result, offer the restart.
+
+        The picker may return nothing: closing it without picking
+        connects nothing, shows nothing, restarts nothing. A
+        refusal shows in plain words and restarts nothing. A
+        confirmed restart runs and shows. "Save" and "Cancel"
+        restart nothing.
+        """
+        agent_id = self._pick_agent()
+        if agent_id is None:
+            return
+        proxy_url = (f"http://127.0.0.1:"
+                     f"{self._controller.proxy_port}")
+        try:
+            result = self._connect_fn(
+                agent_id, proxy_url, os.path.expanduser("~"))
+        except connect_module.Refused as exc:
+            self._show_message(str(exc))
+            return
+        except Exception as exc:
+            self._show_message(
+                f"Connect did not run: {exc}. "
+                f"The agent is not connected.")
+            return
+        self._show_message(result)
+        name = connect_module.AGENT_NAMES.get(agent_id, agent_id)
+        choice = self._ask_restart(name)
+        if choice == "restart":
+            try:
+                restart_result = self._restart_fn(agent_id)
+            except Exception as exc:
+                self._show_message(
+                    f"Restart did not run: {exc}. The agent is "
+                    f"still connected. Restart {name} by hand.")
+            else:
+                self._show_message(restart_result)
+        elif choice == "save":
+            self._show_message(
+                f"Save your work in {name} first, then restart "
+                f"{name} when ready. Iris cannot save it for you.")
+
     def _on_tier(self, advanced):
         """Flip the view to the other tier, same page."""
         tier = "advanced" if advanced else "simple"
@@ -515,6 +571,61 @@ class IrisWindow(QWidget):
         return QMessageBox.question(
             self, "Emergency stop",
             "Stop every Run at once?") == QMessageBox.StandardButton.Yes
+
+    def _pick_agent_dialog(self):
+        """Pick one known agent, in a native dialog, never the view.
+
+        Returns the agent id, or None when the picker is closed
+        without picking. Nothing is connected then.
+        """
+        from PySide6.QtWidgets import QInputDialog
+
+        names = [connect_module.AGENT_NAMES[agent_id]
+                 for agent_id in ("claude-code", "cursor", "continue")]
+        picked, ok = QInputDialog.getItem(
+            self, "Connect agent", "Pick an agent:",
+            names, editable=False)
+        if not ok:
+            return None
+        for agent_id, shown in connect_module.AGENT_NAMES.items():
+            if shown == picked:
+                return agent_id
+        return None
+
+    def _show_message_dialog(self, text):
+        """Show plain words, in a native dialog, never the view.
+
+        Shows the connect result or the refusal, never the whole
+        config, so no secret leaks.
+        """
+        QMessageBox.information(self, "Iris", text)
+
+    def _ask_restart_dialog(self, name):
+        """Warn before restarting, in a native dialog, never the view.
+
+        Exact words from the spec. "I'll save first" only closes
+        the dialog: Iris cannot save the agent's work from
+        outside, so the button never promises a save. Returns
+        "restart", "save", or "cancel".
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Restart {name}?")
+        box.setText(
+            f"{name} must restart so it picks up the change. "
+            f"Save your work in {name} first. "
+            f"Iris cannot save your work for you.")
+        save_button = box.addButton(
+            "I'll save first", QMessageBox.ButtonRole.ActionRole)
+        restart_button = box.addButton(
+            "Restart", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == restart_button:
+            return "restart"
+        if clicked == save_button:
+            return "save"
+        return "cancel"
 
     def closeEvent(self, event):
         """Stop the proxy and the panel with the window. No orphan."""
