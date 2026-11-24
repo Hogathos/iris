@@ -85,12 +85,12 @@ def _pe_subsystem(exe_path):
 def _window_visible(title):
     """True when a top-level window carries this exact title."""
     try:
-        user32 = ctypes.windll.user32
+        user32 = ctypes.windll.user32  # pyright: ignore[reportAttributeAccessIssue]
     except AttributeError:
         return False
     found = []
 
-    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,  # pyright: ignore[reportAttributeAccessIssue]
                         ctypes.c_void_p)
     def _each(hwnd, _arg):
         length = user32.GetWindowTextLengthW(hwnd)
