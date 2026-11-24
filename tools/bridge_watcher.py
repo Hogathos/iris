@@ -266,7 +266,8 @@ def run_muse(command, timeout=None):
     """
     proc = subprocess.run(
         command, timeout=timeout,
-        capture_output=True, text=True)
+        capture_output=True, text=True,
+        shell=(os.name == "nt"))
     return proc.returncode
 
 
