@@ -50,35 +50,28 @@ class ConfigTest(unittest.TestCase):
             _write(path, json.dumps(payload))
         return path
 
-    def test_missing_file_gives_defaults(self):
-        """A missing config means first run: every default holds."""
-        config = watcher.load_config(self.missing)
-        self.assertEqual(config["branches"], ["app-mode/packaging"])
-        self.assertEqual(config["repo"], "Hogathos/iris")
-        self.assertEqual(config["prompts_dir"], "prompts")
-        self.assertEqual(config["poll_interval_seconds"], 120)
-        self.assertTrue(config["state_file"].endswith(
-            "bridge_watcher_seen.json"))
-        self.assertTrue(config["log_file"].endswith(
-            "bridge_watcher.log"))
-        self.assertTrue(config["download_dir"].endswith(
-            "bridge_prompts"))
+    def test_missing_file_is_refused_without_repo_dir(self):
+        """No config file means no repo_dir: the watcher stops
+        instead of running Muse Code in the wrong folder."""
+        with self.assertRaises(watcher.ConfigError) as ctx:
+            watcher.load_config(self.missing)
+        self.assertIn(self.missing, str(ctx.exception))
 
     def test_missing_keys_fall_back_to_defaults(self):
         """A partial config fills the gaps with defaults."""
         config = watcher.load_config(
-            self._config_path({"branches": ["app-mode/x"]}))
+            self._config_path({"branches": ["app-mode/x"],
+                               "repo_dir": self.tmp.name}))
         self.assertEqual(config["branches"], ["app-mode/x"])
         self.assertEqual(config["poll_interval_seconds"], 120)
         self.assertEqual(config["repo"], "Hogathos/iris")
+        self.assertEqual(config["repo_dir"], self.tmp.name)
 
-    def test_no_config_at_all_gives_defaults(self):
-        """No path means defaults rooted next to the module."""
-        config = watcher.load_config(None)
-        self.assertEqual(config["branches"], ["app-mode/packaging"])
-        self.assertTrue(os.path.dirname(
-            config["state_file"]) == os.path.dirname(
-            watcher.__file__))
+    def test_no_config_at_all_is_refused_without_repo_dir(self):
+        """No path means no repo_dir: the watcher stops instead
+        of running Muse Code in the wrong folder."""
+        with self.assertRaises(watcher.ConfigError):
+            watcher.load_config(None)
 
     def test_bad_branches_are_refused_in_plain_words(self):
         """Branches must be a non-empty list of names."""
@@ -361,7 +354,7 @@ class RunMuseCommandTest(unittest.TestCase):
                "--disable-approval"]
         with mock.patch.object(watcher.subprocess, "run",
                                side_effect=_fake_run):
-            code = watcher.run_muse(cmd)
+            code = watcher.run_muse(cmd, "/tmp/iris-repo")
         self.assertEqual(code, 3)
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0][0], cmd)
@@ -400,7 +393,7 @@ class RunMuseShellTest(unittest.TestCase):
         with mock.patch.object(watcher.subprocess, "run",
                                side_effect=_fake_run):
             with mock.patch.object(watcher.os, "name", target_os):
-                code = watcher.run_muse(cmd)
+                code = watcher.run_muse(cmd, "/tmp/iris-repo")
         return code, seen.get("shell")
 
     def test_windows_runs_through_shell(self):
@@ -414,6 +407,90 @@ class RunMuseShellTest(unittest.TestCase):
         code, shell = self._run_and_capture_shell("posix")
         self.assertEqual(code, 0)
         self.assertEqual(shell, False)
+
+
+class RunMuseOutputCwdTest(unittest.TestCase):
+    """run_muse streams output and runs in the repo dir.
+
+    Regression: run_muse captured all of Muse Code's stdout and
+    stderr with capture_output=True and never used it, so the
+    watcher terminal showed nothing. It also ran with no cwd, so
+    Muse Code ran in the watcher's own folder instead of the
+    iris repo and did no work.
+    """
+
+    def _run_and_capture_kwargs(self, repo_dir):
+        """Run run_muse mocked, return (code, kwargs)."""
+        from unittest import mock
+
+        seen = {}
+
+        def _fake_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return mock.Mock(returncode=0)
+
+        cmd = ["muse", "exec", "--prompt-file", "p.md",
+               "--disable-approval"]
+        with mock.patch.object(watcher.subprocess, "run",
+                               side_effect=_fake_run):
+            code = watcher.run_muse(cmd, repo_dir)
+        return code, seen
+
+    def test_output_streams_to_terminal(self):
+        """No capture_output: output inherits the terminal."""
+        code, kwargs = self._run_and_capture_kwargs("/tmp/iris-repo")
+        self.assertEqual(code, 0)
+        self.assertNotIn("capture_output", kwargs)
+
+    def test_runs_in_repo_dir(self):
+        """subprocess runs with cwd equal to repo_dir."""
+        repo_dir = os.path.join("bridge", "repo")
+        code, kwargs = self._run_and_capture_kwargs(repo_dir)
+        self.assertEqual(code, 0)
+        self.assertEqual(kwargs.get("cwd"), repo_dir)
+
+
+class RepoDirConfigTest(unittest.TestCase):
+    """load_config requires repo_dir, resolved like the rest."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _config_path(self, payload):
+        path = os.path.join(self.tmp.name, "watcher.json")
+        _write(path, json.dumps(payload))
+        return path
+
+    def test_missing_repo_dir_is_refused_naming_file(self):
+        """No repo_dir stops the watcher, naming the file."""
+        path = self._config_path({"branches": ["app-mode/x"]})
+        with self.assertRaises(watcher.ConfigError) as ctx:
+            watcher.load_config(path)
+        self.assertIn(path, str(ctx.exception))
+
+    def test_empty_repo_dir_is_refused_naming_file(self):
+        """An empty repo_dir stops the watcher, naming the file."""
+        for bad in ("", "  ", None, 7):
+            path = self._config_path({"repo_dir": bad})
+            with self.assertRaises(watcher.ConfigError) as ctx:
+                watcher.load_config(path)
+            self.assertIn(path, str(ctx.exception))
+
+    def test_relative_repo_dir_resolves_against_config_folder(self):
+        """A relative repo_dir joins the config file's own folder,
+        the same as the state, log, and download paths."""
+        path = self._config_path({"repo_dir": "myrepo"})
+        config = watcher.load_config(path)
+        self.assertEqual(config["repo_dir"],
+                         os.path.join(self.tmp.name, "myrepo"))
+
+    def test_absolute_repo_dir_stays_where_it_is(self):
+        """An absolute repo_dir is kept as is."""
+        here = os.path.abspath(self.tmp.name)
+        path = self._config_path({"repo_dir": here})
+        config = watcher.load_config(path)
+        self.assertEqual(config["repo_dir"], here)
 
 
 class BaselineTest(unittest.TestCase):
