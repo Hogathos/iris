@@ -81,10 +81,13 @@ def _need_text(value, field, path):
 
 def load_config(path=None):
     """Read the JSON config file, filling defaults for anything
-    missing. No file at all means first run: every default holds.
-    Bad values raise ConfigError in plain words. Relative
-    state, log, and download paths resolve against the config
-    file's own folder.
+    missing except repo_dir, which has no default and is
+    required. A missing file or a missing or empty repo_dir
+    raises ConfigError in plain words: the watcher stops
+    instead of running Muse Code in the wrong folder. Bad
+    values raise ConfigError in plain words. Relative state,
+    log, download, and repo_dir paths resolve against the
+    config file's own folder.
     """
     raw = {}
     if path is not None and os.path.exists(path):
@@ -133,6 +136,10 @@ def load_config(path=None):
         log_file = os.path.join(base, log_file)
     if not os.path.isabs(download_dir):
         download_dir = os.path.join(base, download_dir)
+    repo_dir = _need_text(raw.get("repo_dir"), "repo_dir",
+                            path or "defaults")
+    if not os.path.isabs(repo_dir):
+        repo_dir = os.path.join(base, repo_dir)
     return {
         "branches": branches,
         "repo": repo,
@@ -141,6 +148,7 @@ def load_config(path=None):
         "state_file": state_file,
         "log_file": log_file,
         "download_dir": download_dir,
+        "repo_dir": repo_dir,
     }
 
 
@@ -256,17 +264,19 @@ def download_file(url, dest_path, timeout=_REQUEST_TIMEOUT):
         handle.write(body)
 
 
-def run_muse(command, timeout=None):
+def run_muse(command, repo_dir, timeout=None):
     """Run Muse Code headless with a built command list.
 
     Takes the command list itself (see build_command), not a
     prompt path: run_once builds the command and hands it over.
-    The timeout is in seconds; None waits as long as the run
-    takes. Returns the exit code.
+    Runs in repo_dir, so Muse Code works in the iris repo and
+    not in the watcher's own folder. Output streams to the
+    watcher terminal: nothing is captured. The timeout is in
+    seconds; None waits as long as the run takes. Returns the
+    exit code.
     """
     proc = subprocess.run(
-        command, timeout=timeout,
-        capture_output=True, text=True,
+        command, timeout=timeout, cwd=repo_dir,
         shell=(os.name == "nt"))
     return proc.returncode
 
@@ -404,7 +414,8 @@ def main(argv=None):
                 config,
                 lambda b: github_list(
                     config["repo"], b, config["prompts_dir"]),
-                download_file, run_muse,
+                download_file,
+                lambda cmd: run_muse(cmd, config["repo_dir"]),
                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         except ConfigError as exc:
             print(f"bridge watcher: {exc}", flush=True)
