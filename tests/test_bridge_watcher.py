@@ -367,6 +367,55 @@ class RunMuseCommandTest(unittest.TestCase):
         self.assertEqual(seen[0][0], cmd)
 
 
+class RunMuseShellTest(unittest.TestCase):
+    """run_muse launches muse.cmd on Windows (Bug 3).
+
+    Regression: the watcher runs on Windows where Muse Code
+    is installed as muse.cmd, not muse.exe. With the default
+    shell=False, subprocess uses CreateProcess, which cannot
+    run .cmd files, so every poll failed with FileNotFoundError
+    ([WinError 2]) and retried forever without running a prompt.
+    run_muse must pass shell=True on Windows (os.name == "nt")
+    so the command runs through cmd.exe, and shell=False
+    elsewhere so behaviour is unchanged.
+    """
+
+    def _run_and_capture_shell(self, target_os):
+        """Run run_muse with os.name patched, return (code, shell).
+
+        Mocks watcher.subprocess.run so nothing launches, and
+        patches watcher.os.name so the test reads the same on
+        any platform. Captures the shell kwarg it was called with.
+        """
+        from unittest import mock
+
+        seen = {}
+
+        def _fake_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return mock.Mock(returncode=0)
+
+        cmd = ["muse", "exec", "--prompt-file", "p.md",
+               "--disable-approval"]
+        with mock.patch.object(watcher.subprocess, "run",
+                               side_effect=_fake_run):
+            with mock.patch.object(watcher.os, "name", target_os):
+                code = watcher.run_muse(cmd)
+        return code, seen.get("shell")
+
+    def test_windows_runs_through_shell(self):
+        """On Windows the command runs through cmd.exe."""
+        code, shell = self._run_and_capture_shell("nt")
+        self.assertEqual(code, 0)
+        self.assertEqual(shell, True)
+
+    def test_other_platforms_run_without_shell(self):
+        """Off Windows the command runs directly, as before."""
+        code, shell = self._run_and_capture_shell("posix")
+        self.assertEqual(code, 0)
+        self.assertEqual(shell, False)
+
+
 class BaselineTest(unittest.TestCase):
     """First run baselines: mark everything, run nothing (Bug 2).
 
