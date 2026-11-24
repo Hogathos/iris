@@ -11,7 +11,8 @@ the watcher is standard library only.
    one folder on the Dell, for example
    `C:\Users\Charles\iris-bridge\`. Keep them together: the
    config, the seen-list, the log, and the downloaded prompts
-   all live beside the script by default.
+   all live beside the script by default. Set `repo_dir` in
+   the config to the local iris repo path on the Dell.
 2. Check Python 3 runs: `python --version`.
 3. Open Task Scheduler. Create a task that runs at login:
    action `python`, arguments the full path to
@@ -32,7 +33,15 @@ Fields: `branches` (default `["app-mode/packaging"]`),
 `repo` (`"Hogathos/iris"`), `prompts_dir` (`"prompts"`),
 `poll_interval_seconds` (default 120), `state_file`,
 `log_file`, `download_dir` (all default to files next to the
-script; absolute paths stay where they are).
+script; absolute paths stay where they are), and `repo_dir`
+(required, no default): the local iris repo folder where Muse
+Code runs, for example the Dell checkout path. A relative
+`repo_dir` resolves against the config file's own folder;
+an absolute path stays where it is. If `repo_dir` is missing
+or empty, the watcher stops with a plain-words error naming
+the file, instead of running Muse Code in the wrong folder.
+Muse Code's output streams live to the watcher terminal;
+nothing is captured.
 
 ## Read the log
 
