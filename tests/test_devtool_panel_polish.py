@@ -118,7 +118,7 @@ class PanelPolishRefusalTest(unittest.TestCase):
 
     def test_forms_hint_the_destination_form(self):
         """The Spend cap and Block forms hint the label form."""
-        page = panel_module.index(self._request(self.server.state))
+        page = panel_module.limits_page(self._request(self.server.state))
         body = _body(page)
         self.assertIn("a destination label, like 127.0.0.1:18080", body)
 

@@ -250,7 +250,9 @@ class DevtoolButtonsTest(unittest.TestCase):
             request = self._request(self.proxy.state)
             confirm = panel_module.emergency_stop_confirm(request)
             self.assertEqual(confirm.status_code, 200)
-            self.assertIn("Stop everything",
+            self.assertIn("Let agents work again?",
+                          confirm.body.decode())
+            self.assertIn("Runs that were stopped stay stopped.",
                           confirm.body.decode())
             resp = panel_module.emergency_stop_execute(request)
             self.assertEqual(resp.status_code, 303)
@@ -289,11 +291,19 @@ class DevtoolButtonsTest(unittest.TestCase):
             panel_module.api_module.DB_PATH = self.db_path
             panel_module.app.state.proxy_state = self.proxy.state
             html = panel_module.index(self._request(self.proxy.state))
-            self.assertIn("Spend cap", html)
-            self.assertIn('name="dollars"', html)
-            self.assertIn("Block this network", html)
             self.assertIn("Emergency stop", html)
             self.assertIn("<style>", html)
+            limits = panel_module.limits_page(
+                self._request(self.proxy.state))
+            self.assertIn("Spending.", limits)
+            self.assertIn('name="daily"', limits)
+            self.assertIn("Blocked places.", limits)
+            self.assertIn('action="/settings/block-network"', limits)
+            tools = panel_module.tools_page(
+                self._request(self.proxy.state))
+            self.assertIn("Run the demo", tools)
+            self.assertIn("Log detail", tools)
+            self.assertIn("Watching", tools)
         finally:
             panel_module.api_module.DB_PATH = old_db_path
             panel_module.app.state.proxy_state = None
@@ -315,7 +325,7 @@ class DevtoolButtonsTest(unittest.TestCase):
                 panel_module.app.state.proxy_state = self.proxy.state
                 html = panel_module.run_detail(trace)
                 self.assertIn('name="new_dest"', html)
-                self.assertIn("Redirect", html)
+                self.assertIn("Send this Run somewhere else", html)
             finally:
                 panel_module.api_module.DB_PATH = old_db_path
                 panel_module.app.state.proxy_state = None

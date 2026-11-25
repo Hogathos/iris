@@ -117,7 +117,7 @@ def _window(db_path, seams=None, **kwargs):
     controller = _FakeController(db_path)
     window = shell_module.IrisWindow(
         controller, seams=seams or _FakeSeams(), **kwargs)
-    window._stack.setCurrentWidget(window._web_page)
+    window._show_dashboard()
     return window
 
 
@@ -127,6 +127,11 @@ def _panel_request(state=None, headers=None):
         proxy_state=state, panel_token=None, panel_port=None)
     app = types.SimpleNamespace(state=app_state)
     return types.SimpleNamespace(app=app, headers=headers or {})
+
+
+def _page_text(page):
+    """The page text, whether the route returned str or Response."""
+    return page if isinstance(page, str) else page.body.decode()
 
 
 class FirstRunTest(unittest.TestCase):
@@ -159,12 +164,15 @@ class FirstRunTest(unittest.TestCase):
         window2 = _window(os.path.join(tmp.name, "j2.db"), seams=seams)
         self.addCleanup(window2.close)
         window2._choose_demo()
+        window2._demo_worker.join(timeout=5)
         self.assertEqual(seams.calls[-1], ("demo",))
-        self.assertIs(window2._stack.currentWidget(), window2._web_page)
+        self.assertFalse(window2._web_page.isHidden())
+        self.assertTrue(window2._first_run_page.isHidden())
         window3 = _window(os.path.join(tmp.name, "j3.db"))
         self.addCleanup(window3.close)
         window3._choose_skip()
-        self.assertIs(window3._stack.currentWidget(), window3._web_page)
+        self.assertFalse(window3._web_page.isHidden())
+        self.assertTrue(window3._first_run_page.isHidden())
 
 
 class DemoTest(unittest.TestCase):
@@ -242,6 +250,7 @@ class VerdictWordsTest(unittest.TestCase):
     """Spec 12.3: Correct, Incorrect, Unverified on screen. Never Unknown."""
 
     def test_no_unknown_on_screen(self):
+        from appmode import demo as demo_module
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         state, db_path = _fresh_state(tmp)
@@ -251,13 +260,19 @@ class VerdictWordsTest(unittest.TestCase):
         self.addCleanup(setattr, api_module, "DB_PATH", old)
         request = _panel_request(state)
         index_html = panel_module.index(request, tier="simple")
-        for word in ("Correct", "Incorrect", "Unverified"):
-            self.assertIn(word, index_html)
         self.assertNotIn("Unknown", index_html)
         self.assertNotIn("unknown", index_html)
-        detail_html = panel_module.run_detail(
-            "no-such-run", tier="simple", request=request)
+        detail_html = _page_text(panel_module.run_detail(
+            "no-such-run", tier="simple", request=request))
         self.assertNotIn("Unknown", detail_html)
+        notebook = os.path.join(tmp.name, "demo-notebook.json")
+        trace_id = demo_module.run_demo(
+            state, notebook, interval_seconds=0)
+        claimed = panel_module.run_detail(
+            trace_id, tier="simple", request=request)
+        for word in ("Correct", "Incorrect", "Unverified"):
+            self.assertIn(word, claimed)
+        self.assertNotIn("Unknown", claimed)
         window = _window(os.path.join(tmp.name, "j.db"))
         self.addCleanup(window.close)
         help_words = window._verdict_help_text()

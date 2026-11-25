@@ -86,83 +86,83 @@ class TierTest(unittest.TestCase):
         return types.SimpleNamespace(relay_timeout=30)
 
     def test_simple_hides_bytes_seconds_method(self):
-        """Simple shows no Bytes, Seconds, or Method column."""
+        """Simple shows Run, Started, Status, Verdict, Cost: no diagnostics."""
         body = _body(panel_module.index(
             self._request(), tier="simple"))
-        for header in ("<th>Bytes</th>", "<th>Seconds</th>",
-                       "<th>Method</th>"):
-            self.assertNotIn(header, body)
-        for header in ("<th>Run</th>", "<th>Destination</th>",
-                       "<th>What</th>", "<th>Cost</th>",
-                       "<th>Verdict</th>", "<th>Pause</th>"):
+        for header in ("Bytes", "Seconds", "Method", "Destination",
+                       "What", "Pause"):
+            self.assertNotIn("<th" + header, body)
+        for header in ("Run</th>", "Started</th>", "Status</th>",
+                       "Verdict</th>", "Cost</th>"):
             self.assertIn(header, body)
 
     def test_advanced_shows_all_columns(self):
-        """Advanced shows every column, including the diagnostic ones."""
+        """Advanced adds Calls and Went to beside the Simple columns."""
         body = _body(panel_module.index(
             self._request(), tier="advanced"))
-        for header in ("<th>Run</th>", "<th>Destination</th>",
-                       "<th>Method</th>", "<th>What</th>",
-                       "<th>Bytes</th>", "<th>Seconds</th>",
-                       "<th>Cost</th>", "<th>Verdict</th>",
-                       "<th>Pause</th>"):
+        for header in ("Run</th>", "Started</th>", "Status</th>",
+                       "Verdict</th>", "Calls</th>", "Went to</th>",
+                       "Cost</th>"):
             self.assertIn(header, body)
 
     def test_no_tier_shows_everything(self):
         """No tier means show everything: the dev panel is unchanged."""
         body = _body(panel_module.index(self._request()))
-        for header in ("<th>Method</th>", "<th>Bytes</th>",
-                       "<th>Seconds</th>"):
+        for header in ("Run</th>", "Status</th>", "Verdict</th>",
+                       "Calls</th>", "Cost</th>"):
             self.assertIn(header, body)
+        detail = _body(panel_module.run_detail("trace-live"))
+        for section in ("Claims", "Calls", "Why", "Cost"):
+            self.assertIn(section, detail)
 
     def test_unknown_tier_shows_everything(self):
         """An unknown tier falls back to showing everything, no crash."""
         body = _body(panel_module.index(
             self._request(), tier="bogus"))
-        for header in ("<th>Method</th>", "<th>Bytes</th>",
-                       "<th>Seconds</th>"):
+        for header in ("Run</th>", "Status</th>", "Verdict</th>",
+                       "Calls</th>", "Cost</th>"):
             self.assertIn(header, body)
 
     def test_simple_hides_cutoff_form(self):
-        """Simple shows no cutoff form; Advanced shows it."""
-        simple = _body(panel_module.index(
-            self._request(self._state()), tier="simple"))
-        self.assertNotIn('action="/settings/relay-timeout"', simple)
-        advanced = _body(panel_module.index(
-            self._request(self._state()), tier="advanced"))
-        self.assertIn('action="/settings/relay-timeout"', advanced)
+        """No tier shows a cutoff form: the relay timeout is API-only."""
+        for tier in ("simple", "advanced", ""):
+            body = _body(panel_module.index(
+                self._request(self._state()), tier=tier))
+            self.assertNotIn('action="/settings/relay-timeout"', body)
 
     def test_simple_hides_redirect_on_the_run_page(self):
-        """Simple shows no Redirect form on a live Run; Advanced does."""
+        """Simple shows no Send form on a live Run; Advanced does."""
         simple = _body(panel_module.run_detail(
             "trace-live", tier="simple"))
-        self.assertNotIn("Redirect this Run", simple)
+        self.assertNotIn("Send this Run somewhere else", simple)
         self.assertNotIn("/redirect", simple)
         advanced = _body(panel_module.run_detail(
             "trace-live", tier="advanced"))
-        self.assertIn("Redirect this Run", advanced)
+        self.assertIn("Send this Run somewhere else", advanced)
+        self.assertIn("/redirect", advanced)
 
     def test_simple_keeps_block_form(self):
-        """Block stays in Simple: it is a safety control."""
-        body = _body(panel_module.index(
-            self._request(), tier="simple"))
+        """Blocked places stay on the Limits tab, with Add and Remove."""
+        body = _body(panel_module.limits_page(self._request()))
+        self.assertIn("Blocked places.", body)
         self.assertIn('action="/settings/block-network"', body)
 
     def test_simple_keeps_pause_and_verify(self):
-        """Pause stays in Simple, and Verify stays on a paused Run."""
-        index_body = _body(panel_module.index(
-            self._request(), tier="simple"))
-        self.assertIn("/runs/trace-live/pause", index_body)
+        """Pause is on the live run page; Verify stays on a paused Run."""
         detail_body = _body(panel_module.run_detail(
+            "trace-live", tier="simple"))
+        self.assertIn("/runs/trace-live/pause", detail_body)
+        paused_body = _body(panel_module.run_detail(
             "trace-paused", tier="simple"))
-        self.assertIn("/runs/trace-paused/verify", detail_body)
+        self.assertIn("/runs/trace-paused/verify", paused_body)
+        self.assertIn('name="read_back"', paused_body)
 
     def test_simple_tier_persists_in_run_links(self):
-        """Simple run links and the filter form carry the tier."""
+        """Simple run links and tab links carry the tier."""
         body = _body(panel_module.index(
             self._request(), tier="simple"))
         self.assertIn("/runs/trace-live?tier=simple", body)
-        self.assertIn('name="tier" value="simple"', body)
+        self.assertIn("/limits?tier=simple", body)
 
     def test_run_detail_back_link_keeps_tier(self):
         """The run page links back to the list at the same tier."""

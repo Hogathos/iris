@@ -15,7 +15,7 @@ These are the decisions that shape the spec. They are not open.
 
 ## 0. Shape
 
-- A native PySide6 shell. The centre is the existing HTML panel in a `QWebEngineView`. The panel loads from the loopback panel server in the same process, at `http://127.0.0.1:{spot}/?tier={tier}`. Never `setHtml()`. No `QWebChannel` in v1.
+- A native PySide6 shell. The centre is the existing HTML panel in a `QWebEngineView`. The panel loads from the loopback panel server in the same process, at `http://127.0.0.1:8000/?tier={tier}`. Never `setHtml()`. No `QWebChannel` in v1.
 - The proxy and the panel server run in-process on a worker `QThread`. They stop explicitly in `closeEvent`. The teardown order is the PR #52 order: stop the controller, remove the view container from the layout and delete it synchronously, then delete the view. Container first, never reverse.
 - Loopback only. Never `0.0.0.0`. The consumer build does not ship the Developer pages or routes at all. Hiding them with CSS is not enough.
 - Verify, Pause, and Emergency stop are native Qt buttons outside the web view. The panel has no copies of them. The panel may point at them in words. It is never the only way to use them.
@@ -152,13 +152,13 @@ Newest Run first. One row per Run. Click a row to select it. Arrow keys move the
 >
 > To try Iris now: **Run the demo**
 >
-> To watch your own agent, give it this address: `http://127.0.0.1:{spot}`  **Copy**
+> To watch your own agent, give it this address: `http://127.0.0.1:8888`  **Copy**
 >
 > Paste it where your agent asks for the address of its AI service.
 
 - **Run the demo** here is a plain button in the panel. It does the same as the menu item. It is not a safety control, so it is allowed in the web view.
 - **Copy** puts the address on the clipboard. The button then reads `Copied` for 2 seconds.
-- `{spot}` is the number Iris listens on. It is never written in Iris words. The person only sees it inside the address.
+- `8888` is the number Iris listens on for agent traffic (the proxy spot). It is never written in Iris words. The person only sees it inside the address.
 
 ### 4.4 Run detail (in the web view, under the table)
 
@@ -235,7 +235,7 @@ The demo is one Run, named Demo. It runs on this computer only.
 | `I saved 3 notes in total.` | ✕ Incorrect | `Iris looked in the demo notebook. It holds 2 notes, not 3.` |
 
 3. On the third claim Iris stops the Run. Status becomes `Stopped`. The summary reads: `Iris stopped this Run. A claim was Incorrect.` The status bar reads: `Run {trace prefix} stopped. The demo agent said it saved 3 notes. Iris found 2.`
-4. Under the detail, a gray teaching block shows (only while no real Run exists): `That was the demo. It never left this computer. To watch your own agent, give it this address:` then `http://127.0.0.1:{spot}` and **Copy**, then `Paste it where your agent asks for the address of its AI service.`
+4. Under the detail, a gray teaching block shows (only while no real Run exists): `That was the demo. It never left this computer. To watch your own agent, give it this address:` then `http://127.0.0.1:8888` and **Copy**, then `Paste it where your agent asks for the address of its AI service.`
 5. Nothing interrupts the person during the demo. No popup. No sound.
 
 The demo only works as a demo if the demo agent really saves notes and Iris really reads them back. A staged verdict would teach the wrong thing.
@@ -468,7 +468,7 @@ Started time, places and length go in the detail, to keep the list narrow.
 
 > No Runs yet.
 >
-> Start the demo agent on the Tools tab, or give your agent this address: `http://127.0.0.1:{spot}`  **Copy**
+> Start the demo agent on the Tools tab, or give your agent this address: `http://127.0.0.1:8888`  **Copy**
 >
 > It works with any agent that lets you set the address of its AI service.
 
@@ -563,7 +563,7 @@ All developer-only. Each section has a plain one-line purpose. Order, top to bot
 | `Fails` | `Refuses every call.` |
 | `Goes quiet after accepting` | `Takes the call, then never answers. Use it to see Unverified.` |
 
-- Each row has its own address, `http://127.0.0.1:{spot}/{name}`, with **Copy**. Address and switch are shown only when the switch is on.
+- Each row has its own address on this computer past the agent spot (`http://127.0.0.1:8889/always`, `:8890/slow`, `:8891/fails`, `:8892/quiet`), with **Copy**. Address and switch are shown only when the switch is on.
 - Calls to a test place show up as normal Runs and cost `$0.00`.
 
 #### Sample Runs
@@ -677,5 +677,5 @@ Charles reviews the tests before the implementation. New behavior only; refactor
 
 - Whether the demo agent (the one that really saves notes) exists yet or must be built as part of this work. The spec assumes it is built here.
 - Whether the `?tier=` mechanism in the panel server already hides Developer routes in the consumer build, or whether that removal must be built here. The panel code has tier logic ("Simple hides Redirect"), but full Developer removal is not confirmed.
-- The exact loopback spot number. Shown as `{spot}` throughout. The implementer picks the number, and the spec is updated with it.
+- The exact loopback spot number. Resolved: 8888, the proxy port (the panel port is 8000). Test places sit past it at 8889 to 8892.
 - The connection mechanism (paste one address into the agent's AI-service setting) has not been tested with a non-developer. That test is outside this spec.

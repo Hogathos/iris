@@ -120,6 +120,71 @@ def verdict_for(rows) -> str:
     return "Unverified"
 
 
+def claims_rollup(claims) -> str:
+    """One verdict for a Run from its checked claims, oldest first.
+
+    Any claim Incorrect: Incorrect. None Incorrect, any Unverified:
+    Unverified. All claims Correct: Correct. No claim checked yet:
+    Not checked yet, in plain gray text, with no mark.
+    """
+    verdicts = [claim.get("verdict", "") for claim in claims or []]
+    if not verdicts:
+        return "Not checked yet"
+    if "Incorrect" in verdicts:
+        return "Incorrect"
+    if "Unverified" in verdicts:
+        return "Unverified"
+    if all(verdict == "Correct" for verdict in verdicts):
+        return "Correct"
+    return "Unverified"
+
+
+def status_word(state: str, finished: bool = False) -> str:
+    """The Status cell word for a run state: plain words only.
+
+    Running, Paused, Stopped, Finished. A redirected Run still works,
+    so it reads Running. A checked-clean Run held for a human reads
+    Paused. Cap-blocked and red-button Runs read Stopped.
+    """
+    if state == "STOPPED" or state == "BLOCKED":
+        return "Stopped"
+    if state == "PAUSED":
+        return "Paused"
+    if state == "VERIFY_OK":
+        return "Finished" if finished else "Paused"
+    if finished:
+        return "Finished"
+    return "Running"
+
+
+def run_finished(rows, claims, now, live: bool = False,
+                 idle_seconds: float = 60.0) -> bool:
+    """True when the agent is done, as far as Iris can tell.
+
+    Iris never sees an agent finish: there is no done signal on the
+    wire. The honest rule is quiet plus checked: no live tunnel, the
+    journal holds at least one checked claim or checked-clean row,
+    the state is not holding the Run, and nothing new arrived for a
+    full idle minute. Anything else reads Running, never Finished.
+    """
+    state = run_state(rows)
+    if live or state not in ("FLOWING", "VERIFY_OK"):
+        return False
+    checked = bool(claims) or any(
+        row.get("outcome") == "verified" for row in rows)
+    if not checked or not rows:
+        return False
+    try:
+        import datetime
+        last = max(datetime.datetime.fromisoformat(
+            str(row.get("created_at", ""))) for row in rows)
+    except (ValueError, TypeError):
+        return False
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=datetime.timezone.utc)
+    return (now - last).total_seconds() >= idle_seconds
+
+
 def next_step(state: str, verdict: str) -> str:
     """One plain-words next step for a Run, from its state and verdict."""
     if state == "FLOWING" and verdict == "Unverified":

@@ -139,16 +139,16 @@ class RelayTimeoutControlTest(unittest.TestCase):
             panel_module.app.state.proxy_state = None
             self._close(proxy, tmp)
 
-    def test_panel_index_shows_cutoff_and_form(self):
+    def test_panel_index_has_no_cutoff_form(self):
+        """The cutoff left the page: the relay timeout is API-only now."""
         proxy, tmp, db_path = self._serve()
         old_db_path = panel_module.api_module.DB_PATH
         try:
             panel_module.api_module.DB_PATH = db_path
             panel_module.app.state.proxy_state = proxy.state
             html = panel_module.index(self._request(proxy.state))
-            self.assertIn("Silent tunnel cutoff", html)
-            self.assertIn('name="seconds"', html)
-            self.assertIn("30", html)
+            self.assertNotIn("Silent tunnel cutoff", html)
+            self.assertNotIn('name="seconds"', html)
         finally:
             panel_module.api_module.DB_PATH = old_db_path
             panel_module.app.state.proxy_state = None

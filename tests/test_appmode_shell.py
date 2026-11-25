@@ -246,7 +246,7 @@ class ControllerTest(unittest.TestCase):
         conn.request("GET", "/?tier=simple")
         resp = conn.getresponse()
         self.assertEqual(resp.status, 200)
-        self.assertIn("Runs, live", resp.read().decode())
+        self.assertIn("<h2>Runs</h2>", resp.read().decode())
         conn.close()
         conn = http.client.HTTPConnection(
             "127.0.0.1", ctl.proxy_port, timeout=5)
@@ -409,16 +409,13 @@ class WindowTest(unittest.TestCase):
         win.pause_button.click()
         self.assertEqual(self.seams.paused, [])
 
-    def test_emergency_stop_asks_first(self):
-        """Emergency stop runs only after a human confirms."""
-        win = self._window(ask_confirm=lambda: True)
+    def test_emergency_stop_needs_no_confirmation(self):
+        """Emergency stop runs on one click. Confirmation is for off."""
+        asked = []
+        win = self._window(ask_confirm=lambda: asked.append(True))
         win.stop_button.click()
         self.assertEqual(self.seams.stopped, 1)
-        win2 = self._window(ask_confirm=lambda: False)
-        win.close()
-        self.window = win2
-        win2.stop_button.click()
-        self.assertEqual(self.seams.stopped, 1)
+        self.assertEqual(asked, [])
 
 
 if __name__ == "__main__":

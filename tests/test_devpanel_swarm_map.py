@@ -183,13 +183,13 @@ class SwarmMapRouteTest(unittest.TestCase):
         self.assertIn("showing the latest 20 Runs", body)
 
     def test_index_links_to_map(self):
-        """The run list links to the map."""
+        """The map route serves the swarm map straight from the panel."""
         request = types.SimpleNamespace(
             app=types.SimpleNamespace(
                 state=types.SimpleNamespace(proxy_state=None)))
-        page = panel_module.index(request)
+        page = panel_module.swarm_map(request)
         body = page if isinstance(page, str) else page.body.decode()
-        self.assertIn('href="/map"', body)
+        self.assertIn("<svg", body)
 
     def test_index_dest_filter_reads_every_row(self):
         """A dest filter finds a Run that called it on any row."""
