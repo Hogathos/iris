@@ -646,6 +646,38 @@ class IrisWindow(QWidget):
         return "cancel"
 
     def closeEvent(self, event):
-        """Stop the proxy and the panel with the window. No orphan."""
+        """Stop the servers, then destroy the embedded view by hand.
+
+        The view is a QWindow in a QWindowContainer. Automatic
+        destruction kills them in the wrong order on Python 3.14,
+        and the app segfaults (upstream PYSIDE-3529). Explicit
+        teardown here leaves automatic destruction nothing live.
+        """
+        from shiboken6 import delete as _delete_qobject
+        from shiboken6 import isValid as _is_qobject_alive
+
         self._controller.stop()
+        # Container first, then the view. Never the reverse. The
+        # crash is the container outliving its window
+        # (QWindowContainer::toplevelAboutToBeDestroyed). The
+        # container holds the only reference to the window surface.
+        # Destroying the view first leaves the container over a dead
+        # window, which is the same crash. Destroying the container
+        # first unhooks the wrapper while the window still lives.
+        # Then the view dies with no wrapper over it.
+        # Synchronous delete on every platform. A posted delete
+        # (deleteLater) leaves the native surface alive until the
+        # loop pumps, and the loop never pumps during close on
+        # Windows. The surface then dies in automatic destruction,
+        # which is the crash again. Windows is the hardest case, so
+        # it sets the rule for all platforms.
+        layout = self.layout()
+        host = getattr(self, "view_host", None)
+        if host is not None and _is_qobject_alive(host):
+            if layout is not None:
+                layout.removeWidget(host)
+            _delete_qobject(host)
+        view = getattr(self, "view", None)
+        if view is not None and _is_qobject_alive(view):
+            _delete_qobject(view)
         event.accept()
