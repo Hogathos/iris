@@ -1041,7 +1041,7 @@ class FetchMissingBranchTest(unittest.TestCase):
                 side_effect=lambda d, b: self.order.append(
                     ("checkout", d, b))):
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         fetches = [entry for entry in self.order
@@ -1051,8 +1051,8 @@ class FetchMissingBranchTest(unittest.TestCase):
         self.assertEqual(self.order[-2:], [
             ("checkout", self.repo_dir, self.branch), "run"])
         self.assertEqual(report["launched"],
-                         [(self.branch, "new.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_fetch_failure_is_a_plain_skip(self):
         """A failing fetch never crashes the poll. The prompt is
@@ -1077,7 +1077,7 @@ class FetchMissingBranchTest(unittest.TestCase):
                     1, ["git", "fetch"])), \
             mock.patch.object(watcher, "checkout_branch") as checkout:
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         checkout.assert_not_called()
@@ -1116,7 +1116,7 @@ class FetchMissingBranchTest(unittest.TestCase):
                 return_value=None), \
             mock.patch.object(watcher, "checkout_branch") as checkout:
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         checkout.assert_not_called()
@@ -1147,14 +1147,14 @@ class FetchMissingBranchTest(unittest.TestCase):
                 watcher, "checkout_branch",
                 side_effect=lambda d, b: self.order.append("checkout")):
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         fetch.assert_not_called()
         self.assertEqual(self.order, ["checkout", "run"])
         self.assertEqual(report["launched"],
-                         [(self.branch, "new.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_second_poll_runs_nothing_after_fetched_run(self):
         """A prompt fetched and run this way is in the seen-list
@@ -1181,18 +1181,18 @@ class FetchMissingBranchTest(unittest.TestCase):
                 watcher, "checkout_branch",
                 return_value=None):
             first = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         self.assertEqual(first["launched"],
-                         [(self.branch, "new.md", 0)])
+                         [(self.branch, "new-prompt.md", 0)])
         second = watcher.run_once(
-            self.config, self._lister(["new.md"]),
+            self.config, self._lister(["new-prompt.md"]),
             self._downloader(), self._runner(),
             now="2026-11-24T00:01:00Z")
         self.assertEqual(second["launched"], [])
         self.assertEqual(len(self.order), 1)
-        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
 
 if __name__ == "__main__":
