@@ -17,6 +17,7 @@ Rules under test (from specs/bridge-watcher/requirements.md):
 
 Standard library only in the module under test.
 """
+
 import json
 import os
 import sys
@@ -59,9 +60,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_missing_keys_fall_back_to_defaults(self):
         """A partial config fills the gaps with defaults."""
-        config = watcher.load_config(
-            self._config_path({"branches": ["app-mode/x"],
-                               "repo_dir": self.tmp.name}))
+        config = watcher.load_config(self._config_path({"branches": ["app-mode/x"], "repo_dir": self.tmp.name}))
         self.assertEqual(config["branches"], ["app-mode/x"])
         self.assertEqual(config["poll_interval_seconds"], 120)
         self.assertEqual(config["repo"], "Hogathos/iris")
@@ -75,19 +74,16 @@ class ConfigTest(unittest.TestCase):
 
     def test_bad_branches_are_refused_in_plain_words(self):
         """Branches must be a non-empty list of names."""
-        for bad in ("app-mode/x", [], [""], [1], ["ok", ""],
-                    ["ok", 7]):
+        for bad in ("app-mode/x", [], [""], [1], ["ok", ""], ["ok", 7]):
             with self.assertRaises(watcher.ConfigError) as ctx:
-                watcher.load_config(
-                    self._config_path({"branches": bad}))
+                watcher.load_config(self._config_path({"branches": bad}))
             self.assertIn("branch", str(ctx.exception).lower())
 
     def test_bad_interval_is_refused_in_plain_words(self):
         """The poll interval must be a positive number."""
         for bad in (0, -5, "120", True, None, [120]):
             with self.assertRaises(watcher.ConfigError) as ctx:
-                watcher.load_config(self._config_path(
-                    {"poll_interval_seconds": bad}))
+                watcher.load_config(self._config_path({"poll_interval_seconds": bad}))
             self.assertIn("poll", str(ctx.exception).lower())
 
     def test_bad_repo_or_dir_is_refused_in_plain_words(self):
@@ -95,10 +91,8 @@ class ConfigTest(unittest.TestCase):
         for field in ("repo", "prompts_dir"):
             for bad in ("", "  ", 7, None):
                 with self.assertRaises(watcher.ConfigError) as ctx:
-                    watcher.load_config(
-                        self._config_path({field: bad}))
-                self.assertIn(field.split("_")[0],
-                              str(ctx.exception).lower())
+                    watcher.load_config(self._config_path({field: bad}))
+                self.assertIn(field.split("_")[0], str(ctx.exception).lower())
 
     def test_bad_paths_are_refused_in_plain_words(self):
         """State, log, and download paths must be non-empty text."""
@@ -133,8 +127,7 @@ class SeenListTest(unittest.TestCase):
     def test_save_and_load_round_trip(self):
         """What is saved is what comes back, across a restart."""
         watcher.save_seen(self.path, {"a.md", "b.md"})
-        self.assertEqual(
-            watcher.load_seen(self.path), {"a.md", "b.md"})
+        self.assertEqual(watcher.load_seen(self.path), {"a.md", "b.md"})
 
     def test_mark_seen_never_forgets(self):
         """Marking adds without dropping what was there."""
@@ -144,9 +137,7 @@ class SeenListTest(unittest.TestCase):
     def test_new_prompts_skips_seen_files(self):
         """Seen files never run again. Order is kept."""
         listed = ["a.md", "b.md", "c.md"]
-        self.assertEqual(
-            watcher.new_prompts(listed, {"b.md"}),
-            ["a.md", "c.md"])
+        self.assertEqual(watcher.new_prompts(listed, {"b.md"}), ["a.md", "c.md"])
 
     def test_corrupt_seen_file_is_refused_not_guessed(self):
         """A broken seen-list stops the watcher instead of
@@ -154,8 +145,7 @@ class SeenListTest(unittest.TestCase):
         _write(self.path, "{corrupt")
         with self.assertRaises(watcher.ConfigError) as ctx:
             watcher.load_seen(self.path)
-        self.assertIn(os.path.basename(self.path),
-                      str(ctx.exception))
+        self.assertIn(os.path.basename(self.path), str(ctx.exception))
         _write(self.path, json.dumps({"not": "a list"}))
         with self.assertRaises(watcher.ConfigError):
             watcher.load_seen(self.path)
@@ -165,12 +155,10 @@ class BranchFilterTest(unittest.TestCase):
     """Only watched branches run. Main is not special."""
 
     def test_watched_branch_runs(self):
-        self.assertTrue(
-            watcher.is_watched("app-mode/x", ["app-mode/x"]))
+        self.assertTrue(watcher.is_watched("app-mode/x", ["app-mode/x"]))
 
     def test_unwatched_branch_never_runs(self):
-        self.assertFalse(
-            watcher.is_watched("app-mode/y", ["app-mode/x"]))
+        self.assertFalse(watcher.is_watched("app-mode/y", ["app-mode/x"]))
 
     def test_main_runs_only_when_configured(self):
         """Main is an ordinary name: configured means watched."""
@@ -184,15 +172,14 @@ class LaunchCommandTest(unittest.TestCase):
     def test_build_command_runs_muse_headless(self):
         self.assertEqual(
             watcher.build_command("/tmp/p.md"),
-            ["muse", "exec", "--prompt-file", "/tmp/p.md",
-             "--disable-approval", "--trust-workspace"])
+            ["muse", "exec", "--prompt-file", "/tmp/p.md", "--disable-approval", "--trust-workspace"],
+        )
 
     def test_build_command_trusts_workspace(self):
         """The watcher runs the user's own repo, so the command
         trusts the workspace: project rules, delegation, and
         project MCP servers load instead of being skipped."""
-        self.assertIn("--trust-workspace",
-                      watcher.build_command("/tmp/p.md"))
+        self.assertIn("--trust-workspace", watcher.build_command("/tmp/p.md"))
 
 
 class RunOnceTest(unittest.TestCase):
@@ -219,9 +206,8 @@ class RunOnceTest(unittest.TestCase):
     def _lister(self, files):
         def listing(branch):
             assert branch == "app-mode/x"
-            return [{"name": name,
-                     "url": "https://example.invalid/" + name}
-                    for name in files]
+            return [{"name": name, "url": "https://example.invalid/" + name} for name in files]
+
         return listing
 
     def _downloader(self):
@@ -230,12 +216,14 @@ class RunOnceTest(unittest.TestCase):
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt for " + url)
             self.saved[dest] = url
+
         return download
 
     def _runner(self, code=0):
         def run(cmd):
             self.ran.append(cmd)
             return code
+
         return run
 
     def test_only_new_prompts_run_and_are_logged(self):
@@ -244,36 +232,40 @@ class RunOnceTest(unittest.TestCase):
         report = watcher.run_once(
             self.config,
             self._lister(["old-prompt.md", "new-prompt.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:00:00Z")
+            self._downloader(),
+            self._runner(),
+            now="2026-11-24T00:00:00Z",
+        )
         self.assertEqual(len(self.ran), 1)
         self.assertEqual(
             self.ran[0],
-            ["muse", "exec", "--prompt-file",
-             os.path.join(self.downloads, "new-prompt.md"),
-             "--disable-approval", "--trust-workspace"])
+            [
+                "muse",
+                "exec",
+                "--prompt-file",
+                os.path.join(self.downloads, "new-prompt.md"),
+                "--disable-approval",
+                "--trust-workspace",
+            ],
+        )
         with open(self.log, encoding="utf-8") as handle:
             logged = handle.read()
         self.assertIn("2026-11-24T00:00:00Z", logged)
         self.assertIn("app-mode/x", logged)
         self.assertIn("new-prompt.md", logged)
         self.assertIn("0", logged)
-        self.assertEqual(report["launched"],
-                         [("app-mode/x", "new-prompt.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"old-prompt.md", "new-prompt.md"})
+        self.assertEqual(report["launched"], [("app-mode/x", "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"old-prompt.md", "new-prompt.md"})
 
     def test_second_poll_runs_nothing(self):
         """The seen-list survives: a rerun finds no work."""
         watcher.save_seen(self.state, set())
         watcher.run_once(
-            self.config, self._lister(["new-prompt.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:00:00Z")
+            self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+        )
         second = watcher.run_once(
-            self.config, self._lister(["new-prompt.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:01:00Z")
+            self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:01:00Z"
+        )
         self.assertEqual(len(self.ran), 1)
         self.assertEqual(second["launched"], [])
 
@@ -282,36 +274,33 @@ class RunOnceTest(unittest.TestCase):
         runs again. Iris never double-runs a prompt."""
         watcher.save_seen(self.state, set())
         report = watcher.run_once(
-            self.config, self._lister(["new-prompt.md"]),
-            self._downloader(), self._runner(code=3),
-            now="2026-11-24T00:00:00Z")
-        self.assertEqual(report["launched"],
-                         [("app-mode/x", "new-prompt.md", 3)])
+            self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(code=3), now="2026-11-24T00:00:00Z"
+        )
+        self.assertEqual(report["launched"], [("app-mode/x", "new-prompt.md", 3)])
         with open(self.log, encoding="utf-8") as handle:
             self.assertIn("3", handle.read().splitlines()[-1])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_unwatched_branch_is_never_listed(self):
         """The listing is only asked for watched branches."""
+
         def listing(branch):
-            raise AssertionError(
-                "must not list " + branch)
+            raise AssertionError("must not list " + branch)
+
         report = watcher.run_once(
-            dict(self.config, branches=[]),
-            listing, self._downloader(), self._runner(),
-            now="2026-11-24T00:00:00Z")
+            dict(self.config, branches=[]), listing, self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+        )
         self.assertEqual(self.ran, [])
         self.assertEqual(report["launched"], [])
 
     def test_network_blip_kills_nothing(self):
         """A listing failure is skipped, and the next poll
         retries. The watcher keeps going."""
+
         def listing(branch):
             raise ConnectionError("blip")
-        report = watcher.run_once(
-            self.config, listing, self._downloader(),
-            self._runner(), now="2026-11-24T00:00:00Z")
+
+        report = watcher.run_once(self.config, listing, self._downloader(), self._runner(), now="2026-11-24T00:00:00Z")
         self.assertEqual(self.ran, [])
         self.assertEqual(report["skipped_branches"], ["app-mode/x"])
 
@@ -326,17 +315,18 @@ class RunOnceTest(unittest.TestCase):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt")
+
         report = watcher.run_once(
             self.config,
             self._lister(["bad-prompt.md", "good-prompt.md"]),
-            download, self._runner(),
-            now="2026-11-24T00:00:00Z")
+            download,
+            self._runner(),
+            now="2026-11-24T00:00:00Z",
+        )
         self.assertEqual(len(self.ran), 1)
         self.assertIn("good-prompt.md", self.ran[0][3])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"good-prompt.md"})
-        self.assertEqual(report["failed_downloads"],
-                         ["bad-prompt.md"])
+        self.assertEqual(watcher.load_seen(self.state), {"good-prompt.md"})
+        self.assertEqual(report["failed_downloads"], ["bad-prompt.md"])
 
 
 class PromptReportSkipTest(unittest.TestCase):
@@ -369,9 +359,8 @@ class PromptReportSkipTest(unittest.TestCase):
     def _lister(self, files):
         def listing(branch):
             assert branch == "app-mode/x"
-            return [{"name": name,
-                     "url": "https://example.invalid/" + name}
-                    for name in files]
+            return [{"name": name, "url": "https://example.invalid/" + name} for name in files]
+
         return listing
 
     def _downloader(self):
@@ -380,12 +369,14 @@ class PromptReportSkipTest(unittest.TestCase):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt for " + url)
+
         return download
 
     def _runner(self, code=0):
         def run(cmd):
             self.ran.append(cmd)
             return code
+
         return run
 
     def _read_log(self):
@@ -398,18 +389,17 @@ class PromptReportSkipTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                side_effect=AssertionError("no checkout expected")), \
-            mock.patch.object(watcher, "checkout_branch",
-                              side_effect=AssertionError(
-                                  "no checkout expected")):
+        with (
+            mock.patch.object(watcher, "get_current_branch", side_effect=AssertionError("no checkout expected")),
+            mock.patch.object(watcher, "checkout_branch", side_effect=AssertionError("no checkout expected")),
+        ):
             report = watcher.run_once(
-                dict(self.config,
-                     repo_dir=os.path.join(self.tmp.name, "repo")),
+                dict(self.config, repo_dir=os.path.join(self.tmp.name, "repo")),
                 self._lister(["job-report.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self._downloader(),
+                self._runner(),
+                now="2026-11-24T00:00:00Z",
+            )
         self.assertEqual(self.downloaded, [])
         self.assertEqual(self.ran, [])
         self.assertEqual(report["launched"], [])
@@ -422,9 +412,8 @@ class PromptReportSkipTest(unittest.TestCase):
         or run, and never logged as a failure."""
         watcher.save_seen(self.state, set())
         report = watcher.run_once(
-            self.config, self._lister(["notes.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:00:00Z")
+            self.config, self._lister(["notes.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+        )
         self.assertEqual(self.downloaded, [])
         self.assertEqual(self.ran, [])
         self.assertEqual(report["launched"], [])
@@ -439,36 +428,33 @@ class PromptReportSkipTest(unittest.TestCase):
         report = watcher.run_once(
             self.config,
             self._lister(["job-prompt.md", "job-report.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:00:00Z")
+            self._downloader(),
+            self._runner(),
+            now="2026-11-24T00:00:00Z",
+        )
         self.assertEqual(self.downloaded, [])
         self.assertEqual(self.ran, [])
         self.assertEqual(report["launched"], [])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"job-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"job-prompt.md"})
         logged = self._read_log().lower()
         self.assertIn("skip", logged)
         self.assertIn("job-prompt.md", self._read_log())
         self.assertEqual(len(report["skipped_reported"]), 1)
         branch, name, reason = report["skipped_reported"][0]
-        self.assertEqual((branch, name), ("app-mode/x",
-                                          "job-prompt.md"))
+        self.assertEqual((branch, name), ("app-mode/x", "job-prompt.md"))
         self.assertIn("job-report.md", reason)
 
     def test_prompt_without_report_runs_as_normal(self):
         """A prompt with no report in the listing runs as normal."""
         watcher.save_seen(self.state, set())
         report = watcher.run_once(
-            self.config, self._lister(["solo-prompt.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:00:00Z")
+            self.config, self._lister(["solo-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+        )
         self.assertEqual(len(self.ran), 1)
         self.assertIn("solo-prompt.md", self.ran[0][3])
-        self.assertEqual(report["launched"],
-                         [("app-mode/x", "solo-prompt.md", 0)])
+        self.assertEqual(report["launched"], [("app-mode/x", "solo-prompt.md", 0)])
         self.assertEqual(report["skipped_reported"], [])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"solo-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"solo-prompt.md"})
 
     def test_reported_only_pending_triggers_no_checkout(self):
         """When the only pending prompt is already reported, no
@@ -477,24 +463,20 @@ class PromptReportSkipTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        config = dict(
-            self.config,
-            repo_dir=os.path.join(self.tmp.name, "repo"))
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                side_effect=AssertionError(
-                    "no checkout expected")) as current, \
-            mock.patch.object(
-                watcher, "working_tree_dirty") as dirty, \
-            mock.patch.object(
-                watcher, "branch_exists_locally") as exists, \
-            mock.patch.object(
-                watcher, "checkout_branch") as checkout:
+        config = dict(self.config, repo_dir=os.path.join(self.tmp.name, "repo"))
+        with (
+            mock.patch.object(watcher, "get_current_branch", side_effect=AssertionError("no checkout expected")) as current,
+            mock.patch.object(watcher, "working_tree_dirty") as dirty,
+            mock.patch.object(watcher, "branch_exists_locally") as exists,
+            mock.patch.object(watcher, "checkout_branch") as checkout,
+        ):
             report = watcher.run_once(
                 config,
                 self._lister(["job-prompt.md", "job-report.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self._downloader(),
+                self._runner(),
+                now="2026-11-24T00:00:00Z",
+            )
         current.assert_not_called()
         dirty.assert_not_called()
         exists.assert_not_called()
@@ -503,23 +485,16 @@ class PromptReportSkipTest(unittest.TestCase):
         self.assertEqual(self.downloaded, [])
         self.assertEqual(report["launched"], [])
         self.assertEqual(len(report["skipped_reported"]), 1)
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"job-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"job-prompt.md"})
 
     def test_second_poll_runs_nothing_after_report_skip(self):
         """A prompt skipped for its report is in the seen-list now,
         so the next poll runs nothing."""
         watcher.save_seen(self.state, set())
         listing = self._lister(["job-prompt.md", "job-report.md"])
-        first = watcher.run_once(
-            self.config, listing,
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:00:00Z")
+        first = watcher.run_once(self.config, listing, self._downloader(), self._runner(), now="2026-11-24T00:00:00Z")
         self.assertEqual(len(first["skipped_reported"]), 1)
-        second = watcher.run_once(
-            self.config, listing,
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:01:00Z")
+        second = watcher.run_once(self.config, listing, self._downloader(), self._runner(), now="2026-11-24T00:01:00Z")
         self.assertEqual(self.ran, [])
         self.assertEqual(second["launched"], [])
         self.assertEqual(second["skipped_reported"], [])
@@ -542,16 +517,12 @@ class RunMuseCommandTest(unittest.TestCase):
         def _fake_run(cmd, **kwargs):
             for part in cmd:
                 if not isinstance(part, (str, bytes, os.PathLike)):
-                    raise TypeError(
-                        "expected str, bytes or os.PathLike "
-                        f"object, not {type(part).__name__}")
+                    raise TypeError(f"expected str, bytes or os.PathLike object, not {type(part).__name__}")
             seen.append((cmd, dict(kwargs)))
             return mock.Mock(returncode=3)
 
-        cmd = ["muse", "exec", "--prompt-file", "p.md",
-               "--disable-approval"]
-        with mock.patch.object(watcher.subprocess, "run",
-                               side_effect=_fake_run):
+        cmd = ["muse", "exec", "--prompt-file", "p.md", "--disable-approval"]
+        with mock.patch.object(watcher.subprocess, "run", side_effect=_fake_run):
             code = watcher.run_muse(cmd, "/tmp/iris-repo")
         self.assertEqual(code, 3)
         self.assertEqual(len(seen), 1)
@@ -586,10 +557,8 @@ class RunMuseShellTest(unittest.TestCase):
             seen.update(kwargs)
             return mock.Mock(returncode=0)
 
-        cmd = ["muse", "exec", "--prompt-file", "p.md",
-               "--disable-approval"]
-        with mock.patch.object(watcher.subprocess, "run",
-                               side_effect=_fake_run):
+        cmd = ["muse", "exec", "--prompt-file", "p.md", "--disable-approval"]
+        with mock.patch.object(watcher.subprocess, "run", side_effect=_fake_run):
             with mock.patch.object(watcher.os, "name", target_os):
                 code = watcher.run_muse(cmd, "/tmp/iris-repo")
         return code, seen.get("shell")
@@ -627,10 +596,8 @@ class RunMuseOutputCwdTest(unittest.TestCase):
             seen.update(kwargs)
             return mock.Mock(returncode=0)
 
-        cmd = ["muse", "exec", "--prompt-file", "p.md",
-               "--disable-approval"]
-        with mock.patch.object(watcher.subprocess, "run",
-                               side_effect=_fake_run):
+        cmd = ["muse", "exec", "--prompt-file", "p.md", "--disable-approval"]
+        with mock.patch.object(watcher.subprocess, "run", side_effect=_fake_run):
             code = watcher.run_muse(cmd, repo_dir)
         return code, seen
 
@@ -680,8 +647,7 @@ class RepoDirConfigTest(unittest.TestCase):
         the same as the state, log, and download paths."""
         path = self._config_path({"repo_dir": "myrepo"})
         config = watcher.load_config(path)
-        self.assertEqual(config["repo_dir"],
-                         os.path.join(self.tmp.name, "myrepo"))
+        self.assertEqual(config["repo_dir"], os.path.join(self.tmp.name, "myrepo"))
 
     def test_absolute_repo_dir_stays_where_it_is(self):
         """An absolute repo_dir is kept as is."""
@@ -720,9 +686,8 @@ class BaselineTest(unittest.TestCase):
     def _lister(self, files):
         def listing(branch):
             assert branch == "app-mode/x"
-            return [{"name": name,
-                     "url": "https://example.invalid/" + name}
-                    for name in files]
+            return [{"name": name, "url": "https://example.invalid/" + name} for name in files]
+
         return listing
 
     def _downloader(self):
@@ -731,6 +696,7 @@ class BaselineTest(unittest.TestCase):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt")
+
         return download
 
     def test_first_run_marks_seen_without_running(self):
@@ -739,22 +705,25 @@ class BaselineTest(unittest.TestCase):
         and a file appearing later runs exactly once."""
         self.assertFalse(os.path.exists(self.state))
         first = watcher.run_once(
-            self.config, self._lister(["a-prompt.md", "b-prompt.md"]),
+            self.config,
+            self._lister(["a-prompt.md", "b-prompt.md"]),
             self._downloader(),
             lambda cmd: self.ran.append(cmd) or 0,
-            now="2026-11-24T00:00:00Z")
+            now="2026-11-24T00:00:00Z",
+        )
         self.assertEqual(self.ran, [])
         self.assertEqual(self.downloaded, [])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"a-prompt.md", "b-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"a-prompt.md", "b-prompt.md"})
         self.assertEqual(first["launched"], [])
         with open(self.log, encoding="utf-8") as handle:
             self.assertIn("baseline", handle.read().lower())
         second = watcher.run_once(
-            self.config, self._lister(["a-prompt.md", "b-prompt.md"]),
+            self.config,
+            self._lister(["a-prompt.md", "b-prompt.md"]),
             self._downloader(),
             lambda cmd: self.ran.append(cmd) or 0,
-            now="2026-11-24T00:01:00Z")
+            now="2026-11-24T00:01:00Z",
+        )
         self.assertEqual(self.ran, [])
         self.assertEqual(second["launched"], [])
         third = watcher.run_once(
@@ -762,11 +731,11 @@ class BaselineTest(unittest.TestCase):
             self._lister(["a-prompt.md", "b-prompt.md", "c-prompt.md"]),
             self._downloader(),
             lambda cmd: self.ran.append(cmd) or 0,
-            now="2026-11-24T00:02:00Z")
+            now="2026-11-24T00:02:00Z",
+        )
         self.assertEqual(len(self.ran), 1)
         self.assertIn("c-prompt.md", self.ran[0][3])
-        self.assertEqual(third["launched"],
-                         [("app-mode/x", "c-prompt.md", 0)])
+        self.assertEqual(third["launched"], [("app-mode/x", "c-prompt.md", 0)])
 
 
 class BranchCheckoutTest(unittest.TestCase):
@@ -804,9 +773,8 @@ class BranchCheckoutTest(unittest.TestCase):
     def _lister(self, files):
         def listing(branch):
             self.assertEqual(branch, self.branch)
-            return [{"name": name,
-                     "url": "https://example.invalid/" + name}
-                    for name in files]
+            return [{"name": name, "url": "https://example.invalid/" + name} for name in files]
+
         return listing
 
     def _downloader(self):
@@ -814,12 +782,14 @@ class BranchCheckoutTest(unittest.TestCase):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt")
+
         return download
 
     def _runner(self, code=0):
         def run(cmd):
             self.order.append("run")
             return code
+
         return run
 
     def _read_log(self):
@@ -831,55 +801,41 @@ class BranchCheckoutTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch") as current, \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                return_value=False), \
-            mock.patch.object(watcher, "fetch_branch"), \
-            mock.patch.object(
-                watcher, "remote_branch_exists",
-                return_value=True), \
-            mock.patch.object(
-                watcher, "checkout_branch",
-                side_effect=lambda d, b: self.order.append("checkout")):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch") as current,
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=False),
+            mock.patch.object(watcher, "fetch_branch"),
+            mock.patch.object(watcher, "remote_branch_exists", return_value=True),
+            mock.patch.object(watcher, "checkout_branch", side_effect=lambda d, b: self.order.append("checkout")),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         self.assertEqual(current.call_args[0][0], self.repo_dir)
         self.assertEqual(self.order, ["checkout", "run"])
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_no_checkout_when_already_on_branch(self):
         """A tree already on B runs with no checkout."""
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value=self.branch), \
-            mock.patch.object(watcher, "fetch_branch", return_value=None), \
-            mock.patch.object(watcher, "fast_forward_branch", return_value=None), \
-            mock.patch.object(watcher, "branch_exists_locally", return_value=True), \
-            mock.patch.object(watcher, "working_tree_dirty", return_value=False), \
-            mock.patch.object(watcher, "checkout_branch") as checkout:
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value=self.branch),
+            mock.patch.object(watcher, "fetch_branch", return_value=None),
+            mock.patch.object(watcher, "fast_forward_branch", return_value=None),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=True),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "checkout_branch") as checkout,
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         checkout.assert_not_called()
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_dirty_tree_skips_run_and_leaves_unmarked(self):
         """Uncommitted changes that a checkout would lose skip the
@@ -887,17 +843,14 @@ class BranchCheckoutTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=True), \
-            mock.patch.object(watcher, "checkout_branch") as checkout:
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=True),
+            mock.patch.object(watcher, "checkout_branch") as checkout,
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         checkout.assert_not_called()
         self.assertEqual(report["launched"], [])
         self.assertEqual(watcher.load_seen(self.state), set())
@@ -912,20 +865,15 @@ class BranchCheckoutTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                return_value=False), \
-            mock.patch.object(watcher, "checkout_branch") as checkout:
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=False),
+            mock.patch.object(watcher, "checkout_branch") as checkout,
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         checkout.assert_not_called()
         self.assertEqual(report["launched"], [])
         self.assertEqual(watcher.load_seen(self.state), set())
@@ -939,26 +887,17 @@ class BranchCheckoutTest(unittest.TestCase):
         import subprocess
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                return_value=False), \
-            mock.patch.object(watcher, "fetch_branch"), \
-            mock.patch.object(
-                watcher, "remote_branch_exists",
-                return_value=True), \
-            mock.patch.object(
-                watcher, "checkout_branch",
-                side_effect=subprocess.CalledProcessError(1, "git")):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=False),
+            mock.patch.object(watcher, "fetch_branch"),
+            mock.patch.object(watcher, "remote_branch_exists", return_value=True),
+            mock.patch.object(watcher, "checkout_branch", side_effect=subprocess.CalledProcessError(1, "git")),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         self.assertEqual(report["launched"], [])
         self.assertEqual(watcher.load_seen(self.state), set())
         logged = self._read_log().lower()
@@ -1002,9 +941,8 @@ class FetchMissingBranchTest(unittest.TestCase):
     def _lister(self, files):
         def listing(branch):
             self.assertEqual(branch, self.branch)
-            return [{"name": name,
-                     "url": "https://example.invalid/" + name}
-                    for name in files]
+            return [{"name": name, "url": "https://example.invalid/" + name} for name in files]
+
         return listing
 
     def _downloader(self):
@@ -1012,12 +950,14 @@ class FetchMissingBranchTest(unittest.TestCase):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt")
+
         return download
 
     def _runner(self, code=0):
         def run(cmd):
             self.order.append("run")
             return code
+
         return run
 
     def _read_log(self):
@@ -1031,38 +971,21 @@ class FetchMissingBranchTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                side_effect=[False, False]), \
-            mock.patch.object(
-                watcher, "remote_branch_exists",
-                return_value=True), \
-            mock.patch.object(
-                watcher, "fetch_branch",
-                side_effect=lambda d, b: self.order.append(
-                    ("fetch", d, b))), \
-            mock.patch.object(
-                watcher, "checkout_branch",
-                side_effect=lambda d, b: self.order.append(
-                    ("checkout", d, b))):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", side_effect=[False, False]),
+            mock.patch.object(watcher, "remote_branch_exists", return_value=True),
+            mock.patch.object(watcher, "fetch_branch", side_effect=lambda d, b: self.order.append(("fetch", d, b))),
+            mock.patch.object(watcher, "checkout_branch", side_effect=lambda d, b: self.order.append(("checkout", d, b))),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
-        fetches = [entry for entry in self.order
-                   if isinstance(entry, tuple) and entry[0] == "fetch"]
-        self.assertEqual(
-            fetches, [("fetch", self.repo_dir, self.branch)])
-        self.assertEqual(self.order[-2:], [
-            ("checkout", self.repo_dir, self.branch), "run"])
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
+        fetches = [entry for entry in self.order if isinstance(entry, tuple) and entry[0] == "fetch"]
+        self.assertEqual(fetches, [("fetch", self.repo_dir, self.branch)])
+        self.assertEqual(self.order[-2:], [("checkout", self.repo_dir, self.branch), "run"])
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
         self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_fetch_failure_is_a_plain_skip(self):
@@ -1073,24 +996,16 @@ class FetchMissingBranchTest(unittest.TestCase):
         import subprocess
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "fetch_branch",
-                side_effect=subprocess.CalledProcessError(
-                    1, ["git", "fetch"])), \
-            mock.patch.object(watcher, "checkout_branch") as checkout:
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=False),
+            mock.patch.object(watcher, "fetch_branch", side_effect=subprocess.CalledProcessError(1, ["git", "fetch"])),
+            mock.patch.object(watcher, "checkout_branch") as checkout,
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         checkout.assert_not_called()
         self.assertEqual(self.order, [])
         self.assertEqual(report["launched"], [])
@@ -1099,8 +1014,7 @@ class FetchMissingBranchTest(unittest.TestCase):
         logged = self._read_log().lower()
         self.assertIn("fetch", logged)
         self.assertIn(self.branch.lower(), logged)
-        reasons = " ".join(
-            reason for _, _, reason in report["skipped_checkouts"])
+        reasons = " ".join(reason for _, _, reason in report["skipped_checkouts"])
         self.assertIn("fetch", reasons.lower())
 
     def test_branch_still_missing_after_fetch_is_skipped_as_before(self):
@@ -1110,26 +1024,17 @@ class FetchMissingBranchTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                side_effect=[False, False]), \
-            mock.patch.object(
-                watcher, "remote_branch_exists",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "fetch_branch",
-                return_value=None), \
-            mock.patch.object(watcher, "checkout_branch") as checkout:
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", side_effect=[False, False]),
+            mock.patch.object(watcher, "remote_branch_exists", return_value=False),
+            mock.patch.object(watcher, "fetch_branch", return_value=None),
+            mock.patch.object(watcher, "checkout_branch") as checkout,
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         checkout.assert_not_called()
         self.assertEqual(report["launched"], [])
         self.assertEqual(watcher.load_seen(self.state), set())
@@ -1143,34 +1048,21 @@ class FetchMissingBranchTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                side_effect=[False, False]), \
-            mock.patch.object(
-                watcher, "remote_branch_exists",
-                return_value=True), \
-            mock.patch.object(
-                watcher, "fetch_branch",
-                return_value=None), \
-            mock.patch.object(
-                watcher, "checkout_branch",
-                return_value=None):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", side_effect=[False, False]),
+            mock.patch.object(watcher, "remote_branch_exists", return_value=True),
+            mock.patch.object(watcher, "fetch_branch", return_value=None),
+            mock.patch.object(watcher, "checkout_branch", return_value=None),
+        ):
             first = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
-        self.assertEqual(first["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
+        self.assertEqual(first["launched"], [(self.branch, "new-prompt.md", 0)])
         second = watcher.run_once(
-            self.config, self._lister(["new-prompt.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:01:00Z")
+            self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:01:00Z"
+        )
         self.assertEqual(second["launched"], [])
         self.assertEqual(len(self.order), 1)
         self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
@@ -1211,20 +1103,22 @@ class DiscoveryTest(unittest.TestCase):
     def _files(self, mapping):
         def listing(branch):
             self.listed.append(branch)
-            return [{"name": name,
-                     "url": "https://example.invalid/"
-                     + branch + "/" + name}
-                    for name in mapping.get(branch, [])]
+            return [
+                {"name": name, "url": "https://example.invalid/" + branch + "/" + name} for name in mapping.get(branch, [])
+            ]
+
         return listing
 
     def _branches(self, branches):
         def branch_listing():
             return list(branches)
+
         return branch_listing
 
     def _failing_branches(self):
         def branch_listing():
             raise ConnectionError("branch listing blip")
+
         return branch_listing
 
     def _downloader(self):
@@ -1233,12 +1127,14 @@ class DiscoveryTest(unittest.TestCase):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt")
+
         return download
 
     def _runner(self, code=0):
         def run(cmd):
             self.ran.append(cmd)
             return code
+
         return run
 
     def _read_log(self):
@@ -1248,10 +1144,13 @@ class DiscoveryTest(unittest.TestCase):
     def _pass_baseline(self, branches=(), mapping=None):
         """One clean first poll: baselines all, runs nothing."""
         return watcher.run_once(
-            self.config, self._files(mapping or {}),
-            self._downloader(), self._runner(),
+            self.config,
+            self._files(mapping or {}),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:00:00Z",
-            branch_lister=self._branches(branches))
+            branch_lister=self._branches(branches),
+        )
 
     def test_discovered_branch_prompt_is_downloaded_and_run(self):
         """A prompt on a branch found only by discovery runs once."""
@@ -1259,18 +1158,16 @@ class DiscoveryTest(unittest.TestCase):
         report = watcher.run_once(
             self.config,
             self._files({"feature/new": ["new-prompt.md"]}),
-            self._downloader(), self._runner(),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:01:00Z",
-            branch_lister=self._branches(["feature/new"]))
+            branch_lister=self._branches(["feature/new"]),
+        )
         self.assertIn("app-mode/x", self.listed)
         self.assertIn("feature/new", self.listed)
-        self.assertEqual(report["launched"],
-                         [("feature/new", "new-prompt.md", 0)])
-        self.assertEqual(self.downloaded,
-                         [os.path.join(self.downloads,
-                                       "new-prompt.md")])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+        self.assertEqual(report["launched"], [("feature/new", "new-prompt.md", 0)])
+        self.assertEqual(self.downloaded, [os.path.join(self.downloads, "new-prompt.md")])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_seen_prompt_on_discovered_branch_never_runs_again(self):
         """The seen-list is global: a seen file never runs again,
@@ -1280,9 +1177,11 @@ class DiscoveryTest(unittest.TestCase):
         report = watcher.run_once(
             self.config,
             self._files({"feature/new": ["old-prompt.md"]}),
-            self._downloader(), self._runner(),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:01:00Z",
-            branch_lister=self._branches(["feature/new"]))
+            branch_lister=self._branches(["feature/new"]),
+        )
         self.assertEqual(report["launched"], [])
         self.assertEqual(self.downloaded, [])
         self.assertEqual(self.ran, [])
@@ -1293,16 +1192,16 @@ class DiscoveryTest(unittest.TestCase):
         self._pass_baseline()
         report = watcher.run_once(
             self.config,
-            self._files({"feature/new": ["done-prompt.md",
-                                         "done-report.md"]}),
-            self._downloader(), self._runner(),
+            self._files({"feature/new": ["done-prompt.md", "done-report.md"]}),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:01:00Z",
-            branch_lister=self._branches(["feature/new"]))
+            branch_lister=self._branches(["feature/new"]),
+        )
         self.assertEqual(report["launched"], [])
         self.assertEqual(self.downloaded, [])
         self.assertEqual(self.ran, [])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"done-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"done-prompt.md"})
         self.assertTrue(report["skipped_reported"])
         self.assertIn("report", self._read_log().lower())
 
@@ -1312,11 +1211,12 @@ class DiscoveryTest(unittest.TestCase):
         self._pass_baseline()
         report = watcher.run_once(
             self.config,
-            self._files({"feature/new": ["notes.md",
-                                         "done-report.md"]}),
-            self._downloader(), self._runner(),
+            self._files({"feature/new": ["notes.md", "done-report.md"]}),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:01:00Z",
-            branch_lister=self._branches(["feature/new"]))
+            branch_lister=self._branches(["feature/new"]),
+        )
         self.assertEqual(report["launched"], [])
         self.assertEqual(report["failed_downloads"], [])
         self.assertEqual(self.downloaded, [])
@@ -1330,17 +1230,16 @@ class DiscoveryTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.state))
         report = watcher.run_once(
             self.config,
-            self._files({"app-mode/x": ["old-prompt.md"],
-                         "feature/new": ["new-prompt.md"]}),
-            self._downloader(), self._runner(),
+            self._files({"app-mode/x": ["old-prompt.md"], "feature/new": ["new-prompt.md"]}),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:00:00Z",
-            branch_lister=self._branches(["feature/new",
-                                          "feature/other"]))
+            branch_lister=self._branches(["feature/new", "feature/other"]),
+        )
         self.assertEqual(report["launched"], [])
         self.assertEqual(self.downloaded, [])
         self.assertEqual(self.ran, [])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"old-prompt.md", "new-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"old-prompt.md", "new-prompt.md"})
         self.assertIn("baseline", self._read_log().lower())
 
     def test_branch_listing_failure_keeps_config_branches_running(self):
@@ -1350,11 +1249,12 @@ class DiscoveryTest(unittest.TestCase):
         report = watcher.run_once(
             self.config,
             self._files({"app-mode/x": ["new-prompt.md"]}),
-            self._downloader(), self._runner(),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:01:00Z",
-            branch_lister=self._failing_branches())
-        self.assertEqual(report["launched"],
-                         [("app-mode/x", "new-prompt.md", 0)])
+            branch_lister=self._failing_branches(),
+        )
+        self.assertEqual(report["launched"], [("app-mode/x", "new-prompt.md", 0)])
         logged = self._read_log().lower()
         self.assertIn("discover", logged)
         self.assertIn("branch", logged)
@@ -1362,25 +1262,24 @@ class DiscoveryTest(unittest.TestCase):
     def test_prompt_after_baseline_runs_once_then_quiet(self):
         """A prompt appearing on a discovered branch after the
         baseline runs exactly once; the next poll runs nothing."""
-        self._pass_baseline(branches=["feature/new"],
-                            mapping={"feature/new":
-                                     ["old-prompt.md"]})
+        self._pass_baseline(branches=["feature/new"], mapping={"feature/new": ["old-prompt.md"]})
         second = watcher.run_once(
             self.config,
-            self._files({"feature/new": ["old-prompt.md",
-                                         "new-prompt.md"]}),
-            self._downloader(), self._runner(),
+            self._files({"feature/new": ["old-prompt.md", "new-prompt.md"]}),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:01:00Z",
-            branch_lister=self._branches(["feature/new"]))
-        self.assertEqual(second["launched"],
-                         [("feature/new", "new-prompt.md", 0)])
+            branch_lister=self._branches(["feature/new"]),
+        )
+        self.assertEqual(second["launched"], [("feature/new", "new-prompt.md", 0)])
         third = watcher.run_once(
             self.config,
-            self._files({"feature/new": ["old-prompt.md",
-                                         "new-prompt.md"]}),
-            self._downloader(), self._runner(),
+            self._files({"feature/new": ["old-prompt.md", "new-prompt.md"]}),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:02:00Z",
-            branch_lister=self._branches(["feature/new"]))
+            branch_lister=self._branches(["feature/new"]),
+        )
         self.assertEqual(third["launched"], [])
         self.assertEqual(len(self.ran), 1)
 
@@ -1391,11 +1290,12 @@ class DiscoveryTest(unittest.TestCase):
         report = watcher.run_once(
             self.config,
             self._files({"app-mode/x": ["new-prompt.md"]}),
-            self._downloader(), self._runner(),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:01:00Z",
-            branch_lister=self._branches([]))
-        self.assertEqual(report["launched"],
-                         [("app-mode/x", "new-prompt.md", 0)])
+            branch_lister=self._branches([]),
+        )
+        self.assertEqual(report["launched"], [("app-mode/x", "new-prompt.md", 0)])
 
 
 class TokenAuthTest(unittest.TestCase):
@@ -1431,8 +1331,7 @@ class TokenAuthTest(unittest.TestCase):
     def _auth_of(self, request):
         """The Authorization header on a captured request, or None."""
         seen = {}
-        for store in (getattr(request, "headers", {}),
-                      getattr(request, "unredirected_hdrs", {})):
+        for store in (getattr(request, "headers", {}), getattr(request, "unredirected_hdrs", {})):
             for key, value in dict(store).items():
                 seen[str(key).lower()] = value
         if hasattr(request, "get_header"):
@@ -1478,26 +1377,18 @@ class TokenAuthTest(unittest.TestCase):
         from unittest import mock
 
         seen_requests = []
-        payload = [{"type": "file",
-                    "name": "a-prompt.md",
-                    "download_url": "https://raw.invalid/a-prompt.md"}]
+        payload = [{"type": "file", "name": "a-prompt.md", "download_url": "https://raw.invalid/a-prompt.md"}]
 
         def fake_urlopen(request, timeout=None):
             seen_requests.append(request)
             return self._resp(payload)
 
-        with mock.patch.dict(os.environ,
-                             {"GITHUB_TOKEN": self.TOKEN}):
-            with mock.patch.object(
-                    watcher.urllib.request, "urlopen",
-                    side_effect=fake_urlopen):
-                files = watcher.github_list(
-                    "Hogathos/iris", "app-mode/x", "prompts")
-        self.assertEqual(files, [{"name": "a-prompt.md",
-                                  "url": "https://raw.invalid/a-prompt.md"}])
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": self.TOKEN}):
+            with mock.patch.object(watcher.urllib.request, "urlopen", side_effect=fake_urlopen):
+                files = watcher.github_list("Hogathos/iris", "app-mode/x", "prompts")
+        self.assertEqual(files, [{"name": "a-prompt.md", "url": "https://raw.invalid/a-prompt.md"}])
         self.assertEqual(len(seen_requests), 1)
-        self.assertEqual(self._auth_of(seen_requests[0]),
-                         "Bearer " + self.TOKEN)
+        self.assertEqual(self._auth_of(seen_requests[0]), "Bearer " + self.TOKEN)
 
     def test_github_list_branches_sends_bearer_on_all_pages(self):
         """With the token set, every branches page carries it,
@@ -1505,10 +1396,7 @@ class TokenAuthTest(unittest.TestCase):
         from unittest import mock
 
         seen_requests = []
-        first = self._resp(
-            [{"name": "a"}],
-            link='<https://api.github.com/repos/x/y/branches'
-                 '?per_page=100&page=2>; rel="next"')
+        first = self._resp([{"name": "a"}], link='<https://api.github.com/repos/x/y/branches?per_page=100&page=2>; rel="next"')
         second = self._resp([{"name": "b"}])
 
         def fake_urlopen(request, timeout=None):
@@ -1517,17 +1405,13 @@ class TokenAuthTest(unittest.TestCase):
                 return first
             return second
 
-        with mock.patch.dict(os.environ,
-                             {"GITHUB_TOKEN": self.TOKEN}):
-            with mock.patch.object(
-                    watcher.urllib.request, "urlopen",
-                    side_effect=fake_urlopen):
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": self.TOKEN}):
+            with mock.patch.object(watcher.urllib.request, "urlopen", side_effect=fake_urlopen):
                 names = watcher.github_list_branches("Hogathos/iris")
         self.assertEqual(names, ["a", "b"])
         self.assertEqual(len(seen_requests), 2)
         for request in seen_requests:
-            self.assertEqual(self._auth_of(request),
-                             "Bearer " + self.TOKEN)
+            self.assertEqual(self._auth_of(request), "Bearer " + self.TOKEN)
 
     def test_no_token_sends_no_authorization(self):
         """Without the token, neither API call carries it."""
@@ -1540,17 +1424,12 @@ class TokenAuthTest(unittest.TestCase):
             url = request.get_full_url()
             if "/branches" in url:
                 return self._resp([{"name": "a"}])
-            return self._resp([{"type": "file",
-                                "name": "a-prompt.md",
-                                "download_url": "https://raw.invalid/a.md"}])
+            return self._resp([{"type": "file", "name": "a-prompt.md", "download_url": "https://raw.invalid/a.md"}])
 
         with mock.patch.dict(os.environ):
             os.environ.pop("GITHUB_TOKEN", None)
-            with mock.patch.object(
-                    watcher.urllib.request, "urlopen",
-                    side_effect=fake_urlopen):
-                watcher.github_list(
-                    "Hogathos/iris", "app-mode/x", "prompts")
+            with mock.patch.object(watcher.urllib.request, "urlopen", side_effect=fake_urlopen):
+                watcher.github_list("Hogathos/iris", "app-mode/x", "prompts")
                 watcher.github_list_branches("Hogathos/iris")
         self.assertTrue(seen_requests)
         for request in seen_requests:
@@ -1568,11 +1447,8 @@ class TokenAuthTest(unittest.TestCase):
             return self._resp(b"prompt body")
 
         dest = os.path.join(self.downloads, "a-prompt.md")
-        with mock.patch.dict(os.environ,
-                             {"GITHUB_TOKEN": self.TOKEN}):
-            with mock.patch.object(
-                    watcher.urllib.request, "urlopen",
-                    side_effect=fake_urlopen):
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": self.TOKEN}):
+            with mock.patch.object(watcher.urllib.request, "urlopen", side_effect=fake_urlopen):
                 watcher.download_file("https://raw.invalid/a.md", dest)
         self.assertEqual(len(seen_requests), 1)
         self.assertIsNone(self._auth_of(seen_requests[0]))
@@ -1587,8 +1463,7 @@ class TokenAuthTest(unittest.TestCase):
         watcher.save_seen(self.state, set())
 
         def listing(branch):
-            return [{"name": "new-prompt.md",
-                     "url": "https://example.invalid/new-prompt.md"}]
+            return [{"name": "new-prompt.md", "url": "https://example.invalid/new-prompt.md"}]
 
         def download(url, dest):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -1598,11 +1473,8 @@ class TokenAuthTest(unittest.TestCase):
         def run(cmd):
             return 0
 
-        with mock.patch.dict(os.environ,
-                             {"GITHUB_TOKEN": self.TOKEN}):
-            watcher.run_once(
-                self.config, listing, download, run,
-                now="2026-11-24T00:00:00Z")
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": self.TOKEN}):
+            watcher.run_once(self.config, listing, download, run, now="2026-11-24T00:00:00Z")
         logged = self._read_log()
         self.assertNotIn(self.TOKEN, logged)
 
@@ -1620,23 +1492,24 @@ class TokenAuthTest(unittest.TestCase):
             lambda url, dest: None,
             lambda cmd: 0,
             now="2026-11-24T00:00:00Z",
-            branch_lister=lambda: [])
+            branch_lister=lambda: [],
+        )
         before = watcher.load_seen(self.state)
 
         def failing_branches():
             raise urllib.error.HTTPError(
-                "https://api.github.com/repos/Hogathos/iris/branches",
-                401, "Unauthorized", {}, io.BytesIO(b""))
+                "https://api.github.com/repos/Hogathos/iris/branches", 401, "Unauthorized", {}, io.BytesIO(b"")
+            )
 
-        with mock.patch.dict(os.environ,
-                             {"GITHUB_TOKEN": self.TOKEN}):
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": self.TOKEN}):
             report = watcher.run_once(
                 self.config,
                 lambda branch: [],
                 lambda url, dest: None,
                 lambda cmd: 0,
                 now="2026-11-24T00:01:00Z",
-                branch_lister=failing_branches)
+                branch_lister=failing_branches,
+            )
         self.assertEqual(report["launched"], [])
         self.assertEqual(watcher.load_seen(self.state), before)
         logged = self._read_log()
@@ -1652,18 +1525,15 @@ class WatchedBranchesPropertyTest(unittest.TestCase):
         once: the independent check on the discovery union."""
         from hypothesis import given, strategies as st
 
-        @given(st.lists(st.text(min_size=1), unique=True),
-               st.lists(st.text(min_size=1), unique=True))
+        @given(st.lists(st.text(min_size=1), unique=True), st.lists(st.text(min_size=1), unique=True))
         def check(configured, discovered):
-            watched = watcher.watched_branches(configured,
-                                              discovered)
-            self.assertEqual(set(watched),
-                             set(configured) | set(discovered))
+            watched = watcher.watched_branches(configured, discovered)
+            self.assertEqual(set(watched), set(configured) | set(discovered))
             self.assertEqual(len(watched), len(set(watched)))
-            self.assertEqual(watched[:len(configured)], configured)
-            rest = [name for name in discovered
-                    if name not in set(configured)]
-            self.assertEqual(watched[len(configured):], rest)
+            self.assertEqual(watched[: len(configured)], configured)
+            rest = [name for name in discovered if name not in set(configured)]
+            self.assertEqual(watched[len(configured) :], rest)
+
         check()
 
 
@@ -1687,15 +1557,12 @@ class PushBranchCommandTest(unittest.TestCase):
             seen.append((cmd, dict(kwargs)))
             return mock.Mock(returncode=0)
 
-        with mock.patch.object(watcher.subprocess, "run",
-                               side_effect=_fake_run):
+        with mock.patch.object(watcher.subprocess, "run", side_effect=_fake_run):
             watcher.push_branch("/tmp/iris-repo", "feature/b")
         self.assertEqual(len(seen), 1)
         cmd, kwargs = seen[0]
-        self.assertEqual(cmd, ["git", "-C", "/tmp/iris-repo",
-                              "push", "origin", "feature/b"])
-        self.assertFalse(any("force" in str(part).lower()
-                             for part in cmd))
+        self.assertEqual(cmd, ["git", "-C", "/tmp/iris-repo", "push", "origin", "feature/b"])
+        self.assertFalse(any("force" in str(part).lower() for part in cmd))
         self.assertTrue(kwargs.get("check"))
 
     def test_push_failure_raises_for_the_caller_to_log(self):
@@ -1703,10 +1570,7 @@ class PushBranchCommandTest(unittest.TestCase):
         import subprocess
         from unittest import mock
 
-        with mock.patch.object(
-                watcher.subprocess, "run",
-                side_effect=subprocess.CalledProcessError(
-                    1, ["git", "push"])):
+        with mock.patch.object(watcher.subprocess, "run", side_effect=subprocess.CalledProcessError(1, ["git", "push"])):
             with self.assertRaises(subprocess.CalledProcessError):
                 watcher.push_branch("/tmp/iris-repo", "feature/b")
 
@@ -1760,9 +1624,8 @@ class PushAfterRunTest(unittest.TestCase):
     def _lister(self, files):
         def listing(branch):
             self.assertEqual(branch, self.branch)
-            return [{"name": name,
-                     "url": "https://example.invalid/" + name}
-                    for name in files]
+            return [{"name": name, "url": "https://example.invalid/" + name} for name in files]
+
         return listing
 
     def _downloader(self):
@@ -1770,12 +1633,14 @@ class PushAfterRunTest(unittest.TestCase):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt")
+
         return download
 
     def _runner(self, code=0):
         def run(cmd):
             self.ran.append(cmd)
             return code
+
         return run
 
     def _pusher(self, fail_with=None):
@@ -1783,6 +1648,7 @@ class PushAfterRunTest(unittest.TestCase):
             self.pushed.append((repo_dir, branch))
             if fail_with is not None:
                 raise fail_with
+
         return push
 
     def _read_log(self):
@@ -1795,20 +1661,16 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value=self.branch), \
-            mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value=self.branch),
+            mock.patch.object(watcher, "push_branch", side_effect=self._pusher()),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
         self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
         logged = self._read_log()
         self.assertIn(self.branch, logged)
         self.assertIn("push", logged.lower())
@@ -1820,20 +1682,20 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value=self.branch), \
-            mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value=self.branch),
+            mock.patch.object(watcher, "push_branch", side_effect=self._pusher()),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(code=3),
-                now="2026-11-24T00:00:00Z")
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 3)])
+                self.config,
+                self._lister(["new-prompt.md"]),
+                self._downloader(),
+                self._runner(code=3),
+                now="2026-11-24T00:00:00Z",
+            )
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 3)])
         self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_no_push_on_report_skip(self):
         """A prompt skipped for its report never ran, so nothing
@@ -1841,16 +1703,17 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value=self.branch), \
-            mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value=self.branch),
+            mock.patch.object(watcher, "push_branch", side_effect=self._pusher()),
+        ):
             report = watcher.run_once(
                 self.config,
                 self._lister(["job-prompt.md", "job-report.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self._downloader(),
+                self._runner(),
+                now="2026-11-24T00:00:00Z",
+            )
         self.assertEqual(report["launched"], [])
         self.assertEqual(self.pushed, [])
         self.assertEqual(self.ran, [])
@@ -1861,18 +1724,14 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=True), \
-            mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=True),
+            mock.patch.object(watcher, "push_branch", side_effect=self._pusher()),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         self.assertEqual(report["launched"], [])
         self.assertEqual(self.pushed, [])
         self.assertEqual(watcher.load_seen(self.state), set())
@@ -1883,25 +1742,16 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "fetch_branch",
-                side_effect=subprocess.CalledProcessError(
-                    1, ["git", "fetch"])), \
-            mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value="other-branch"),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=False),
+            mock.patch.object(watcher, "fetch_branch", side_effect=subprocess.CalledProcessError(1, ["git", "fetch"])),
+            mock.patch.object(watcher, "push_branch", side_effect=self._pusher()),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         self.assertEqual(report["launched"], [])
         self.assertEqual(self.pushed, [])
         self.assertEqual(watcher.load_seen(self.state), set())
@@ -1911,12 +1761,10 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         self.assertFalse(os.path.exists(self.state))
-        with mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with mock.patch.object(watcher, "push_branch", side_effect=self._pusher()):
             report = watcher.run_once(
-                self.config, self._lister(["old-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["old-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
         self.assertEqual(report["launched"], [])
         self.assertEqual(self.pushed, [])
         self.assertEqual(self.ran, [])
@@ -1928,31 +1776,25 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value=self.branch), \
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value=self.branch),
             mock.patch.object(
-                watcher, "push_branch",
-                side_effect=self._pusher(
-                    fail_with=subprocess.CalledProcessError(
-                        1, ["git", "push"]))):
+                watcher, "push_branch", side_effect=self._pusher(fail_with=subprocess.CalledProcessError(1, ["git", "push"]))
+            ),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
         self.assertEqual(len(self.pushed), 1)
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
         logged = self._read_log().lower()
         self.assertIn("push", logged)
         self.assertIn("fail", logged)
         self.assertIn(self.branch.lower(), logged)
         second = watcher.run_once(
-            self.config, self._lister(["new-prompt.md"]),
-            self._downloader(), self._runner(),
-            now="2026-11-24T00:01:00Z")
+            self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:01:00Z"
+        )
         self.assertEqual(second["launched"], [])
         self.assertEqual(len(self.pushed), 1)
 
@@ -1965,35 +1807,24 @@ class PushAfterRunTest(unittest.TestCase):
 
         watcher.save_seen(self.state, set())
         failure = subprocess.CalledProcessError(
-            1, ["git", "-C", self.repo_dir,
-                "push", "origin", self.branch],
-            output="",
-            stderr="rejected: non-fast-forward")
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value=self.branch), \
-            mock.patch.object(
-                watcher, "checkout_branch") as checkout, \
-            mock.patch.object(
-                subprocess, "run", wraps=subprocess.run) as git_run, \
-            mock.patch.object(
-                watcher, "push_branch",
-                side_effect=self._pusher(fail_with=failure)):
+            1, ["git", "-C", self.repo_dir, "push", "origin", self.branch], output="", stderr="rejected: non-fast-forward"
+        )
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value=self.branch),
+            mock.patch.object(watcher, "checkout_branch") as checkout,
+            mock.patch.object(subprocess, "run", wraps=subprocess.run) as git_run,
+            mock.patch.object(watcher, "push_branch", side_effect=self._pusher(fail_with=failure)),
+        ):
             report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
             second = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:01:00Z")
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state),
-                         {"new-prompt.md"})
+                self.config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:01:00Z"
+            )
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
         checkout.assert_not_called()
-        self.assertFalse(any("rebase" in call.args[0]
-                             for call in git_run.call_args_list))
+        self.assertFalse(any("rebase" in call.args[0] for call in git_run.call_args_list))
         self.assertEqual(second["launched"], [])
         self.assertEqual(len(self.ran), 1)
         self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
@@ -2005,27 +1836,30 @@ class PushAfterRunTest(unittest.TestCase):
         from unittest import mock
 
         watcher.run_once(
-            self.config, self._lister([]),
-            self._downloader(), self._runner(),
+            self.config,
+            self._lister([]),
+            self._downloader(),
+            self._runner(),
             now="2026-11-24T00:00:00Z",
-            branch_lister=lambda: [])
+            branch_lister=lambda: [],
+        )
 
         def listing(branch):
-            return [{"name": "new-prompt.md",
-                     "url": "https://example.invalid/new-prompt.md"}]
+            return [{"name": "new-prompt.md", "url": "https://example.invalid/new-prompt.md"}]
 
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value=self.branch), \
-            mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with (
+            mock.patch.object(watcher, "get_current_branch", return_value=self.branch),
+            mock.patch.object(watcher, "push_branch", side_effect=self._pusher()),
+        ):
             report = watcher.run_once(
                 dict(self.config, branches=["other/config-branch"]),
-                listing, self._downloader(), self._runner(),
+                listing,
+                self._downloader(),
+                self._runner(),
                 now="2026-11-24T00:01:00Z",
-                branch_lister=lambda: [self.branch])
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
+                branch_lister=lambda: [self.branch],
+            )
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
         self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
 
     def test_no_push_without_repo_dir(self):
@@ -2036,14 +1870,11 @@ class PushAfterRunTest(unittest.TestCase):
         config = dict(self.config)
         del config["repo_dir"]
         watcher.save_seen(self.state, set())
-        with mock.patch.object(watcher, "push_branch",
-                              side_effect=self._pusher()):
+        with mock.patch.object(watcher, "push_branch", side_effect=self._pusher()):
             report = watcher.run_once(
-                config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
+                config, self._lister(["new-prompt.md"]), self._downloader(), self._runner(), now="2026-11-24T00:00:00Z"
+            )
+        self.assertEqual(report["launched"], [(self.branch, "new-prompt.md", 0)])
         self.assertEqual(self.pushed, [])
 
 
@@ -2254,8 +2085,7 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
         prompt_path = f"prompts/{self.prompt}"
         _write(os.path.join(self.origin, prompt_path), "new prompt")
         self._git(self.origin, "add", "--", prompt_path)
-        self.remote_head = self._commit(
-            self.origin, "work.txt", "remote prompt commit")
+        self.remote_head = self._commit(self.origin, "work.txt", "remote prompt commit")
         self.assertNotEqual(self.stale_head, self.remote_head)
         self.assertEqual(
             self._git(self.repo, "rev-parse", f"origin/{self.branch}"),
@@ -2273,16 +2103,25 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
 
         return subprocess.run(
             ["git", "-C", repo, *args],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     def _commit(self, repo, path, text):
         _write(os.path.join(repo, path), text)
         self._git(repo, "add", "--", path)
         self._git(
-            repo, "-c", "user.name=Watcher Test",
-            "-c", "user.email=watcher@example.invalid",
-            "-c", "commit.gpgsign=false", "commit", "-m", text,
+            repo,
+            "-c",
+            "user.name=Watcher Test",
+            "-c",
+            "user.email=watcher@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            text,
         )
         return self._git(repo, "rev-parse", "HEAD")
 
@@ -2292,8 +2131,7 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
             files["main"] = self.other_prompt
 
         def list_prompts(branch):
-            return [{"name": files[branch],
-                     "url": "https://example.invalid/" + files[branch]}]
+            return [{"name": files[branch], "url": "https://example.invalid/" + files[branch]}]
 
         return watcher.run_once(
             dict(self.config, branches=list(files)),
@@ -2329,10 +2167,12 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
         heads_before_checkout = []
 
         def observe_checkout(repo, branch):
-            heads_before_checkout.append((
-                self._git(repo, "rev-parse", branch),
-                self._git(repo, "rev-parse", f"origin/{branch}"),
-            ))
+            heads_before_checkout.append(
+                (
+                    self._git(repo, "rev-parse", branch),
+                    self._git(repo, "rev-parse", f"origin/{branch}"),
+                )
+            )
             checkout_branch(repo, branch)
 
         def run_codex(command, repo):
@@ -2345,7 +2185,8 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
             result = self._poll()
 
         self.assertEqual(
-            heads_before_checkout, [(self.remote_head, self.remote_head)],
+            heads_before_checkout,
+            [(self.remote_head, self.remote_head)],
             "Both branch refs must include the remote commit before checkout.",
         )
         self.assertEqual(self._git(self.repo, "rev-parse", "HEAD^"), self.remote_head)
@@ -2377,7 +2218,9 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
         local_head = self._commit(self.repo, "work.txt", "local work")
         self._git(self.repo, "checkout", "main")
         with mock.patch.object(
-            watcher, "checkout_branch", wraps=watcher.checkout_branch,
+            watcher,
+            "checkout_branch",
+            wraps=watcher.checkout_branch,
         ) as checkout:
             result = self._poll()
 
@@ -2405,7 +2248,9 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
 
         self.codex.side_effect = run_codex
         with mock.patch.object(
-            watcher, "checkout_branch", wraps=watcher.checkout_branch,
+            watcher,
+            "checkout_branch",
+            wraps=watcher.checkout_branch,
         ) as checkout:
             result = self._poll()
 
@@ -2414,7 +2259,8 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
         self.assertEqual(self._git(self.repo, "branch", "--show-current"), self.branch)
         self.assertEqual(self._git(self.repo, "rev-parse", "HEAD^"), self.remote_head)
         self.assertEqual(
-            self._git(self.repo, "rev-parse", f"origin/{self.branch}"), self.remote_head,
+            self._git(self.repo, "rev-parse", f"origin/{self.branch}"),
+            self.remote_head,
         )
         self.assertEqual(result["launched"], [(self.branch, self.prompt, 0)])
         self.assertEqual(watcher.load_seen(self.state), {self.prompt})
@@ -2443,7 +2289,9 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
         self._git(self.repo, "checkout", self.branch)
         local_head = self._commit(self.repo, "work.txt", "local work")
         with mock.patch.object(
-            watcher, "checkout_branch", wraps=watcher.checkout_branch,
+            watcher,
+            "checkout_branch",
+            wraps=watcher.checkout_branch,
         ) as checkout:
             result = self._poll()
 
@@ -2456,7 +2304,8 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
         with open(os.path.join(self.repo, "work.txt"), encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "local work")
         self.assertEqual(
-            self._git(self.repo, "rev-parse", f"origin/{self.branch}"), self.remote_head,
+            self._git(self.repo, "rev-parse", f"origin/{self.branch}"),
+            self.remote_head,
         )
         self._assert_skip(result, r"diverg|fast.forward")
 

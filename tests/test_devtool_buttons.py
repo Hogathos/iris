@@ -21,6 +21,7 @@ for the whole change ("All of it, until you need me").
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -61,16 +62,13 @@ class DevtoolButtonsTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, two loopback destinations."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        self.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         threading.Thread(target=self.echoA.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoB.serve_forever, daemon=True).start()
         self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         # addCleanup runs LIFO: shutdowns are added last so they run
         # first then closes, then DB, then temp. Closing a listening
         # socket while serve_forever still selects on it crashes
@@ -89,18 +87,14 @@ class DevtoolButtonsTest(unittest.TestCase):
 
     def _request(self, state):
         """A fake panel request that carries the live proxy state."""
-        return types.SimpleNamespace(
-            app=types.SimpleNamespace(
-                state=types.SimpleNamespace(proxy_state=state)))
+        return types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(proxy_state=state)))
 
     def _rows_for(self, trace_id):
         """All journal rows for one trace_id, oldest first. Read only."""
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,))]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,))]
         finally:
             conn.close()
 
@@ -116,17 +110,9 @@ class DevtoolButtonsTest(unittest.TestCase):
 
     def open_tunnel(self, dest, trace_id):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -168,22 +154,17 @@ class DevtoolButtonsTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             request = self._request(self.proxy.state)
-            resp = panel_module.redirect_button(
-                trace, request, new_dest=self.destB)
+            resp = panel_module.redirect_button(trace, request, new_dest=self.destB)
             self.assertEqual(resp.status_code, 303)
-            self.assertEqual(
-                self.proxy.state.redirect_target(trace), self.destB)
+            self.assertEqual(self.proxy.state.redirect_target(trace), self.destB)
             self.assert_tunnel_dead(sock)
-            bad = panel_module.redirect_button(
-                trace, request, new_dest="example.com:443")
+            bad = panel_module.redirect_button(trace, request, new_dest="example.com:443")
             self.assertEqual(bad.status_code, 400)
             self.assertIn("refused", bad.body.decode().lower())
-            self.assertEqual(
-                self.proxy.state.redirect_target(trace), self.destB)
+            self.assertEqual(self.proxy.state.redirect_target(trace), self.destB)
         finally:
             panel_module.app.state.proxy_state = None
             sock.close()
@@ -192,24 +173,19 @@ class DevtoolButtonsTest(unittest.TestCase):
         panel_module.app.state.proxy_state = self.proxy.state
         request = self._request(self.proxy.state)
         try:
-            resp = panel_module.cap_button(
-                request, dest=self.destA, dollars="10")
+            resp = panel_module.cap_button(request, dest=self.destA, dollars="10")
             self.assertEqual(resp.status_code, 303)
             rule = self.proxy.state.cap_rule(self.destA)
             self.assertIsNotNone(rule)
             self.assertEqual(rule["cap"], 10.0)
-            rows = [r for r in self._rows_for("")
-                    if r["reason"] == "cap set $10.00"]
+            rows = [r for r in self._rows_for("") if r["reason"] == "cap set $10.00"]
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["cost_dollars"], 0.0)
-            bad = panel_module.cap_button(
-                request, dest=self.destA, dollars="abc")
+            bad = panel_module.cap_button(request, dest=self.destA, dollars="abc")
             self.assertEqual(bad.status_code, 400)
             self.assertIn("refused", bad.body.decode().lower())
-            self.assertEqual(
-                self.proxy.state.cap_rule(self.destA)["cap"], 10.0)
-            bad_dest = panel_module.cap_button(
-                request, dest="example.com:443", dollars="10")
+            self.assertEqual(self.proxy.state.cap_rule(self.destA)["cap"], 10.0)
+            bad_dest = panel_module.cap_button(request, dest="example.com:443", dollars="10")
             self.assertEqual(bad_dest.status_code, 400)
             self.assertIn("refused", bad_dest.body.decode().lower())
         finally:
@@ -220,19 +196,16 @@ class DevtoolButtonsTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             request = self._request(self.proxy.state)
-            resp = panel_module.block_network_button(
-                request, dest=self.destA)
+            resp = panel_module.block_network_button(request, dest=self.destA)
             self.assertEqual(resp.status_code, 303)
             rule = self.proxy.state.override_rule(self.destA)
             self.assertIsNotNone(rule)
             self.assertEqual(rule["action"], "pause")
             self.assert_tunnel_dead(sock)
-            bad = panel_module.block_network_button(
-                request, dest="example.com:443")
+            bad = panel_module.block_network_button(request, dest="example.com:443")
             self.assertEqual(bad.status_code, 400)
             self.assertIn("refused", bad.body.decode().lower())
         finally:
@@ -244,21 +217,17 @@ class DevtoolButtonsTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             request = self._request(self.proxy.state)
             confirm = panel_module.emergency_stop_confirm(request)
             self.assertEqual(confirm.status_code, 200)
-            self.assertIn("Let agents work again?",
-                          confirm.body.decode())
-            self.assertIn("Runs that were stopped stay stopped.",
-                          confirm.body.decode())
+            self.assertIn("Let agents work again?", confirm.body.decode())
+            self.assertIn("Runs that were stopped stay stopped.", confirm.body.decode())
             resp = panel_module.emergency_stop_execute(request)
             self.assertEqual(resp.status_code, 303)
             self.assert_tunnel_dead(sock)
-            stopped = [r for r in self._rows_for(trace)
-                       if r["outcome"] == "stopped"]
+            stopped = [r for r in self._rows_for(trace) if r["outcome"] == "stopped"]
             self.assertTrue(stopped, "stop press must be journaled")
         finally:
             panel_module.app.state.proxy_state = None
@@ -268,15 +237,12 @@ class DevtoolButtonsTest(unittest.TestCase):
         request = self._request(None)
         panel_module.app.state.proxy_state = None
         try:
-            resp = panel_module.redirect_button(
-                "x", request, new_dest=self.destA)
+            resp = panel_module.redirect_button("x", request, new_dest=self.destA)
             self.assertEqual(resp.status_code, 503)
             self.assertIn("watching only", resp.body.decode().lower())
-            resp = panel_module.cap_button(
-                request, dest=self.destA, dollars="10")
+            resp = panel_module.cap_button(request, dest=self.destA, dollars="10")
             self.assertEqual(resp.status_code, 503)
-            resp = panel_module.block_network_button(
-                request, dest=self.destA)
+            resp = panel_module.block_network_button(request, dest=self.destA)
             self.assertEqual(resp.status_code, 503)
             resp = panel_module.emergency_stop_execute(request)
             self.assertEqual(resp.status_code, 503)
@@ -293,14 +259,12 @@ class DevtoolButtonsTest(unittest.TestCase):
             html = panel_module.index(self._request(self.proxy.state))
             self.assertIn("Emergency stop", html)
             self.assertIn("<style>", html)
-            limits = panel_module.limits_page(
-                self._request(self.proxy.state))
+            limits = panel_module.limits_page(self._request(self.proxy.state))
             self.assertIn("Spending.", limits)
             self.assertIn('name="daily"', limits)
             self.assertIn("Blocked places.", limits)
             self.assertIn('action="/settings/block-network"', limits)
-            tools = panel_module.tools_page(
-                self._request(self.proxy.state))
+            tools = panel_module.tools_page(self._request(self.proxy.state))
             self.assertIn("Run the demo", tools)
             self.assertIn("Log detail", tools)
             self.assertIn("Watching", tools)
@@ -313,12 +277,9 @@ class DevtoolButtonsTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             sock.close()
-            self.assertTrue(
-                self._wait_for_rows(trace),
-                "run needs a journal row before its page renders")
+            self.assertTrue(self._wait_for_rows(trace), "run needs a journal row before its page renders")
             old_db_path = panel_module.api_module.DB_PATH
             try:
                 panel_module.api_module.DB_PATH = self.db_path

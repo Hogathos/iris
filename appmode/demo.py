@@ -10,6 +10,7 @@ not look. The third claim is Incorrect, so Iris stops the Run.
 Loopback only. The notebook is a plain JSON file. Nothing leaves
 this computer.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,12 +32,9 @@ CLAIM_THREE_SAID = "I saved 3 notes in total."
 #: What Iris found for each claim. Claim one and three come from a
 #: real file read; claim three counts real notes. Claim two names
 #: the reason Iris could not check: the service is off this computer.
-FOUND_ONE = ('Iris looked in the demo notebook. The note "groceries" '
-             "is there.")
-FOUND_TWO = ("That service is on another computer. Iris only looks "
-             "at this computer, so it could not check.")
-FOUND_THREE = ("Iris looked in the demo notebook. It holds 2 notes, "
-               "not 3.")
+FOUND_ONE = 'Iris looked in the demo notebook. The note "groceries" is there.'
+FOUND_TWO = "That service is on another computer. Iris only looks at this computer, so it could not check."
+FOUND_THREE = "Iris looked in the demo notebook. It holds 2 notes, not 3."
 
 LOOKED_AT = "the demo notebook"
 
@@ -61,8 +59,7 @@ def _read_notes(path):
         return json.load(handle)
 
 
-def run_demo(state, notebook_path: str,
-             interval_seconds: float = 2.0) -> str:
+def run_demo(state, notebook_path: str, interval_seconds: float = 2.0) -> str:
     """Run the demo against live proxy state. Returns the trace id.
 
     Three claims, about interval_seconds apart, each checked by a
@@ -77,29 +74,34 @@ def run_demo(state, notebook_path: str,
 
     def check(said, claim, found, looked_at):
         start = time.perf_counter()
-        verdict, _card = state.verify_read_back(
-            trace_id, claim, done_clause=dict(done))
+        verdict, _card = state.verify_read_back(trace_id, claim, done_clause=dict(done))
         took_ms = (time.perf_counter() - start) * 1000.0
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
-        db_module.save_claim(state.conn, trace_id, said, verdict,
-                             looked_at, found, took_ms, now)
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        db_module.save_claim(state.conn, trace_id, said, verdict, looked_at, found, took_ms, now)
         return verdict
 
     _write_notes(notebook_path, [NOTE_ONE])
     key_one = f"{DEMO_KEY_PREFIX} claim 1"
-    check(CLAIM_ONE_SAID,
-          {"idempotency_key": key_one, "kind": "local-file",
-           "path": notebook_path,
-           "expected_text": json.dumps([NOTE_ONE], indent=2)},
-          FOUND_ONE, LOOKED_AT)
+    check(
+        CLAIM_ONE_SAID,
+        {
+            "idempotency_key": key_one,
+            "kind": "local-file",
+            "path": notebook_path,
+            "expected_text": json.dumps([NOTE_ONE], indent=2),
+        },
+        FOUND_ONE,
+        LOOKED_AT,
+    )
     time.sleep(interval_seconds)
 
     key_two = f"{DEMO_KEY_PREFIX} claim 2"
-    check(CLAIM_TWO_SAID,
-          {"idempotency_key": key_two, "kind": "http",
-           "url": "https://weather.example/"},
-          FOUND_TWO, "that service")
+    check(
+        CLAIM_TWO_SAID,
+        {"idempotency_key": key_two, "kind": "http", "url": "https://weather.example/"},
+        FOUND_TWO,
+        "that service",
+    )
     time.sleep(interval_seconds)
 
     _write_notes(notebook_path, [NOTE_ONE, NOTE_TWO])
@@ -107,13 +109,15 @@ def run_demo(state, notebook_path: str,
     key_three = f"{DEMO_KEY_PREFIX} claim 3"
     verdict = check(
         CLAIM_THREE_SAID,
-        {"idempotency_key": key_three, "kind": "local-file",
-         "path": notebook_path,
-         "expected_text": json.dumps(
-             [NOTE_ONE, NOTE_TWO, "milk"], indent=2)},
-        FOUND_THREE.replace("2 notes",
-                            f"{len(actual)} notes"),
-        LOOKED_AT)
+        {
+            "idempotency_key": key_three,
+            "kind": "local-file",
+            "path": notebook_path,
+            "expected_text": json.dumps([NOTE_ONE, NOTE_TWO, "milk"], indent=2),
+        },
+        FOUND_THREE.replace("2 notes", f"{len(actual)} notes"),
+        LOOKED_AT,
+    )
     if verdict == "Incorrect":
         state.stop_run(trace_id, reason="incorrect claim")
     return trace_id

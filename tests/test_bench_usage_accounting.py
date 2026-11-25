@@ -92,6 +92,7 @@ journal wording of a cut depends on timing, not only on the platform.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -149,16 +150,13 @@ class UsageAccountingTest(unittest.TestCase):
         # A fresh database per test, so every count below is exact.
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.safe = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)   # where a Redirect sends the Run
+        self.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.safe = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)  # where a Redirect sends the Run
         for server in (self.echo, self.safe):
             threading.Thread(target=server.serve_forever, daemon=True).start()
         # High rate limit: rate limiting has its own tests, and a 429
         # here would mask the tunnel this test needs to open.
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         self.proxy_port = self.proxy.server_address[1]
         self.dest = f"127.0.0.1:{self.echo.server_address[1]}"
@@ -178,13 +176,9 @@ class UsageAccountingTest(unittest.TestCase):
 
     def open_tunnel(self, trace):
         """CONNECT through the proxy for this Run. Returns (sock, status)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {self.dest} HTTP/1.1\r\n"
-             f"Host: {self.dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -236,9 +230,7 @@ class UsageAccountingTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace,))]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace,))]
         finally:
             conn.close()
 
@@ -254,17 +246,18 @@ class UsageAccountingTest(unittest.TestCase):
                 return
             time.sleep(0.02)
         self.fail(
-            "the handler never journaled a close row that carries the "
-            "tunnel's bytes: it was not logged, or it lost the bytes")
+            "the handler never journaled a close row that carries the tunnel's bytes: it was not logged, or it lost the bytes"
+        )
 
     def read_everything(self, trace):
         """Run every reader on the journal, with a test-only price in place.
 
         Returns a plain dict so the assertions below read in plain words.
         """
-        with mock.patch.dict(
-                api_module.PRICE_PER_REQUEST, {"127.0.0.1": TEST_PRICE}), \
-                mock.patch.object(api_module, "DB_PATH", self.db_path):
+        with (
+            mock.patch.dict(api_module.PRICE_PER_REQUEST, {"127.0.0.1": TEST_PRICE}),
+            mock.patch.object(api_module, "DB_PATH", self.db_path),
+        ):
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             try:
@@ -288,39 +281,20 @@ class UsageAccountingTest(unittest.TestCase):
 
     def assert_counted_as_cut(self, seen, run_state):
         """The readers all treat the Run's tunnel as cut, not completed."""
+        self.assertEqual(seen["allowed"], 0, "a cut tunnel is counted as an allowed attempt (db.fetch_outcome_counts)")
+        self.assertEqual(seen["successes"], 0, "a cut tunnel is counted as a success (db.fetch_totals)")
+        self.assertEqual(seen["dashboard"]["allowed"], 0, "the dashboard numbers count a cut tunnel as allowed")
+        self.assertEqual(seen["dashboard"]["successes"], 0, "the dashboard numbers count a cut tunnel as a success")
         self.assertEqual(
-            seen["allowed"], 0,
-            "a cut tunnel is counted as an allowed attempt "
-            "(db.fetch_outcome_counts)")
-        self.assertEqual(
-            seen["successes"], 0,
-            "a cut tunnel is counted as a success (db.fetch_totals)")
-        self.assertEqual(
-            seen["dashboard"]["allowed"], 0,
-            "the dashboard numbers count a cut tunnel as allowed")
-        self.assertEqual(
-            seen["dashboard"]["successes"], 0,
-            "the dashboard numbers count a cut tunnel as a success")
-        self.assertEqual(
-            seen["row_costs"], [0.0] * len(seen["rows"]),
-            "a cut tunnel is priced as a forwarded request, so some row "
-            "does not cost $0.00 (api.attempt_cost)")
-        self.assertEqual(
-            seen["run_cost"], 0.0,
-            "the Run's money spent is not $0.00 (api.summarize_costs)")
-        self.assertEqual(
-            seen["dashboard"]["total_cost"], 0.0,
-            "the dashboard total cost is not $0.00 (api.stats)")
-        self.assertEqual(
-            seen["capped"], 0.0,
-            "the spend cap total includes a cut tunnel "
-            "(ProxyState.capped_total)")
-        self.assertNotIn(
-            FLOWED_WORDS, seen["words"],
-            "the panel says a cut tunnel flowed (devpanel _row_words)")
-        self.assertEqual(
-            seen["run_state"], run_state,
-            "the panel shows the wrong run state for a cut Run")
+            seen["row_costs"],
+            [0.0] * len(seen["rows"]),
+            "a cut tunnel is priced as a forwarded request, so some row does not cost $0.00 (api.attempt_cost)",
+        )
+        self.assertEqual(seen["run_cost"], 0.0, "the Run's money spent is not $0.00 (api.summarize_costs)")
+        self.assertEqual(seen["dashboard"]["total_cost"], 0.0, "the dashboard total cost is not $0.00 (api.stats)")
+        self.assertEqual(seen["capped"], 0.0, "the spend cap total includes a cut tunnel (ProxyState.capped_total)")
+        self.assertNotIn(FLOWED_WORDS, seen["words"], "the panel says a cut tunnel flowed (devpanel _row_words)")
+        self.assertEqual(seen["run_state"], run_state, "the panel shows the wrong run state for a cut Run")
 
     # ---- the tests -----------------------------------------------------
 
@@ -329,8 +303,7 @@ class UsageAccountingTest(unittest.TestCase):
         trace = "bench-usage-plain-cut-1"
         sock = self.open_and_exchange(trace)
         try:
-            self.assertTrue(
-                self.proxy.state.pause_run(trace), "pause_run refused the Run")
+            self.assertTrue(self.proxy.state.pause_run(trace), "pause_run refused the Run")
             # pause_run has returned, so the cut has landed. Wait for the
             # close row BEFORE touching the cut socket: see "Why the dead
             # check comes second" in the module docstring.
@@ -343,8 +316,8 @@ class UsageAccountingTest(unittest.TestCase):
     def test_swept_tunnel_cut_is_not_a_completed_attempt(self):
         """Check 2: a late tunnel cut by the second sweep (the 1d harness)."""
         trace = "bench-usage-swept-cut-1"
-        in_journal = threading.Event()   # pause_run is past the pop
-        release = threading.Event()      # test lets pause_run finish
+        in_journal = threading.Event()  # pause_run is past the pop
+        release = threading.Event()  # test lets pause_run finish
         real_save_paused = proxy_module.db_module.save_paused
 
         def held_save_paused(conn, trace_id, *args, **kwargs):
@@ -365,15 +338,14 @@ class UsageAccountingTest(unittest.TestCase):
                 pause_result["error"] = repr(exc)
 
         sock = None
-        with mock.patch.object(
-                proxy_module.db_module, "save_paused", held_save_paused):
+        with mock.patch.object(proxy_module.db_module, "save_paused", held_save_paused):
             pauser = threading.Thread(target=run_pause, daemon=True)
             pauser.start()
             try:
                 self.assertTrue(
                     in_journal.wait(timeout=STEP_TIMEOUT),
-                    "harness: pause_run never reached the journal step, "
-                    "so the pop-to-flag gap was never entered")
+                    "harness: pause_run never reached the journal step, so the pop-to-flag gap was never entered",
+                )
                 # pause_run has popped the live tunnels and has not set
                 # its flag. The tunnel registers in the gap and carries
                 # its bytes before the sweep cuts it.
@@ -404,9 +376,7 @@ class UsageAccountingTest(unittest.TestCase):
         self.assertEqual(seen["successes"], 1, "a finished tunnel is a success")
         self.assertEqual(seen["dashboard"]["allowed"], 1)
         self.assertEqual(seen["dashboard"]["successes"], 1)
-        self.assertEqual(
-            seen["row_costs"], [TEST_PRICE],
-            "a finished tunnel prices as one forwarded request")
+        self.assertEqual(seen["row_costs"], [TEST_PRICE], "a finished tunnel prices as one forwarded request")
         self.assertEqual(seen["run_cost"], TEST_PRICE)
         self.assertEqual(seen["capped"], TEST_PRICE)
         self.assertEqual(seen["words"], [FLOWED_WORDS])
@@ -417,9 +387,7 @@ class UsageAccountingTest(unittest.TestCase):
         trace = "bench-usage-redirect-cut-1"
         sock = self.open_and_exchange(trace)
         try:
-            self.assertTrue(
-                self.proxy.state.redirect_run(trace, self.safe_dest),
-                "redirect_run refused the Run")
+            self.assertTrue(self.proxy.state.redirect_run(trace, self.safe_dest), "redirect_run refused the Run")
             # redirect_run has returned, so the cut has landed. Close row
             # first, then the dead check: see the module docstring.
             self.wait_for_close_row(trace)
@@ -441,17 +409,14 @@ class UsageAccountingTest(unittest.TestCase):
         destination and completes. It must still count as allowed.
         """
         trace = "bench-usage-after-redirect-1"
-        self.assertTrue(
-            self.proxy.state.redirect_run(trace, self.safe_dest),
-            "redirect_run refused the Run")
-        sock = self.open_and_exchange(trace)   # asks for A, goes to safe
+        self.assertTrue(self.proxy.state.redirect_run(trace, self.safe_dest), "redirect_run refused the Run")
+        sock = self.open_and_exchange(trace)  # asks for A, goes to safe
         sock.close()
         self.wait_for_close_row(trace)
         seen = self.read_everything(trace)
         self.assertEqual(
-            seen["allowed"], 1,
-            "a tunnel opened after the Redirect and finished by itself "
-            "must still count as allowed")
+            seen["allowed"], 1, "a tunnel opened after the Redirect and finished by itself must still count as allowed"
+        )
         self.assertEqual(seen["successes"], 1)
 
 

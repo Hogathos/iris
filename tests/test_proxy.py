@@ -1,4 +1,5 @@
 """M1 tests: run with `python -m pytest tests/` or `python -m unittest`."""
+
 import http.client
 import json
 import os
@@ -14,7 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # urllib honors NO_PROXY and would bypass the loopback test proxy;
 # drop it so the suite never depends on ambient proxy config (N7).
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 import proxy as proxy_module
 import server as server_module
@@ -49,13 +51,14 @@ class M1ProxyTest(unittest.TestCase):
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.base = f"http://127.0.0.1:{cls.upstream_port}"
-        cls.opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-            {"http": f"http://127.0.0.1:{cls.proxy_port}"}))
+        cls.opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{cls.proxy_port}"}))
 
     @classmethod
     def tearDownClass(cls):
-        cls.proxy.shutdown(); cls.upstream.shutdown()
-        cls.proxy.server_close(); cls.upstream.server_close()
+        cls.proxy.shutdown()
+        cls.upstream.shutdown()
+        cls.proxy.server_close()
+        cls.upstream.server_close()
         cls.proxy.state.conn.close()
         cls.tmp.cleanup()
 
@@ -67,8 +70,7 @@ class M1ProxyTest(unittest.TestCase):
         return out
 
     def get(self, path, trace=None, data=None, headers=None):
-        req = urllib.request.Request(self.base + path, data=data,
-                                     method="POST" if data else "GET")
+        req = urllib.request.Request(self.base + path, data=data, method="POST" if data else "GET")
         if trace:
             req.add_header("X-Trace-Id", trace)
         for k, v in (headers or {}).items():
@@ -107,9 +109,7 @@ class M1ProxyTest(unittest.TestCase):
 
     def test_secrets_and_bodies_never_logged(self):
         secret_body = b"SECRET_PROMPT_BODY_12345"
-        self.get("/echo", trace="trace-secret",
-                 data=secret_body,
-                 headers={"Authorization": "Bearer SECRET_KEY_67890"})
+        self.get("/echo", trace="trace-secret", data=secret_body, headers={"Authorization": "Bearer SECRET_KEY_67890"})
         conn = sqlite3.connect(self.db_path)
         dump = "\n".join(str(r) for r in conn.execute("SELECT * FROM attempts"))
         conn.close()
@@ -131,26 +131,21 @@ class M1ProxyTest(unittest.TestCase):
         self.assertEqual(row["cost_dollars"], 0.0)
 
     def test_malformed_content_length_gets_400_and_log_row(self):
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
-        conn.request("GET", f"{self.base}/echo",
-                     headers={"Content-Length": "abc",
-                              "X-Trace-Id": "trace-malformed-cl"})
+        conn = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
+        conn.request("GET", f"{self.base}/echo", headers={"Content-Length": "abc", "X-Trace-Id": "trace-malformed-cl"})
         resp = conn.getresponse()
         resp.read()
         self.assertEqual(resp.status, 400)
         self.assertEqual(resp.getheader("X-Trace-Id"), "trace-malformed-cl")
         conn.close()
-        rows = [r for r in self.rows()
-                if r["trace_id"] == "trace-malformed-cl"]
+        rows = [r for r in self.rows() if r["trace_id"] == "trace-malformed-cl"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["http_status"], 400)
         self.assertEqual(rows[0]["reason"], "malformed_header")
         self.assertEqual((rows[0]["bytes_in"], rows[0]["bytes_out"]), (0, 0))
 
     def test_malformed_host_port_gets_400_and_log_row(self):
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
+        conn = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
         conn.putrequest("GET", "/echo", skip_host=1)
         conn.putheader("Host", "127.0.0.1:abc")
         conn.putheader("X-Trace-Id", "trace-malformed-host")
@@ -159,23 +154,19 @@ class M1ProxyTest(unittest.TestCase):
         resp.read()
         self.assertEqual(resp.status, 400)
         conn.close()
-        rows = [r for r in self.rows()
-                if r["trace_id"] == "trace-malformed-host"]
+        rows = [r for r in self.rows() if r["trace_id"] == "trace-malformed-host"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["http_status"], 400)
         self.assertEqual(rows[0]["reason"], "malformed_header")
         self.assertEqual((rows[0]["bytes_in"], rows[0]["bytes_out"]), (0, 0))
 
-        conn2 = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
-        conn2.request("GET", "http://127.0.0.1:abc/echo",
-                      headers={"X-Trace-Id": "trace-malformed-urlport"})
+        conn2 = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
+        conn2.request("GET", "http://127.0.0.1:abc/echo", headers={"X-Trace-Id": "trace-malformed-urlport"})
         resp2 = conn2.getresponse()
         resp2.read()
         self.assertEqual(resp2.status, 400)
         conn2.close()
-        rows2 = [r for r in self.rows()
-                 if r["trace_id"] == "trace-malformed-urlport"]
+        rows2 = [r for r in self.rows() if r["trace_id"] == "trace-malformed-urlport"]
         self.assertEqual(len(rows2), 1)
         self.assertEqual(rows2[0]["reason"], "malformed_header")
 
@@ -212,32 +203,24 @@ class M1ProxyTest(unittest.TestCase):
         self.assertEqual(row["strategy"], "test-strategy")
 
     def test_malformed_then_allowed_logs_attempts_1_1(self):
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
-        conn.request("GET", f"{self.base}/echo",
-                     headers={"Content-Length": "abc",
-                              "X-Trace-Id": "trace-malformed-peek-cl"})
+        conn = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
+        conn.request("GET", f"{self.base}/echo", headers={"Content-Length": "abc", "X-Trace-Id": "trace-malformed-peek-cl"})
         self.assertEqual(conn.getresponse().status, 400)
         conn.close()
-        self.assertEqual(
-            self.get("/echo", trace="trace-malformed-peek-cl")[0], 200)
-        mine = [r for r in self.rows()
-                if r["trace_id"] == "trace-malformed-peek-cl"]
+        self.assertEqual(self.get("/echo", trace="trace-malformed-peek-cl")[0], 200)
+        mine = [r for r in self.rows() if r["trace_id"] == "trace-malformed-peek-cl"]
         self.assertEqual([r["status"] for r in mine], ["failure", "success"])
         self.assertEqual([r["attempt"] for r in mine], [1, 1])
 
-        conn2 = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
+        conn2 = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
         conn2.putrequest("GET", "/echo", skip_host=1)
         conn2.putheader("Host", "127.0.0.1:abc")
         conn2.putheader("X-Trace-Id", "trace-malformed-peek-host")
         conn2.endheaders()
         self.assertEqual(conn2.getresponse().status, 400)
         conn2.close()
-        self.assertEqual(
-            self.get("/echo", trace="trace-malformed-peek-host")[0], 200)
-        mine2 = [r for r in self.rows()
-                 if r["trace_id"] == "trace-malformed-peek-host"]
+        self.assertEqual(self.get("/echo", trace="trace-malformed-peek-host")[0], 200)
+        mine2 = [r for r in self.rows() if r["trace_id"] == "trace-malformed-peek-host"]
         self.assertEqual([r["status"] for r in mine2], ["failure", "success"])
         self.assertEqual([r["attempt"] for r in mine2], [1, 1])
 

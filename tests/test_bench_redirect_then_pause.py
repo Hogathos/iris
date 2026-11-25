@@ -46,6 +46,7 @@ pause-then-redirect file and waits for Charles.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -93,8 +94,7 @@ class _CountingEchoHandler(socketserver.BaseRequestHandler):
 
 
 def _start_counting_echo():
-    server = socketserver.ThreadingTCPServer(
-        ("127.0.0.1", 0), _CountingEchoHandler)
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
     server.bytes_in = 0
     server.count_lock = threading.Lock()
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -113,12 +113,11 @@ class RedirectThenPauseTest(unittest.TestCase):
         # A fresh database per test, so every row read below is exact.
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.old_dest_server = _start_counting_echo()   # where the Run was
-        self.new_dest_server = _start_counting_echo()   # where it is sent
+        self.old_dest_server = _start_counting_echo()  # where the Run was
+        self.new_dest_server = _start_counting_echo()  # where it is sent
         # High rate limit: rate limiting has its own tests, and a 429
         # here would mask the tunnel this test needs to open.
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         self.proxy_port = self.proxy.server_address[1]
         self.dest = f"127.0.0.1:{self.old_dest_server.server_address[1]}"
@@ -142,13 +141,9 @@ class RedirectThenPauseTest(unittest.TestCase):
         The client always asks for the OLD destination. Where the tunnel
         really goes is the proxy's call, and that is what these tests read.
         """
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {self.dest} HTTP/1.1\r\n"
-             f"Host: {self.dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -194,9 +189,7 @@ class RedirectThenPauseTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace,))]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace,))]
         finally:
             conn.close()
 
@@ -237,44 +230,35 @@ class RedirectThenPauseTest(unittest.TestCase):
         """
         first = self.open_and_exchange(trace)
         try:
-            self.assertTrue(
-                self.proxy.state.redirect_run(trace, self.safe_dest),
-                "redirect_run refused a live Run")
-            self.wait_for_row(
-                trace,
-                lambda r: r["reason"] == "tunnel cut by redirect",
-                "the redirect-cut tunnel's close row")
+            self.assertTrue(self.proxy.state.redirect_run(trace, self.safe_dest), "redirect_run refused a live Run")
+            self.wait_for_row(trace, lambda r: r["reason"] == "tunnel cut by redirect", "the redirect-cut tunnel's close row")
             self.assert_tunnel_dead(first)
         finally:
             first.close()
         second = self.open_and_exchange(trace)
         old_bytes, new_bytes = self.received()
         self.assertEqual(
-            (old_bytes, new_bytes), (len(PAYLOAD), len(PAYLOAD)),
-            "harness: the second tunnel did not flow to the new destination")
+            (old_bytes, new_bytes),
+            (len(PAYLOAD), len(PAYLOAD)),
+            "harness: the second tunnel did not flow to the new destination",
+        )
         return second
 
     def verify_then_retry(self, trace):
         """A human Verify, then a retry. Both must succeed."""
-        self.assertTrue(
-            self.proxy.state.verify_run(trace, DONE_CLAUSE),
-            "harness: a human Verify on a paused Run was refused")
+        self.assertTrue(self.proxy.state.verify_run(trace, DONE_CLAUSE), "harness: a human Verify on a paused Run was refused")
         self.assertEqual(
             self.proxy.state.retry_run(trace),
             (True, "retry allowed after verify"),
-            "harness: retry after a fresh Verify was refused")
+            "harness: retry after a fresh Verify was refused",
+        )
 
     def pause_the_redirected_run(self, trace):
         """Redirect, flow, then Pause. Returns once the journal is settled."""
         sock = self.redirect_a_live_run(trace)
         try:
-            self.assertTrue(
-                self.proxy.state.pause_run(trace),
-                "pause_run refused a redirected Run")
-            self.wait_for_row(
-                trace,
-                lambda r: r["reason"] == "tunnel cut by pause",
-                "the pause-cut tunnel's close row")
+            self.assertTrue(self.proxy.state.pause_run(trace), "pause_run refused a redirected Run")
+            self.wait_for_row(trace, lambda r: r["reason"] == "tunnel cut by pause", "the pause-cut tunnel's close row")
             self.assert_tunnel_dead(sock)
         finally:
             sock.close()
@@ -285,11 +269,14 @@ class RedirectThenPauseTest(unittest.TestCase):
         Found by destination and bytes, never by first match: the row that
         makes the count of allowed close rows for the NEW destination go up.
         """
+
         def close_rows():
-            return [r for r in self.rows_for(trace)
-                    if r["outcome"] == "allowed"
-                    and r["dest_host"] == self.safe_dest
-                    and r["bytes_tx"] == len(PAYLOAD)]
+            return [
+                r
+                for r in self.rows_for(trace)
+                if r["outcome"] == "allowed" and r["dest_host"] == self.safe_dest and r["bytes_tx"] == len(PAYLOAD)
+            ]
+
         seen = len(close_rows())
         sock = self.open_and_exchange(trace)
         sock.close()
@@ -307,34 +294,31 @@ class RedirectThenPauseTest(unittest.TestCase):
         """Check 1: paused, redirect still held, 503, nothing leaks."""
         trace = "bench-redirect-then-pause-1"
         self.pause_the_redirected_run(trace)
-        self.assertTrue(
-            self.proxy.state.is_paused(trace), "the Run is not paused")
+        self.assertTrue(self.proxy.state.is_paused(trace), "the Run is not paused")
         self.assertEqual(
-            self.proxy.state._redirects[trace]["dest_host"], self.safe_dest,
-            "the pause dropped the redirect held in memory")
+            self.proxy.state._redirects[trace]["dest_host"], self.safe_dest, "the pause dropped the redirect held in memory"
+        )
         self.assertEqual(
-            self.saved_redirects()[trace]["dest_host"], self.safe_dest,
-            "the pause dropped the redirect saved for a restart")
+            self.saved_redirects()[trace]["dest_host"], self.safe_dest, "the pause dropped the redirect saved for a restart"
+        )
         rows = self.rows_for(trace)
         pause_rows = [r for r in rows if r["reason"] == "human pause"]
         self.assertEqual(
-            [r["dest_host"] for r in pause_rows], [self.safe_dest],
-            "the pause row must name the new destination, where the cut "
-            "tunnel was going")
+            [r["dest_host"] for r in pause_rows],
+            [self.safe_dest],
+            "the pause row must name the new destination, where the cut tunnel was going",
+        )
         cut = [r for r in rows if r["reason"] == "tunnel cut by pause"]
         self.assertEqual(
-            [(r["outcome"], r["dest_host"], r["bytes_tx"], r["bytes_rx"])
-             for r in cut],
+            [(r["outcome"], r["dest_host"], r["bytes_tx"], r["bytes_rx"]) for r in cut],
             [("paused", self.safe_dest, len(PAYLOAD), len(PAYLOAD))],
-            "the cut tunnel's close row must read paused and keep its bytes")
+            "the cut tunnel's close row must read paused and keep its bytes",
+        )
         held_sock, held_status = self.open_tunnel(trace)
         held_sock.close()
-        self.assertEqual(
-            held_status, 503, "a paused and redirected Run must hold")
+        self.assertEqual(held_status, 503, "a paused and redirected Run must hold")
         old_bytes, new_bytes = self.received()
-        self.assertEqual(
-            (old_bytes, new_bytes), (len(PAYLOAD), len(PAYLOAD)),
-            "bytes reached a destination after the pause")
+        self.assertEqual((old_bytes, new_bytes), (len(PAYLOAD), len(PAYLOAD)), "bytes reached a destination after the pause")
 
     # ---- check 2 -------------------------------------------------------
 
@@ -344,10 +328,7 @@ class RedirectThenPauseTest(unittest.TestCase):
         sock = self.open_and_exchange(trace)
         try:
             self.assertTrue(self.proxy.state.pause_run(trace))
-            self.wait_for_row(
-                trace,
-                lambda r: r["reason"] == "tunnel cut by pause",
-                "the cut tunnel's close row")
+            self.wait_for_row(trace, lambda r: r["reason"] == "tunnel cut by pause", "the cut tunnel's close row")
             self.assert_tunnel_dead(sock)
         finally:
             sock.close()
@@ -365,23 +346,13 @@ class RedirectThenPauseTest(unittest.TestCase):
         trace = "bench-redirect-then-pause-resume-1"
         self.pause_the_redirected_run(trace)
         self.verify_then_retry(trace)
-        self.assertFalse(
-            self.proxy.state.is_paused(trace),
-            "the Run is still paused after Verify and retry")
-        self.assertEqual(
-            self.proxy.state._redirects[trace]["dest_host"], self.safe_dest,
-            "the resume dropped the redirect")
+        self.assertFalse(self.proxy.state.is_paused(trace), "the Run is still paused after Verify and retry")
+        self.assertEqual(self.proxy.state._redirects[trace]["dest_host"], self.safe_dest, "the resume dropped the redirect")
         resumed = self.resumed_tunnel(trace)
-        self.assertEqual(
-            (resumed["bytes_tx"], resumed["bytes_rx"]),
-            (len(PAYLOAD), len(PAYLOAD)))
+        self.assertEqual((resumed["bytes_tx"], resumed["bytes_rx"]), (len(PAYLOAD), len(PAYLOAD)))
         old_bytes, new_bytes = self.received()
-        self.assertEqual(
-            old_bytes, len(PAYLOAD),
-            "the old destination received bytes after the redirect")
-        self.assertEqual(
-            new_bytes, 2 * len(PAYLOAD),
-            "the resumed tunnel did not reach the new destination")
+        self.assertEqual(old_bytes, len(PAYLOAD), "the old destination received bytes after the redirect")
+        self.assertEqual(new_bytes, 2 * len(PAYLOAD), "the resumed tunnel did not reach the new destination")
 
     # ---- check 4 -------------------------------------------------------
 
@@ -395,24 +366,25 @@ class RedirectThenPauseTest(unittest.TestCase):
         verify = journal_row("", "verify ok")
         resume = journal_row("", "retry allowed after verify")
         self.assertEqual(
-            states_module.run_state([redirect, redirect_cut]), "REDIRECTED",
-            "harness: a redirected Run that is not paused is REDIRECTED")
+            states_module.run_state([redirect, redirect_cut]),
+            "REDIRECTED",
+            "harness: a redirected Run that is not paused is REDIRECTED",
+        )
         self.assertEqual(
-            states_module.run_state(
-                [redirect, redirect_cut, pause, pause_cut]), "PAUSED",
-            "a Run that is redirected and then paused is held, so the "
-            "panel must say PAUSED, not REDIRECTED")
-        self.assertEqual(
-            states_module.run_state(
-                [redirect, redirect_cut, pause, pause_cut, held_attempt]),
+            states_module.run_state([redirect, redirect_cut, pause, pause_cut]),
             "PAUSED",
-            "a held attempt must not change the run state")
+            "a Run that is redirected and then paused is held, so the panel must say PAUSED, not REDIRECTED",
+        )
         self.assertEqual(
-            states_module.run_state(
-                [redirect, redirect_cut, pause, pause_cut, held_attempt,
-                 verify, resume]),
+            states_module.run_state([redirect, redirect_cut, pause, pause_cut, held_attempt]),
+            "PAUSED",
+            "a held attempt must not change the run state",
+        )
+        self.assertEqual(
+            states_module.run_state([redirect, redirect_cut, pause, pause_cut, held_attempt, verify, resume]),
             "FLOWING",
-            "after Verify and retry the Run flows")
+            "after Verify and retry the Run flows",
+        )
 
     def test_panel_folds_the_real_rows_of_redirect_then_pause(self):
         """Check 4, the same fold over rows the real proxy wrote."""
@@ -423,24 +395,21 @@ class RedirectThenPauseTest(unittest.TestCase):
         self.assertEqual(held_status, 503, "harness: the Run was not held")
         self.verify_then_retry(trace)
         rows = self.rows_for(trace)
-        redirect_at = [i for i, r in enumerate(rows)
-                       if r["reason"] == "human redirect"][0]
-        held_at = [i for i, r in enumerate(rows)
-                   if r["http_status"] == 503][0]
-        pause_at = [i for i, r in enumerate(rows)
-                    if r["reason"] == "tunnel cut by pause"][0]
+        redirect_at = [i for i, r in enumerate(rows) if r["reason"] == "human redirect"][0]
+        held_at = [i for i, r in enumerate(rows) if r["http_status"] == 503][0]
+        pause_at = [i for i, r in enumerate(rows) if r["reason"] == "tunnel cut by pause"][0]
         self.assertEqual(
-            states_module.run_state(rows[:redirect_at + 1]), "REDIRECTED",
-            "harness: the real rows of a redirect fold to REDIRECTED")
+            states_module.run_state(rows[: redirect_at + 1]),
+            "REDIRECTED",
+            "harness: the real rows of a redirect fold to REDIRECTED",
+        )
         self.assertEqual(
-            states_module.run_state(rows[:pause_at + 1]), "PAUSED",
-            "the real rows of redirect then pause must fold to PAUSED")
+            states_module.run_state(rows[: pause_at + 1]), "PAUSED", "the real rows of redirect then pause must fold to PAUSED"
+        )
         self.assertEqual(
-            states_module.run_state(rows[:held_at + 1]), "PAUSED",
-            "a real held attempt must not change the run state")
-        self.assertEqual(
-            states_module.run_state(rows), "FLOWING",
-            "the real rows after Verify and retry must fold to FLOWING")
+            states_module.run_state(rows[: held_at + 1]), "PAUSED", "a real held attempt must not change the run state"
+        )
+        self.assertEqual(states_module.run_state(rows), "FLOWING", "the real rows after Verify and retry must fold to FLOWING")
 
 
 if __name__ == "__main__":

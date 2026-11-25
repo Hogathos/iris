@@ -13,6 +13,7 @@ so no test ever touches a live process. The property test over
 restart_agent is the oracle for this decision: a real restart
 happens only for Cursor on Windows with an exe found.
 """
+
 from __future__ import annotations
 
 import os
@@ -36,30 +37,24 @@ def _default_find_exe(agent_id: str) -> str | None:
         return None
     home = os.path.expanduser("~")
     candidates = [
-        os.path.join(home, "AppData", "Local", "Programs",
-                     "cursor", "Cursor.exe"),
-        os.path.join(home, "AppData", "Local", "Cursor",
-                     "Cursor.exe"),
+        os.path.join(home, "AppData", "Local", "Programs", "cursor", "Cursor.exe"),
+        os.path.join(home, "AppData", "Local", "Cursor", "Cursor.exe"),
     ]
     local = os.environ.get("LOCALAPPDATA", "")
     if local:
-        candidates.append(os.path.join(
-            local, "Programs", "cursor", "Cursor.exe"))
+        candidates.append(os.path.join(local, "Programs", "cursor", "Cursor.exe"))
     for var in ("ProgramFiles", "ProgramFiles(x86)"):
         root = os.environ.get(var, "")
         if root:
-            candidates.append(os.path.join(
-                root, "Cursor", "Cursor.exe"))
-            candidates.append(os.path.join(
-                root, "cursor", "Cursor.exe"))
+            candidates.append(os.path.join(root, "Cursor", "Cursor.exe"))
+            candidates.append(os.path.join(root, "cursor", "Cursor.exe"))
     for candidate in candidates:
         if os.path.exists(candidate):
             return candidate
     return None
 
 
-def _default_restart_process(exe_path: str,
-                             process_name: str) -> bool:
+def _default_restart_process(exe_path: str, process_name: str) -> bool:
     """Kill the named process, then relaunch the exe. True when run.
 
     Windows only: taskkill stops the running agent, Popen starts
@@ -68,9 +63,7 @@ def _default_restart_process(exe_path: str,
     """
     import subprocess
 
-    subprocess.run(
-        ["taskkill", "/F", "/IM", process_name],
-        capture_output=True, check=False)
+    subprocess.run(["taskkill", "/F", "/IM", process_name], capture_output=True, check=False)
     subprocess.Popen([exe_path])
     return True
 
@@ -78,23 +71,17 @@ def _default_restart_process(exe_path: str,
 def _manual_instruction(agent_id: str) -> str:
     """Plain-words restart steps for an agent Iris cannot restart."""
     if agent_id == "claude-code":
-        return ("Claude Code runs in your terminal. Quit this "
-                "session and start a new one to pick up the "
-                "proxy change.")
+        return "Claude Code runs in your terminal. Quit this session and start a new one to pick up the proxy change."
     if agent_id == "muse-code":
-        return ("Muse Code runs in your terminal. Quit this "
-                "session and start a new one to pick up the "
-                "proxy change.")
+        return "Muse Code runs in your terminal. Quit this session and start a new one to pick up the proxy change."
     if agent_id == "continue":
-        return ("Continue runs inside VS Code. Reload the VS Code "
-                "window (Developer: Reload Window) to pick up the "
-                "proxy change.")
-    return ("Quit Cursor fully and reopen it to pick up the "
-            "proxy change.")
+        return (
+            "Continue runs inside VS Code. Reload the VS Code window (Developer: Reload Window) to pick up the proxy change."
+        )
+    return "Quit Cursor fully and reopen it to pick up the proxy change."
 
 
-def restart_agent(agent_id: str, platform: str | None = None,
-                  find_exe=None, restart_process=None) -> str:
+def restart_agent(agent_id: str, platform: str | None = None, find_exe=None, restart_process=None) -> str:
     """Restart the agent, or return a manual instruction.
 
     A real restart happens only for Cursor on Windows with an exe
@@ -105,9 +92,7 @@ def restart_agent(agent_id: str, platform: str | None = None,
     from appmode.connect import AGENT_NAMES
 
     if agent_id not in AGENT_NAMES:
-        raise Refused(
-            f"Unknown agent: {agent_id}. Iris knows "
-            f"{', '.join(sorted(AGENT_NAMES))}.")
+        raise Refused(f"Unknown agent: {agent_id}. Iris knows {', '.join(sorted(AGENT_NAMES))}.")
     if platform is None:
         platform = sys.platform
     if agent_id != "cursor" or platform != "win32":

@@ -11,6 +11,7 @@ Local hosts only. No production code is touched.
 Run:
   .venv\\Scripts\\locust -f locustfile.py --headless
 """
+
 import os
 import random
 import sqlite3
@@ -69,8 +70,7 @@ class ProxyUser(HttpUser):
     def echo(self):
         t0 = time.monotonic()
         try:
-            with self.client.get(TARGET, proxies=PROXIES,
-                                 catch_response=True) as resp:
+            with self.client.get(TARGET, proxies=PROXIES, catch_response=True) as resp:
                 _record(resp.status_code, time.monotonic() - t0)
                 if resp.status_code in (200, 429):
                     resp.success()
@@ -104,6 +104,7 @@ class Stages(LoadTestShape):
 
 def _wait_ready():
     import urllib.request
+
     deadline = time.monotonic() + 15.0
     while time.monotonic() < deadline:
         try:
@@ -119,13 +120,12 @@ def _require_free_port(host, port, what):
     # A plain bind (no SO_REUSEADDR) fails if anyone listens here. Never
     # share the port: on Windows a second listener silently steals traffic.
     import socket
+
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         probe.bind((host, port))
     except OSError:
-        raise SystemExit(
-            f"error: {what} port {port} is already in use; stop the other "
-            f"process or set a free port")
+        raise SystemExit(f"error: {what} port {port} is already in use; stop the other process or set a free port")
     finally:
         probe.close()
 
@@ -163,62 +163,50 @@ def _verdict(environment, **kwargs):
     failures = []
 
     def check(name, ok, detail=""):
-        print(f"[{'PASS' if ok else 'FAIL'}] {name} {detail}".rstrip(),
-              flush=True)
+        print(f"[{'PASS' if ok else 'FAIL'}] {name} {detail}".rstrip(), flush=True)
         if not ok:
             failures.append(name)
 
     check("infra started", not _infra_error[0], _infra_error[0])
     total = len(records)
     elapsed = (records[-1][0] - records[0][0]) if total > 1 else 0.0
-    lats = sorted(lat for _, status, lat in records
-                  if status in (200, 429))
-    errors = sum(1 for _, status, _ in records
-                 if status is None or status == 0)
-    unexpected = [s for _, s, _ in records
-                  if s is not None and s not in (0, 200, 429)]
+    lats = sorted(lat for _, status, lat in records if status in (200, 429))
+    errors = sum(1 for _, status, _ in records if status is None or status == 0)
+    unexpected = [s for _, s, _ in records if s is not None and s not in (0, 200, 429)]
     # Verdict windows in epoch terms, anchored at test start.
     wall_start = _wall0[0] or time.time()
-    burst_429s = sum(1 for t, s, _ in records
-                     if wall_start + STEADY_END <= t < wall_start + BURST_END
-                     and s == 429)
-    first_pass = next((t for t, s, _ in records
-                       if t > wall_start + BURST_END and s == 200), None)
-    recovered = sum(1 for t, s, _ in records
-                    if t > wall_start + BURST_END + 10.0 and s == 200)
+    burst_429s = sum(1 for t, s, _ in records if wall_start + STEADY_END <= t < wall_start + BURST_END and s == 429)
+    first_pass = next((t for t, s, _ in records if t > wall_start + BURST_END and s == 200), None)
+    recovered = sum(1 for t, s, _ in records if t > wall_start + BURST_END + 10.0 and s == 200)
 
-    print(f"requests={total} elapsed={elapsed:.1f}s "
-          f"req/s={total / elapsed:.1f}" if elapsed else "requests=0",
-          flush=True)
-    print(f"p50={_percentile(lats, 0.50):.3f}s "
-          f"p95={_percentile(lats, 0.95):.3f}s "
-          f"errors={errors} unexpected={len(unexpected)}", flush=True)
+    print(f"requests={total} elapsed={elapsed:.1f}s req/s={total / elapsed:.1f}" if elapsed else "requests=0", flush=True)
+    print(
+        f"p50={_percentile(lats, 0.50):.3f}s p95={_percentile(lats, 0.95):.3f}s errors={errors} unexpected={len(unexpected)}",
+        flush=True,
+    )
     counts = {"allowed": 0, "blocked": 0, "rate_limited": 0, "other": 0}
     if os.path.exists(LOAD_DB):
         conn = sqlite3.connect(LOAD_DB)
-        for outcome, n in conn.execute(
-                "SELECT outcome, COUNT(*) FROM attempts GROUP BY outcome"):
+        for outcome, n in conn.execute("SELECT outcome, COUNT(*) FROM attempts GROUP BY outcome"):
             if outcome in counts:
                 counts[outcome] = n
         conn.close()
-    print(f"db outcomes: allowed={counts['allowed']} "
-          f"blocked={counts['blocked']} "
-          f"rate_limited={counts['rate_limited']}", flush=True)
+    print(
+        f"db outcomes: allowed={counts['allowed']} blocked={counts['blocked']} rate_limited={counts['rate_limited']}",
+        flush=True,
+    )
 
     check("got traffic", total > 100, f"({total} requests)")
     check("no transport errors", errors == 0, f"({errors})")
-    check("no unexpected statuses", not unexpected,
-          f"({sorted(set(unexpected))})" if unexpected else "")
+    check("no unexpected statuses", not unexpected, f"({sorted(set(unexpected))})" if unexpected else "")
     check("429s during burst", burst_429s > 0, f"({burst_429s})")
     if first_pass is not None:
         clock = datetime.fromtimestamp(first_pass, timezone.utc)
-        check("requests pass after burst", True,
-              f"(first 200 at {clock.strftime('%H:%M:%S')} UTC)")
+        check("requests pass after burst", True, f"(first 200 at {clock.strftime('%H:%M:%S')} UTC)")
     else:
         check("requests pass after burst", False, "(no 200 after burst end)")
     check("sustained recovery after window", recovered >= 5, f"({recovered})")
-    check("db shows rate limiting", counts["rate_limited"] > 0,
-          f"({counts['rate_limited']} rows)")
+    check("db shows rate limiting", counts["rate_limited"] > 0, f"({counts['rate_limited']} rows)")
 
     # No server shutdown: under gevent it hangs, and the verdict is in.
     # Daemon serve threads die with the process; every request already

@@ -1,11 +1,13 @@
 """Dashboard page: markers plus the no-store middleware, no sockets."""
+
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 import api
 
@@ -58,8 +60,7 @@ class DashboardTest(unittest.TestCase):
         # This sandbox blocks every listen() call, including the one the
         # Windows asyncio loop needs, so the middleware cannot run here.
         # Assert it is wired into the app; its body only sets no-store.
-        registered = [m.kwargs.get("dispatch")
-                      for m in api.app.user_middleware]
+        registered = [m.kwargs.get("dispatch") for m in api.app.user_middleware]
         self.assertIn(api._no_store, registered)
 
 

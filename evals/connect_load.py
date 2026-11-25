@@ -12,6 +12,7 @@ Run:
   python evals/connect_load.py --threads 20
   python evals/connect_load.py --threads 50 --stagger-ms 1000 --hold-open 2
 """
+
 import argparse
 import os
 import socket
@@ -65,9 +66,7 @@ def _require_free_port(host, port, what):
     try:
         probe.bind((host, port))
     except OSError:
-        raise SystemExit(
-            f"error: {what} port {port} is already in use; stop the other "
-            f"process or pass another port")
+        raise SystemExit(f"error: {what} port {port} is already in use; stop the other process or pass another port")
     finally:
         probe.close()
 
@@ -90,13 +89,13 @@ def _worker(barrier, results, args, run_id, index, total, echo_port):
         barrier.wait(timeout=30)
         if args.stagger_ms:
             time.sleep(index * (args.stagger_ms / 1000.0) / total)
-        sock = socket.create_connection(
-            ("127.0.0.1", args.proxy_port), timeout=args.timeout)
+        sock = socket.create_connection(("127.0.0.1", args.proxy_port), timeout=args.timeout)
         with sock:
             sock.sendall(
                 f"CONNECT 127.0.0.1:{echo_port} HTTP/1.1\r\n"
                 f"Host: 127.0.0.1:{echo_port}\r\n"
-                f"X-Trace-Id: {trace}\r\n\r\n".encode())
+                f"X-Trace-Id: {trace}\r\n\r\n".encode()
+            )
             head = _read_head(sock)
             status = int(head.split(b"\r\n", 1)[0].split()[1])
             if status != 200:
@@ -152,19 +151,17 @@ def main():
         listener.listen(128)
         echo_port = listener.getsockname()[1]
         stop = threading.Event()
-        threading.Thread(target=_serve_echo, args=(listener, stop),
-                         daemon=True).start()
+        threading.Thread(target=_serve_echo, args=(listener, stop), daemon=True).start()
 
         proxy = proxy_module.serve("127.0.0.1", args.proxy_port, args.db)
         threading.Thread(target=proxy.serve_forever, daemon=True).start()
 
         barrier = threading.Barrier(args.threads)
         results = []
-        threads = [threading.Thread(target=_worker,
-                                    args=(barrier, results, args,
-                                          run_id, i, args.threads,
-                                          echo_port))
-                   for i in range(args.threads)]
+        threads = [
+            threading.Thread(target=_worker, args=(barrier, results, args, run_id, i, args.threads, echo_port))
+            for i in range(args.threads)
+        ]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -182,8 +179,9 @@ def main():
         failed = [r for r in results if not r["ok"]]
         conn = sqlite3.connect(args.db)
         conn.row_factory = sqlite3.Row
-        rows = [r for r in conn.execute("SELECT * FROM attempts ORDER BY id")
-                if r["trace_id"].startswith(f"trace-load-{run_id}-")]
+        rows = [
+            r for r in conn.execute("SELECT * FROM attempts ORDER BY id") if r["trace_id"].startswith(f"trace-load-{run_id}-")
+        ]
         conn.close()
         logged_traces = {r["trace_id"] for r in rows}
         opened_traces = {r["trace"] for r in results if r["opened"]}
@@ -191,15 +189,12 @@ def main():
         attempts_by_trace = {}
         for r in rows:
             attempts_by_trace.setdefault(r["trace_id"], []).append(r["attempt"])
-        duplicates = {t: a for t, a in attempts_by_trace.items()
-                      if sorted(a) != [1] * len(a) or len(a) != 1}
+        duplicates = {t: a for t, a in attempts_by_trace.items() if sorted(a) != [1] * len(a) or len(a) != 1}
         stamps = [r["created_at"] for r in rows]
         ordered = stamps == sorted(stamps)
 
-        print(f"run={run_id} threads={args.threads} "
-              f"payload={args.payload_bytes}B echo_port={echo_port}")
-        print(f"opened={opened} succeeded={succeeded} "
-              f"failed={len(failed)} rows={len(rows)}")
+        print(f"run={run_id} threads={args.threads} payload={args.payload_bytes}B echo_port={echo_port}")
+        print(f"opened={opened} succeeded={succeeded} failed={len(failed)} rows={len(rows)}")
         print(f"log_errors={log_errors or 'none'} hung_threads={len(alive)}")
         ok = True
 
@@ -209,17 +204,13 @@ def main():
             if not good:
                 ok = False
 
-        check("all tunnels opened", opened == args.threads,
-              f"({opened}/{args.threads})")
-        check("all tunnels echoed cleanly", succeeded == args.threads,
-              f"({succeeded}/{args.threads})")
+        check("all tunnels opened", opened == args.threads, f"({opened}/{args.threads})")
+        check("all tunnels echoed cleanly", succeeded == args.threads, f"({succeeded}/{args.threads})")
         for r in failed[:5]:
             print(f"  failed {r['trace']}: {r['error']}")
         check("no lost rows", not lost, f"({lost})" if lost else "")
-        check("no duplicate attempts", not duplicates,
-              f"({duplicates})" if duplicates else "")
-        check("no logging errors", not log_errors,
-              f"({log_errors})" if log_errors else "")
+        check("no duplicate attempts", not duplicates, f"({duplicates})" if duplicates else "")
+        check("no logging errors", not log_errors, f"({log_errors})" if log_errors else "")
         check("created_at ordered with id", ordered)
         check("no hung threads", not alive)
         return 0 if ok else 1

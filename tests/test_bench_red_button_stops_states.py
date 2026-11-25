@@ -56,6 +56,7 @@ That belongs to the spend cap + per-network override item.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -108,8 +109,7 @@ class _CountingEchoHandler(socketserver.BaseRequestHandler):
 
 
 def _start_counting_echo():
-    server = socketserver.ThreadingTCPServer(
-        ("127.0.0.1", 0), _CountingEchoHandler)
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
     server.bytes_in = 0
     server.count_lock = threading.Lock()
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -128,12 +128,11 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         # A fresh database per test, so every row read below is exact.
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.old_dest_server = _start_counting_echo()   # where the Run was
-        self.new_dest_server = _start_counting_echo()   # where it is sent
+        self.old_dest_server = _start_counting_echo()  # where the Run was
+        self.new_dest_server = _start_counting_echo()  # where it is sent
         # High rate limit: rate limiting has its own tests, and a 429
         # here would mask the tunnel this test needs to open.
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         self.proxy_port = self.proxy.server_address[1]
         self.dest = f"127.0.0.1:{self.old_dest_server.server_address[1]}"
@@ -157,13 +156,9 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         The client always asks for the OLD destination. Where the tunnel
         really goes is the proxy's call, and that is what these tests read.
         """
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {self.dest} HTTP/1.1\r\n"
-             f"Host: {self.dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -209,9 +204,7 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace,))]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace,))]
         finally:
             conn.close()
 
@@ -246,13 +239,8 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         """Pause a Run with a live tunnel. The tunnel is cut and closed."""
         sock = self.open_and_exchange(trace)
         try:
-            self.assertTrue(
-                self.proxy.state.pause_run(trace),
-                "harness: pause_run refused a live Run")
-            self.wait_for_row(
-                trace,
-                lambda r: r["reason"] == "tunnel cut by pause",
-                "the pause-cut tunnel's close row")
+            self.assertTrue(self.proxy.state.pause_run(trace), "harness: pause_run refused a live Run")
+            self.wait_for_row(trace, lambda r: r["reason"] == "tunnel cut by pause", "the pause-cut tunnel's close row")
             self.assert_tunnel_dead(sock)
         finally:
             sock.close()
@@ -268,13 +256,8 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         """
         first = self.open_and_exchange(trace)
         try:
-            self.assertTrue(
-                self.proxy.state.redirect_run(trace, self.safe_dest),
-                "harness: redirect_run refused a live Run")
-            self.wait_for_row(
-                trace,
-                lambda r: r["reason"] == "tunnel cut by redirect",
-                "the redirect-cut tunnel's close row")
+            self.assertTrue(self.proxy.state.redirect_run(trace, self.safe_dest), "harness: redirect_run refused a live Run")
+            self.wait_for_row(trace, lambda r: r["reason"] == "tunnel cut by redirect", "the redirect-cut tunnel's close row")
             self.assert_tunnel_dead(first)
         finally:
             first.close()
@@ -283,7 +266,8 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         self.assertEqual(
             (old_bytes, new_bytes),
             (baseline[0] + len(PAYLOAD), baseline[1] + len(PAYLOAD)),
-            "harness: the second tunnel did not flow to the new destination")
+            "harness: the second tunnel did not flow to the new destination",
+        )
         return second
 
     def set_up_three_runs(self):
@@ -301,9 +285,7 @@ class RedButtonStopsStatesTest(unittest.TestCase):
 
     def press(self):
         """Press the Red button once. It must stop every Run."""
-        self.assertTrue(
-            self.proxy.state.red_button(),
-            "the Red button refused to stop the Runs")
+        self.assertTrue(self.proxy.state.red_button(), "the Red button refused to stop the Runs")
 
     def stop_rows(self, trace):
         """The stop rows for one Run: outcome stopped, human red button.
@@ -312,10 +294,11 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         reason, so the stop row is the stopped row that carries no
         bytes: control rows move no traffic, close rows keep theirs.
         """
-        return [r for r in self.rows_for(trace)
-                if r["outcome"] == "stopped"
-                and r["reason"] == "human red button"
-                and r["bytes_tx"] == 0 and r["bytes_rx"] == 0]
+        return [
+            r
+            for r in self.rows_for(trace)
+            if r["outcome"] == "stopped" and r["reason"] == "human red button" and r["bytes_tx"] == 0 and r["bytes_rx"] == 0
+        ]
 
     def cut_close_row(self, trace, dest):
         """The close row of the tunnel the button cut for one Run.
@@ -325,10 +308,9 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         """
         rows = self.wait_for_row(
             trace,
-            lambda r: r["method"] == "CONNECT"
-            and r["dest_host"] == dest
-            and r["bytes_tx"] == len(PAYLOAD),
-            "the cut tunnel's close row")
+            lambda r: r["method"] == "CONNECT" and r["dest_host"] == dest and r["bytes_tx"] == len(PAYLOAD),
+            "the cut tunnel's close row",
+        )
         return rows[-1]
 
     # ---- check 1 -------------------------------------------------------
@@ -345,16 +327,11 @@ class RedButtonStopsStatesTest(unittest.TestCase):
             redirected.close()
         stop = self.stop_rows(LIVE)
         self.assertEqual(len(stop), 1, "the live Run has no stop row")
-        self.assertEqual(
-            stop[0]["status"], "unknown",
-            "the stop row must stay Unverified, never success")
+        self.assertEqual(stop[0]["status"], "unknown", "the stop row must stay Unverified, never success")
         held_sock, held_status = self.open_tunnel(LIVE)
         held_sock.close()
-        self.assertEqual(
-            held_status, 503, "a stopped Run must hold new tunnels")
-        self.assertEqual(
-            self.received(), (old_before, new_before),
-            "bytes reached a destination after the press")
+        self.assertEqual(held_status, 503, "a stopped Run must hold new tunnels")
+        self.assertEqual(self.received(), (old_before, new_before), "bytes reached a destination after the press")
 
     # ---- check 2 -------------------------------------------------------
 
@@ -366,27 +343,22 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         redirected.close()
         stop = self.stop_rows(PAUSED)
         self.assertEqual(len(stop), 1, "the paused Run has no stop row")
-        self.assertTrue(
-            self.proxy.state.is_paused(PAUSED),
-            "the press cleared the pause, so the Run is no longer paused")
+        self.assertTrue(self.proxy.state.is_paused(PAUSED), "the press cleared the pause, so the Run is no longer paused")
         held_sock, held_status = self.open_tunnel(PAUSED)
         held_sock.close()
-        self.assertEqual(
-            held_status, 503, "a stopped Run must hold new tunnels")
-        self.assertFalse(
-            self.proxy.state.approve_run(PAUSED, DONE_CLAUSE),
-            "approve_run let a stopped Run back in")
-        cut = [r for r in self.rows_for(PAUSED)
-               if r["reason"] == "tunnel cut by pause"]
+        self.assertEqual(held_status, 503, "a stopped Run must hold new tunnels")
+        self.assertFalse(self.proxy.state.approve_run(PAUSED, DONE_CLAUSE), "approve_run let a stopped Run back in")
+        cut = [r for r in self.rows_for(PAUSED) if r["reason"] == "tunnel cut by pause"]
         self.assertEqual(
             [(r["outcome"], r["bytes_tx"], r["bytes_rx"]) for r in cut],
             [("paused", len(PAYLOAD), len(PAYLOAD))],
-            "the pause-cut tunnel's close row must read paused "
-            "and keep its bytes")
+            "the pause-cut tunnel's close row must read paused and keep its bytes",
+        )
         self.assertEqual(
             self.proxy.state.retry_run(PAUSED),
             (False, "red button stopped"),
-            "a stopped Run must retry as stopped, not as paused")
+            "a stopped Run must retry as stopped, not as paused",
+        )
 
     # ---- check 3 -------------------------------------------------------
 
@@ -409,25 +381,24 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         self.assertEqual(len(stop), 1, "the redirected Run has no stop row")
         held_sock, held_status = self.open_tunnel(REDIRECTED)
         held_sock.close()
-        self.assertEqual(
-            held_status, 503, "a stopped Run must hold new tunnels")
-        self.assertFalse(
-            self.proxy.state.approve_run(REDIRECTED, DONE_CLAUSE),
-            "approve_run let a stopped Run back in")
-        self.assertEqual(
-            self.received(), (old_before, new_before),
-            "bytes reached a destination after the press")
+        self.assertEqual(held_status, 503, "a stopped Run must hold new tunnels")
+        self.assertFalse(self.proxy.state.approve_run(REDIRECTED, DONE_CLAUSE), "approve_run let a stopped Run back in")
+        self.assertEqual(self.received(), (old_before, new_before), "bytes reached a destination after the press")
         self.assertEqual(
             self.proxy.state._redirects[REDIRECTED]["dest_host"],
             self.safe_dest,
-            "the press dropped the redirect held in memory")
+            "the press dropped the redirect held in memory",
+        )
         self.assertEqual(
-            self.saved_redirects()[REDIRECTED]["dest_host"], self.safe_dest,
-            "the press dropped the redirect saved for a restart")
+            self.saved_redirects()[REDIRECTED]["dest_host"],
+            self.safe_dest,
+            "the press dropped the redirect saved for a restart",
+        )
         self.assertEqual(
             self.proxy.state.retry_run(REDIRECTED),
             (False, "red button stopped"),
-            "a stopped Run must retry as stopped, not as redirected")
+            "a stopped Run must retry as stopped, not as redirected",
+        )
 
     # ---- check 4 -------------------------------------------------------
 
@@ -441,13 +412,8 @@ class RedButtonStopsStatesTest(unittest.TestCase):
             with self.subTest(run=trace):
                 self.proxy.state.verify_run(trace, DONE_CLAUSE)
                 allowed, reason = self.proxy.state.retry_run(trace)
-                self.assertFalse(
-                    allowed,
-                    f"a retry on a stopped Run was allowed ({reason}), "
-                    "but an old Run never restarts")
-                self.assertEqual(
-                    reason, "red button stopped",
-                    "a blocked retry on a stopped Run must say so")
+                self.assertFalse(allowed, f"a retry on a stopped Run was allowed ({reason}), but an old Run never restarts")
+                self.assertEqual(reason, "red button stopped", "a blocked retry on a stopped Run must say so")
 
     # ---- check 5 -------------------------------------------------------
 
@@ -458,24 +424,25 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         live.close()
         redirected.close()
         for trace, dest, label, cut_reason in (
-                (LIVE, self.dest, "live", "human red button"),
-                (PAUSED, self.dest, "paused", "tunnel cut by pause"),
-                (REDIRECTED, self.safe_dest, "redirected",
-                 "human red button")):
+            (LIVE, self.dest, "live", "human red button"),
+            (PAUSED, self.dest, "paused", "tunnel cut by pause"),
+            (REDIRECTED, self.safe_dest, "redirected", "human red button"),
+        ):
             with self.subTest(run=label):
                 row = self.cut_close_row(trace, dest)
                 self.assertNotEqual(
-                    row["outcome"], "allowed",
+                    row["outcome"],
+                    "allowed",
                     "a tunnel the Red button cut is journaled as a "
                     "completed attempt: the cut mark is missing in the "
-                    "red_button cut loop")
-                self.assertEqual(
-                    row["reason"], cut_reason,
-                    "the cut tunnel's close row must name what cut it")
+                    "red_button cut loop",
+                )
+                self.assertEqual(row["reason"], cut_reason, "the cut tunnel's close row must name what cut it")
                 self.assertEqual(
                     (row["bytes_tx"], row["bytes_rx"]),
                     (len(PAYLOAD), len(PAYLOAD)),
-                    "the cut tunnel's close row lost its bytes")
+                    "the cut tunnel's close row lost its bytes",
+                )
 
     # ---- check 6 -------------------------------------------------------
 
@@ -485,23 +452,20 @@ class RedButtonStopsStatesTest(unittest.TestCase):
         held = journal_row("stopped", "approval required after red button")
         cases = (
             ("live", [stop]),
-            ("paused", [journal_row("paused", "human pause"),
-                        journal_row("paused", "tunnel cut by pause"),
-                        stop]),
-            ("redirected", [journal_row("redirected", "human redirect"),
-                            journal_row("redirected",
-                                        "tunnel cut by redirect"),
-                            stop]),
+            ("paused", [journal_row("paused", "human pause"), journal_row("paused", "tunnel cut by pause"), stop]),
+            (
+                "redirected",
+                [journal_row("redirected", "human redirect"), journal_row("redirected", "tunnel cut by redirect"), stop],
+            ),
         )
         for label, prefix in cases:
             with self.subTest(state=label):
+                self.assertEqual(states_module.run_state(prefix), "STOPPED", "a stopped Run must fold to STOPPED")
                 self.assertEqual(
-                    states_module.run_state(prefix), "STOPPED",
-                    "a stopped Run must fold to STOPPED")
-                self.assertEqual(
-                    states_module.run_state(prefix + [held]), "STOPPED",
-                    "a held attempt after the press must not change "
-                    "the run state")
+                    states_module.run_state(prefix + [held]),
+                    "STOPPED",
+                    "a held attempt after the press must not change the run state",
+                )
 
     def test_panel_folds_the_real_rows_of_every_state(self):
         """Check 6, the same fold over rows the real proxy wrote."""
@@ -513,18 +477,17 @@ class RedButtonStopsStatesTest(unittest.TestCase):
             with self.subTest(run=trace):
                 held_sock, held_status = self.open_tunnel(trace)
                 held_sock.close()
-                self.assertEqual(
-                    held_status, 503, "harness: the Run was not held")
+                self.assertEqual(held_status, 503, "harness: the Run was not held")
                 rows = self.rows_for(trace)
-                stop_at = [i for i, r in enumerate(rows)
-                           if r["outcome"] == "stopped"
-                           and r["reason"] == "human red button"][0]
+                stop_at = [i for i, r in enumerate(rows) if r["outcome"] == "stopped" and r["reason"] == "human red button"][0]
                 self.assertEqual(
-                    states_module.run_state(rows[:stop_at + 1]), "STOPPED",
-                    "the real rows up to the stop row must fold to STOPPED")
+                    states_module.run_state(rows[: stop_at + 1]),
+                    "STOPPED",
+                    "the real rows up to the stop row must fold to STOPPED",
+                )
                 self.assertEqual(
-                    states_module.run_state(rows), "STOPPED",
-                    "the real rows after the press must fold to STOPPED")
+                    states_module.run_state(rows), "STOPPED", "the real rows after the press must fold to STOPPED"
+                )
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ implementation is written.
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -76,16 +77,13 @@ class DevtoolPauseButtonTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, two loopback destinations."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        self.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         threading.Thread(target=self.echoA.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoB.serve_forever, daemon=True).start()
         self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         # addCleanup runs LIFO: shutdowns are added last so they run
         # first then closes, then DB, then temp. Closing a listening
         # socket while serve_forever still selects on it crashes
@@ -107,25 +105,15 @@ class DevtoolPauseButtonTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,)).fetchall()
+            return conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,)).fetchall()
         finally:
             conn.close()
 
     def open_tunnel(self, dest, trace_id):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -191,8 +179,7 @@ class DevtoolPauseButtonTest(unittest.TestCase):
                 hasattr(devpanel_module, "pause_run"),
                 "Pause button handler does not exist (expected failure, test-first)",
             )
-            clicked = devpanel_module.pause_run(
-                self.proxy.state, traceA, reason="human pause")
+            clicked = devpanel_module.pause_run(self.proxy.state, traceA, reason="human pause")
             self.assertTrue(clicked, "Pause button press refused Run A")
 
             # Step 4: only Run A stops. Its live tunnel is cut, new
@@ -207,10 +194,7 @@ class DevtoolPauseButtonTest(unittest.TestCase):
                 self.echo_roundtrip(sockB, b"run-still-on-B"),
                 b"run-still-on-B",
             )
-            pause_rows = [
-                r for r in self.rows_for(traceA)
-                if r["outcome"] == "paused"
-            ]
+            pause_rows = [r for r in self.rows_for(traceA) if r["outcome"] == "paused"]
             self.assertTrue(pause_rows, "button press must be journaled")
             # The FIRST paused row is the control row the button press
             # journals before it cuts. A tunnel the press cut adds its own
@@ -219,9 +203,7 @@ class DevtoolPauseButtonTest(unittest.TestCase):
             # either, depending on thread timing. Read the first.
             pause_row = pause_rows[0]
             self.assertEqual(pause_row["reason"], "human pause")
-            self.assertEqual(
-                pause_row["status"], "unknown",
-                "pause verdict must be Unverified, explicitly")
+            self.assertEqual(pause_row["status"], "unknown", "pause verdict must be Unverified, explicitly")
             self.assertEqual(
                 [r for r in self.rows_for(traceB) if r["outcome"] == "paused"],
                 [],
@@ -235,8 +217,7 @@ class DevtoolPauseButtonTest(unittest.TestCase):
             self.assertFalse(allowed, "retry without Verify must be blocked")
             self.assertIn("verify", why.lower())
             self.assertTrue(
-                [r for r in self.rows_for(traceA)
-                 if r["reason"] == "verify required before retry"],
+                [r for r in self.rows_for(traceA) if r["reason"] == "verify required before retry"],
                 "blocked retry must be journaled",
             )
         finally:

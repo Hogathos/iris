@@ -45,6 +45,7 @@ Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames. No scores, no
 percentages, no "probably correct".
 """
+
 import os
 import socket
 import socketserver
@@ -96,8 +97,7 @@ class VerifyNoTraceTest(unittest.TestCase):
         """Start one loopback echo destination and one proxy on temp db."""
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _CountingEchoHandler)
+        cls.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
         cls.echo.count = 0
         threading.Thread(target=cls.echo.serve_forever, daemon=True).start()
         cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path)
@@ -131,14 +131,7 @@ class VerifyNoTraceTest(unittest.TestCase):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
         sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -169,8 +162,7 @@ class VerifyNoTraceTest(unittest.TestCase):
 
     def check_card(self, card, verdict):
         """Plain-words card shape: claim, read, source, time, verdict, why, next."""
-        for key in ("claim", "what_read", "source", "as_of",
-                    "verdict", "why", "next"):
+        for key in ("claim", "what_read", "source", "as_of", "verdict", "why", "next"):
             self.assertIn(key, card, f"card missing {key}")
             self.assertTrue(card[key], f"card {key} must not be empty")
         self.assertEqual(card["verdict"], verdict)
@@ -197,9 +189,7 @@ class VerifyNoTraceTest(unittest.TestCase):
         # No tunnel was ever opened for this trace: no proxy row, no
         # bytes, no tool log, no effect, no error. Nothing to read.
         self.assertEqual(self.rows_for(trace), [])
-        verdict, card = self.proxy.state.verify_read_back(
-            trace, self.remote_claim("verify-no-trace-1"),
-            done_clause=DONE_FILE)
+        verdict, card = self.proxy.state.verify_read_back(trace, self.remote_claim("verify-no-trace-1"), done_clause=DONE_FILE)
         self.assertEqual(verdict, "Unverified")
         self.check_card(card, "Unverified")
         # The rule, AGENTS.md: reason is No trace, human investigates.
@@ -216,13 +206,10 @@ class VerifyNoTraceTest(unittest.TestCase):
         call_rows = [r for r in rows if "verify-no-trace-1" in (r["reason"] or "")]
         self.assertTrue(call_rows, "call row must carry the idempotency key")
         verdict_rows = [
-            r for r in rows
-            if r["outcome"] == "verified" and r["status"] == "unknown"
-            and r["reason"] == "verify Unverified"
+            r for r in rows if r["outcome"] == "verified" and r["status"] == "unknown" and r["reason"] == "verify Unverified"
         ]
         self.assertTrue(verdict_rows, "Unverified verdict must be journaled")
-        self.assertLess(call_rows[0]["id"], verdict_rows[0]["id"],
-                        "call row first, verdict after")
+        self.assertLess(call_rows[0]["id"], verdict_rows[0]["id"], "call row first, verdict after")
         for row in verdict_rows:
             row_text = " ".join(str(row[k]) for k in row.keys())
             self.assertNotIn("Authorization", row_text)
@@ -233,8 +220,8 @@ class VerifyNoTraceTest(unittest.TestCase):
         trace = "verify-no-trace-second-run"
         self.assertEqual(self.rows_for(trace), [])
         verdict1, card1 = self.proxy.state.verify_read_back(
-            trace, self.remote_claim("verify-no-trace-2a"),
-            done_clause=DONE_FILE)
+            trace, self.remote_claim("verify-no-trace-2a"), done_clause=DONE_FILE
+        )
         self.assertEqual(verdict1, "Unverified")
         self.assertEqual(card1["why"], "No trace")
         # The first Verify's own rows are not a trace: its call row
@@ -242,8 +229,8 @@ class VerifyNoTraceTest(unittest.TestCase):
         # Verify must still say No trace, not "remote with no local
         # proof". Fails today: the second why is the remote line.
         verdict2, card2 = self.proxy.state.verify_read_back(
-            trace, self.remote_claim("verify-no-trace-2b"),
-            done_clause=DONE_FILE)
+            trace, self.remote_claim("verify-no-trace-2b"), done_clause=DONE_FILE
+        )
         self.assertEqual(verdict2, "Unverified")
         self.check_card(card2, "Unverified")
         self.assertEqual(card2["why"], "No trace")
@@ -259,18 +246,22 @@ class VerifyNoTraceTest(unittest.TestCase):
             os.fsync(proof.fileno())
         verdict1, _ = self.proxy.state.verify_read_back(
             trace,
-            {"kind": "local-file", "path": proof_path,
-             "expected_text": "row exists after close/fsync",
-             "idempotency_key": "verify-trace-correct-1"},
-            done_clause=DONE_FILE)
+            {
+                "kind": "local-file",
+                "path": proof_path,
+                "expected_text": "row exists after close/fsync",
+                "idempotency_key": "verify-trace-correct-1",
+            },
+            done_clause=DONE_FILE,
+        )
         self.assertEqual(verdict1, "Correct")
         # The read happened, so the Run has a trace. A later remote
         # claim has no trace of ITS effect, so the why is the remote
         # line, not No trace. Guards the refined check: a Correct
         # verdict row (outcome verified, status success) counts.
         verdict2, card2 = self.proxy.state.verify_read_back(
-            trace, self.remote_claim("verify-no-trace-2c"),
-            done_clause=DONE_FILE)
+            trace, self.remote_claim("verify-no-trace-2c"), done_clause=DONE_FILE
+        )
         self.assertEqual(verdict2, "Unverified")
         self.check_card(card2, "Unverified")
         self.assertEqual(card2["why"], "remote with no local proof")
@@ -290,8 +281,8 @@ class VerifyNoTraceTest(unittest.TestCase):
             sock.close()
         self.wait_for_rows(trace)
         verdict, card = self.proxy.state.verify_read_back(
-            trace, self.remote_claim("verify-remote-traffic-1"),
-            done_clause=DONE_FILE)
+            trace, self.remote_claim("verify-remote-traffic-1"), done_clause=DONE_FILE
+        )
         self.assertEqual(verdict, "Unverified")
         self.check_card(card, "Unverified")
         self.assertEqual(card["why"], "remote with no local proof")
@@ -300,16 +291,15 @@ class VerifyNoTraceTest(unittest.TestCase):
         """Unverified for no trace never stops the Run."""
         trace = "verify-no-trace-keeps-flowing-run"
         verdict, _card = self.proxy.state.verify_read_back(
-            trace, self.remote_claim("verify-no-trace-2"),
-            done_clause=DONE_FILE)
+            trace, self.remote_claim("verify-no-trace-2"), done_clause=DONE_FILE
+        )
         self.assertEqual(verdict, "Unverified")
         # Only Incorrect stops a Run. No pause row, not paused, and a
         # new tunnel still flows: the Run keeps working.
         self.assertEqual(
-            [r for r in self.rows_for(trace) if r["outcome"] == "paused"],
-            [], "no-trace Unverified must not pause the Run")
-        self.assertFalse(self.proxy.state.is_paused(trace),
-                         "no-trace Unverified must not pause the Run")
+            [r for r in self.rows_for(trace) if r["outcome"] == "paused"], [], "no-trace Unverified must not pause the Run"
+        )
+        self.assertFalse(self.proxy.state.is_paused(trace), "no-trace Unverified must not pause the Run")
         allowed, reason = self.proxy.state.retry_run(trace)
         self.assertTrue(allowed, "retry must not be blocked by Unverified")
         self.assertEqual(reason, "not paused")
@@ -320,15 +310,14 @@ class VerifyNoTraceTest(unittest.TestCase):
             self.assertEqual(self.echo_roundtrip(sock, b"still"), b"still")
         finally:
             sock.close()
-        self.assertEqual(self.echo.count - before, 1,
-                         "one new echo connection, delta not absolute")
+        self.assertEqual(self.echo.count - before, 1, "one new echo connection, delta not absolute")
 
     def test_no_trace_panel_fold(self):
         """No-trace Unverified folds to FLOWING, verdict Unverified."""
         trace = "verify-no-trace-panel-run"
         verdict, _card = self.proxy.state.verify_read_back(
-            trace, self.remote_claim("verify-no-trace-3"),
-            done_clause=DONE_FILE)
+            trace, self.remote_claim("verify-no-trace-3"), done_clause=DONE_FILE
+        )
         self.assertEqual(verdict, "Unverified")
         rows = self.rows_for(trace)
         # A verify row with status unknown moves nothing: the Run

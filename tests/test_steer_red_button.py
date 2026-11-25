@@ -24,6 +24,7 @@ behavior.
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -80,8 +81,7 @@ class SteerRedButtonTest(unittest.TestCase):
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
         cls.echoes = []
         for _ in range(4):
-            echo = socketserver.ThreadingTCPServer(
-                ("127.0.0.1", 0), _CountingEchoHandler)
+            echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
             echo.count = 0
             threading.Thread(target=echo.serve_forever, daemon=True).start()
             cls.echoes.append(echo)
@@ -121,14 +121,7 @@ class SteerRedButtonTest(unittest.TestCase):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
         sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -189,14 +182,9 @@ class SteerRedButtonTest(unittest.TestCase):
             # stop a paused Run too, not just a flowing one.
             sock3 = self.open_tunnel(self.destC, trace3)
             try:
-                self.assertEqual(
-                    self.echo_roundtrip(sock3, b"run3-on-C"), b"run3-on-C")
-                self.assertTrue(
-                    self.proxy.state.pause_run(trace3, reason="human pause"))
-                stopped3_before = [
-                    r for r in self.rows_for(trace3)
-                    if r["outcome"] == "stopped"
-                ]
+                self.assertEqual(self.echo_roundtrip(sock3, b"run3-on-C"), b"run3-on-C")
+                self.assertTrue(self.proxy.state.pause_run(trace3, reason="human pause"))
+                stopped3_before = [r for r in self.rows_for(trace3) if r["outcome"] == "stopped"]
                 self.assertEqual(stopped3_before, [], "no stop row before Red button")
             finally:
                 sock3.close()
@@ -224,10 +212,7 @@ class SteerRedButtonTest(unittest.TestCase):
             # explicitly: status unknown, never Correct, never Incorrect,
             # and never "failed" in a human-visible summary.
             for trace in (trace1, trace2, trace3):
-                stop_rows = [
-                    r for r in self.rows_for(trace)
-                    if r["outcome"] == "stopped"
-                ]
+                stop_rows = [r for r in self.rows_for(trace) if r["outcome"] == "stopped"]
                 self.assertTrue(stop_rows, f"no stop row for {trace}")
                 stop_row = stop_rows[-1]
                 self.assertEqual(stop_row["trace_id"], trace)
@@ -236,11 +221,8 @@ class SteerRedButtonTest(unittest.TestCase):
                 # Unverified, explicitly: a stop alone verifies nothing,
                 # so the verdict must read Unknown, never Correct and
                 # never Incorrect. Unknown is the explicit state.
-                self.assertEqual(
-                    stop_row["status"], "unknown",
-                    "stop verdict must be Unverified, explicitly")
-                row_text = " ".join(
-                    str(stop_row[k]) for k in stop_row.keys())
+                self.assertEqual(stop_row["status"], "unknown", "stop verdict must be Unverified, explicitly")
+                row_text = " ".join(str(stop_row[k]) for k in stop_row.keys())
                 self.assertNotIn("Authorization", row_text)
                 self.assertNotIn("Bearer", row_text)
             # Every live tunnel is cut: no further bytes flow, for any Run.
@@ -254,9 +236,7 @@ class SteerRedButtonTest(unittest.TestCase):
                     got = self.echo_roundtrip(sock, b"run-after-red-button")
                 except (OSError, socket.timeout):
                     got = None
-                self.assertIn(
-                    got, (None, b""),
-                    "a cut tunnel must not echo bytes back")
+                self.assertIn(got, (None, b""), "a cut tunnel must not echo bytes back")
 
             # Step 6: a new Run started after Red button, without a fresh
             # human approval and Verify, is refused and journaled. The
@@ -266,10 +246,7 @@ class SteerRedButtonTest(unittest.TestCase):
             sock4.close()
             self.assertEqual(status4, 503, "new Run without approval must be refused")
             self.assertEqual(self.echoes[3].count, d_before, "nothing reached D")
-            refused_rows = [
-                r for r in self.rows_for(trace4)
-                if r["reason"] == "approval required after red button"
-            ]
+            refused_rows = [r for r in self.rows_for(trace4) if r["reason"] == "approval required after red button"]
             self.assertTrue(refused_rows, "refused new Run must be journaled")
             self.assertEqual(refused_rows[-1]["status"], "unknown")
             self.assertEqual(refused_rows[-1]["outcome"], "stopped")
@@ -284,8 +261,7 @@ class SteerRedButtonTest(unittest.TestCase):
             allowed, _ = self.proxy.state.retry_run(trace1)
             self.assertFalse(allowed, "old Runs stay stopped: no retry")
             self.assertTrue(
-                [r for r in self.rows_for(trace1)
-                 if r["reason"] == "red button stopped"],
+                [r for r in self.rows_for(trace1) if r["reason"] == "red button stopped"],
                 "blocked retry on an old Run must be journaled",
             )
             self.assertTrue(
@@ -293,8 +269,7 @@ class SteerRedButtonTest(unittest.TestCase):
                 "fresh human approval must be accepted for a new Run",
             )
             self.assertTrue(
-                [r for r in self.rows_for(trace4)
-                 if r["reason"] == "fresh approval recorded"],
+                [r for r in self.rows_for(trace4) if r["reason"] == "fresh approval recorded"],
                 "fresh approval must be journaled",
             )
             proof_path = os.path.join(self.tmp.name, "red-button-done-proof.txt")
@@ -311,13 +286,13 @@ class SteerRedButtonTest(unittest.TestCase):
             d_before = self.echoes[3].count
             sock4_new = self.open_tunnel(self.destD, trace4)
             try:
-                self.assertEqual(
-                    self.echo_roundtrip(sock4_new, b"run4-on-D"), b"run4-on-D")
+                self.assertEqual(self.echo_roundtrip(sock4_new, b"run4-on-D"), b"run4-on-D")
                 self.assertEqual(self.echoes[3].count, d_before + 1)
             finally:
                 sock4_new.close()
             landed = self.wait_row(
-                trace4, lambda r: r["dest_host"] == self.destD and r["outcome"] == "allowed",
+                trace4,
+                lambda r: r["dest_host"] == self.destD and r["outcome"] == "allowed",
                 "allowed tunnel row on D",
             )
             self.assertEqual(landed["status"], "success")
@@ -340,14 +315,12 @@ class RedButtonLiveOnlyTraceTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, one loopback destination."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _CountingEchoHandler)
+        self.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
         self.echo.count = 0
         threading.Thread(target=self.echo.serve_forever, daemon=True).start()
         self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         # addCleanup runs LIFO: shutdowns are added last so they run
         # first then closes, then DB, then temp. Closing a listening
         # socket while serve_forever still selects on it crashes
@@ -365,9 +338,7 @@ class RedButtonLiveOnlyTraceTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,)).fetchall()
+            return conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,)).fetchall()
         finally:
             conn.close()
 
@@ -376,13 +347,10 @@ class RedButtonLiveOnlyTraceTest(unittest.TestCase):
         # Step 1: Run starts, live tunnel flowing, no journal row yet,
         # no round trip. The 200 response is the only proof so far.
         trace = "redbutton-live-only-1"
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
         try:
-            sock.sendall(
-                (f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\n"
-                 f"X-Trace-Id: {trace}\r\n\r\n").encode())
+            sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
             raw = b""
             while b"\r\n\r\n" not in raw:
                 chunk = sock.recv(65536)
@@ -390,28 +358,20 @@ class RedButtonLiveOnlyTraceTest(unittest.TestCase):
                 raw += chunk
             head = raw.split(b"\r\n\r\n", 1)[0].decode(errors="replace")
             self.assertEqual(int(head.split()[1]), 200)
-            self.assertEqual(
-                [r for r in self.rows_for(trace)], [],
-                "no journal row yet for the live-only trace")
+            self.assertEqual([r for r in self.rows_for(trace)], [], "no journal row yet for the live-only trace")
 
             # Step 2: human presses Red button, human-only, journal first.
-            self.assertTrue(
-                self.proxy.state.red_button(reason="human red button"))
+            self.assertTrue(self.proxy.state.red_button(reason="human red button"))
 
             # Step 3: stop row dest_host = full live destination, never
             # '', outcome stopped, status unknown, Unverified explicitly,
             # reason human red button.
-            stop_rows = [
-                r for r in self.rows_for(trace)
-                if r["outcome"] == "stopped"
-            ]
+            stop_rows = [r for r in self.rows_for(trace) if r["outcome"] == "stopped"]
             self.assertTrue(stop_rows, "live-only trace needs a stop row")
             stop_row = stop_rows[-1]
             self.assertEqual(stop_row["dest_host"], self.dest)
             self.assertEqual(stop_row["reason"], "human red button")
-            self.assertEqual(
-                stop_row["status"], "unknown",
-                "stop verdict must be Unverified, explicitly")
+            self.assertEqual(stop_row["status"], "unknown", "stop verdict must be Unverified, explicitly")
 
             # Step 4: live tunnel dead, new tunnels refused, approval
             # plus Verify needed to move again.
@@ -421,21 +381,17 @@ class RedButtonLiveOnlyTraceTest(unittest.TestCase):
                 self.assertEqual(data, b"", "stopped tunnel still flows")
             except OSError:
                 pass
-            sock2 = socket.create_connection(
-                ("127.0.0.1", self.proxy_port), timeout=5)
+            sock2 = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
             try:
                 sock2.settimeout(5)
-                sock2.sendall(
-                    (f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\n"
-                     f"X-Trace-Id: {trace}\r\n\r\n").encode())
+                sock2.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
                 raw = b""
                 while b"\r\n\r\n" not in raw:
                     chunk = sock2.recv(65536)
                     self.assertTrue(chunk)
                     raw += chunk
                 head = raw.split(b"\r\n\r\n", 1)[0].decode(errors="replace")
-                self.assertEqual(
-                    int(head.split()[1]), 503, "stopped Run stays stopped")
+                self.assertEqual(int(head.split()[1]), 503, "stopped Run stays stopped")
             finally:
                 sock2.close()
             allowed, _ = self.proxy.state.retry_run(trace)

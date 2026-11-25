@@ -21,6 +21,7 @@ implemented. The test now proves the behavior.
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -75,16 +76,13 @@ class SteerRedirectOneRunTest(unittest.TestCase):
         """Start three loopback destinations A, B, C and one proxy."""
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _CountingEchoHandler)
+        cls.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
         cls.echoA.count = 0
         threading.Thread(target=cls.echoA.serve_forever, daemon=True).start()
-        cls.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _CountingEchoHandler)
+        cls.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
         cls.echoB.count = 0
         threading.Thread(target=cls.echoB.serve_forever, daemon=True).start()
-        cls.echoC = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _CountingEchoHandler)
+        cls.echoC = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
         cls.echoC.count = 0
         threading.Thread(target=cls.echoC.serve_forever, daemon=True).start()
         cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path)
@@ -124,14 +122,7 @@ class SteerRedirectOneRunTest(unittest.TestCase):
         """Open one raw CONNECT tunnel through the proxy. Loopback only."""
         sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -195,8 +186,7 @@ class SteerRedirectOneRunTest(unittest.TestCase):
                 hasattr(self.proxy.state, "redirect_run"),
                 "Redirect endpoint does not exist",
             )
-            moved = self.proxy.state.redirect_run(
-                trace1, self.destC, reason="human redirect")
+            moved = self.proxy.state.redirect_run(trace1, self.destC, reason="human redirect")
             self.assertTrue(moved, "redirect_run refused Run 1 to C")
 
             # Step 4: Run 1 traffic now goes to C, not A. The old tunnel
@@ -214,13 +204,8 @@ class SteerRedirectOneRunTest(unittest.TestCase):
                 got = self.echo_roundtrip(sock1, b"run1-after-redirect")
             except (OSError, socket.timeout):
                 got = None
-            self.assertIn(
-                got, (None, b""),
-                "a cut tunnel must not echo bytes back")
-            redirect_rows = [
-                r for r in self.rows_for(trace1)
-                if r["outcome"] == "redirected"
-            ]
+            self.assertIn(got, (None, b""), "a cut tunnel must not echo bytes back")
+            redirect_rows = [r for r in self.rows_for(trace1) if r["outcome"] == "redirected"]
             self.assertTrue(redirect_rows, "no outcome=redirected row for Run 1")
             # The control row names the new destination; the cut row for
             # the old tunnel carries the old one. Both are redirected.
@@ -235,26 +220,20 @@ class SteerRedirectOneRunTest(unittest.TestCase):
             # Unverified, explicitly: a redirect alone verifies nothing,
             # so the verdict must read Unknown, never Correct and never
             # Incorrect. Unknown is the explicit state, not a guess.
-            self.assertEqual(
-                redirect_row["status"], "unknown",
-                "redirect verdict must be Unverified, explicitly")
-            row_text = " ".join(
-                str(redirect_row[k]) for k in redirect_row.keys())
+            self.assertEqual(redirect_row["status"], "unknown", "redirect verdict must be Unverified, explicitly")
+            row_text = " ".join(str(redirect_row[k]) for k in redirect_row.keys())
             self.assertNotIn("Authorization", row_text)
             self.assertNotIn("Bearer", row_text)
             # New tunnels for Run 1, asked for A, land on C instead.
             a_before, c_before = self.echoA.count, self.echoC.count
             sock1_new = self.open_tunnel(self.destA, trace1)
             try:
-                self.assertEqual(
-                    self.echo_roundtrip(sock1_new, b"run1-on-C"), b"run1-on-C")
+                self.assertEqual(self.echo_roundtrip(sock1_new, b"run1-on-C"), b"run1-on-C")
                 self.assertEqual(self.echoA.count, a_before, "nothing new reached A")
                 self.assertEqual(self.echoC.count, c_before + 1, "one tunnel reached C")
             finally:
                 sock1_new.close()
-            landed = self.wait_row(
-                trace1, lambda r: r["dest_host"] == self.destC,
-                "tunnel row on C")
+            landed = self.wait_row(trace1, lambda r: r["dest_host"] == self.destC, "tunnel row on C")
             self.assertEqual(landed["dest_host"], self.destC)
 
             # Step 5: Run 2 still flows to B, unchanged, and has no
@@ -269,21 +248,15 @@ class SteerRedirectOneRunTest(unittest.TestCase):
             # Step 6: redirect to a non-allowlisted destination is
             # refused and journaled. Run 1 stays where it was (on C,
             # still unverified), nothing fails open to the new name.
-            refused = self.proxy.state.redirect_run(
-                trace1, "exfil.example.test:9999", reason="human redirect")
+            refused = self.proxy.state.redirect_run(trace1, "exfil.example.test:9999", reason="human redirect")
             self.assertFalse(refused, "non-allowlisted redirect must be refused")
-            refused_rows = [
-                r for r in self.rows_for(trace1)
-                if r["reason"] == "redirect refused: not allowlisted"
-            ]
+            refused_rows = [r for r in self.rows_for(trace1) if r["reason"] == "redirect refused: not allowlisted"]
             self.assertTrue(refused_rows, "refused redirect must be journaled")
             self.assertEqual(refused_rows[-1]["status"], "unknown")
             a_before, c_before = self.echoA.count, self.echoC.count
             sock1_check = self.open_tunnel(self.destA, trace1)
             try:
-                self.assertEqual(
-                    self.echo_roundtrip(sock1_check, b"run1-still-C"),
-                    b"run1-still-C")
+                self.assertEqual(self.echo_roundtrip(sock1_check, b"run1-still-C"), b"run1-still-C")
                 self.assertEqual(self.echoA.count, a_before, "nothing new reached A")
                 self.assertEqual(self.echoC.count, c_before + 1, "Run 1 stays on C")
             finally:
@@ -298,8 +271,7 @@ class SteerRedirectOneRunTest(unittest.TestCase):
             self.assertFalse(allowed, "retry on C without Verify must be blocked")
             self.assertIn("verify", why.lower())
             self.assertTrue(
-                [r for r in self.rows_for(trace1)
-                 if r["reason"] == "verify required before retry"],
+                [r for r in self.rows_for(trace1) if r["reason"] == "verify required before retry"],
                 "blocked retry must be journaled",
             )
             proof_path = os.path.join(self.tmp.name, "redirect-done-proof.txt")
@@ -312,15 +284,13 @@ class SteerRedirectOneRunTest(unittest.TestCase):
             verified = self.proxy.state.verify_run(trace1, done_clause=done)
             self.assertTrue(verified, "fresh Verify must pass")
             self.assertTrue(
-                [r for r in self.rows_for(trace1)
-                 if r["reason"].startswith("verify ok")],
+                [r for r in self.rows_for(trace1) if r["reason"].startswith("verify ok")],
                 "fresh Verify must be journaled",
             )
             allowed, _ = self.proxy.state.retry_run(trace1)
             self.assertTrue(allowed, "retry on C after fresh Verify must be allowed")
             self.assertTrue(
-                [r for r in self.rows_for(trace1)
-                 if r["reason"] == "retry allowed after verify"],
+                [r for r in self.rows_for(trace1) if r["reason"] == "retry allowed after verify"],
                 "allowed retry must be journaled",
             )
         finally:

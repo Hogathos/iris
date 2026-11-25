@@ -33,35 +33,47 @@ class TestScaleSensible(unittest.TestCase):
         self.conn.close()
         self.tmp.cleanup()
 
-    def _log_one(self, trace_id="t-1", dest_host="127.0.0.1",
-                 outcome="allowed", status="success"):
+    def _log_one(self, trace_id="t-1", dest_host="127.0.0.1", outcome="allowed", status="success"):
         db_module.log_attempt(
-            self.conn, trace_id=trace_id, task_number=1, attempt=1,
-            status=status, dest_host=dest_host, endpoint="/",
-            method="GET", outcome=outcome)
+            self.conn,
+            trace_id=trace_id,
+            task_number=1,
+            attempt=1,
+            status=status,
+            dest_host=dest_host,
+            endpoint="/",
+            method="GET",
+            outcome=outcome,
+        )
 
     def test_indexes_exist(self):
-        names = {r[0] for r in self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index'")}
+        names = {r[0] for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
         self.assertIn("idx_attempts_trace_id", names)
         self.assertIn("idx_attempts_dest_outcome", names)
 
     def test_trace_lookup_uses_index(self):
         for i in range(20):
             self._log_one(trace_id=f"t-{i % 2}")
-        plan = "\n".join(r[-1] for r in self.conn.execute(
-            "EXPLAIN QUERY PLAN SELECT * FROM attempts "
-            "WHERE trace_id = ? ORDER BY id DESC LIMIT 1", ("t-1",)))
+        plan = "\n".join(
+            r[-1]
+            for r in self.conn.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM attempts WHERE trace_id = ? ORDER BY id DESC LIMIT 1", ("t-1",)
+            )
+        )
         self.assertIn("SEARCH", plan)
         self.assertNotIn("SCAN", plan)
 
     def test_cap_lookup_uses_index(self):
         for i in range(20):
             self._log_one(dest_host=f"127.0.0.{i % 2 + 1}")
-        plan = "\n".join(r[-1] for r in self.conn.execute(
-            "EXPLAIN QUERY PLAN SELECT outcome, dest_host, cost_dollars "
-            "FROM attempts WHERE dest_host = ? AND outcome = 'allowed'",
-            ("127.0.0.1",)))
+        plan = "\n".join(
+            r[-1]
+            for r in self.conn.execute(
+                "EXPLAIN QUERY PLAN SELECT outcome, dest_host, cost_dollars "
+                "FROM attempts WHERE dest_host = ? AND outcome = 'allowed'",
+                ("127.0.0.1",),
+            )
+        )
         self.assertIn("SEARCH", plan)
         self.assertNotIn("SCAN", plan)
 
@@ -76,9 +88,7 @@ class TestScaleSensible(unittest.TestCase):
         self._log_one(trace_id="t-visible")
         other = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         try:
-            rows = other.execute(
-                "SELECT trace_id FROM attempts WHERE trace_id = ?",
-                ("t-visible",)).fetchall()
+            rows = other.execute("SELECT trace_id FROM attempts WHERE trace_id = ?", ("t-visible",)).fetchall()
         finally:
             other.close()
         self.assertEqual([r[0] for r in rows], ["t-visible"])
@@ -89,9 +99,7 @@ class TestScaleSensible(unittest.TestCase):
         self.conn.close()
         reopened = db_module.init_db(self.db_path)
         try:
-            rows = reopened.execute(
-                "SELECT trace_id FROM attempts WHERE trace_id = ?",
-                ("t-survive",)).fetchall()
+            rows = reopened.execute("SELECT trace_id FROM attempts WHERE trace_id = ?", ("t-survive",)).fetchall()
         finally:
             reopened.close()
         self.assertEqual([r[0] for r in rows], ["t-survive"])

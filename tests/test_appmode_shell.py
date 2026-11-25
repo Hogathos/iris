@@ -31,6 +31,7 @@ Qt notes, read before touching this file:
     On a normal user machine it is unnecessary and harmless.
   - One QApplication serves the whole module. Never create a second.
 """
+
 import http.client
 import os
 import socket
@@ -49,8 +50,7 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 # through the egress proxy, which closes it without a response.
 # Append, never pop, so existing bypasses survive.
 for _proxy_key in ("NO_PROXY", "no_proxy"):
-    _seen = [p.strip() for p in os.environ.get(_proxy_key, "").split(",")
-             if p.strip()]
+    _seen = [p.strip() for p in os.environ.get(_proxy_key, "").split(",") if p.strip()]
     for _host in ("127.0.0.1", "localhost"):
         if _host not in _seen:
             _seen.append(_host)
@@ -89,6 +89,7 @@ def _assert_port_free(testcase, port):
 def _app():
     """The one QApplication for this module, offscreen, reused."""
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
@@ -111,9 +112,11 @@ def _delete_window(window):
     window.close()
     if sys.platform == "win32":
         from shiboken6 import delete as _delete_qobject
+
         _delete_qobject(window)
     else:
         from PySide6.QtWidgets import QApplication
+
         window.deleteLater()
         QApplication.sendPostedEvents()
 
@@ -131,12 +134,14 @@ def tearDownModule():
     """
     import gc
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance()
     if app is not None:
         for widget in app.topLevelWidgets():
             widget.close()
         if sys.platform == "win32":
             from shiboken6 import delete as _delete_qobject
+
             _delete_qobject(app)
         else:
             app.deleteLater()
@@ -200,14 +205,10 @@ class PanelUrlTest(unittest.TestCase):
     """The view URL is the loopback panel, tiered."""
 
     def test_simple_is_the_default_tier(self):
-        self.assertEqual(
-            shell_module.panel_url(8000),
-            "http://127.0.0.1:8000/?tier=simple")
+        self.assertEqual(shell_module.panel_url(8000), "http://127.0.0.1:8000/?tier=simple")
 
     def test_advanced_tier_in_the_url(self):
-        self.assertEqual(
-            shell_module.panel_url(8000, "advanced"),
-            "http://127.0.0.1:8000/?tier=advanced")
+        self.assertEqual(shell_module.panel_url(8000, "advanced"), "http://127.0.0.1:8000/?tier=advanced")
 
 
 class ControllerTest(unittest.TestCase):
@@ -218,8 +219,7 @@ class ControllerTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
         self.old_db_path = api_module.DB_PATH
-        self.addCleanup(setattr, api_module, "DB_PATH",
-                        self.old_db_path)
+        self.addCleanup(setattr, api_module, "DB_PATH", self.old_db_path)
         self.addCleanup(self.tmp.cleanup)
         self.controller = None
 
@@ -227,29 +227,26 @@ class ControllerTest(unittest.TestCase):
         if self.controller is not None:
             self.controller.stop()
 
-    def _start(self, panel_port=None, proxy_port=None,
-               instance_name=None):
+    def _start(self, panel_port=None, proxy_port=None, instance_name=None):
         self.controller = shell_module.AppController(
             db_path=self.db_path,
             panel_port=panel_port or _free_port(),
             proxy_port=proxy_port or _free_port(),
-            instance_name=instance_name or
-            f"iris-app-mode-test-{os.getpid()}")
+            instance_name=instance_name or f"iris-app-mode-test-{os.getpid()}",
+        )
         self.assertTrue(self.controller.start())
         return self.controller
 
     def test_start_serves_the_panel_and_the_proxy(self):
         """Start serves the panel page and a proxy that blocks."""
         ctl = self._start()
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", ctl.panel_port, timeout=5)
+        conn = http.client.HTTPConnection("127.0.0.1", ctl.panel_port, timeout=5)
         conn.request("GET", "/?tier=simple")
         resp = conn.getresponse()
         self.assertEqual(resp.status, 200)
         self.assertIn("<h2>Runs</h2>", resp.read().decode())
         conn.close()
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", ctl.proxy_port, timeout=5)
+        conn = http.client.HTTPConnection("127.0.0.1", ctl.proxy_port, timeout=5)
         conn.request("GET", "http://example.com/")
         self.assertEqual(conn.getresponse().status, 403)
         conn.close()
@@ -267,14 +264,12 @@ class ControllerTest(unittest.TestCase):
         """A second controller refuses; the first one sees it."""
         first = self._start()
         second = shell_module.AppController(
-            db_path=self.db_path,
-            panel_port=_free_port(), proxy_port=_free_port(),
-            instance_name=first.instance_name)
+            db_path=self.db_path, panel_port=_free_port(), proxy_port=_free_port(), instance_name=first.instance_name
+        )
         self.assertFalse(second.start())
         self.assertTrue(second.already_running)
         self.assertIsNone(second.panel_port)
-        self.assertTrue(_wait_until(
-            time.time() + 5, lambda: first.second_instance_seen))
+        self.assertTrue(_wait_until(time.time() + 5, lambda: first.second_instance_seen))
 
     def test_port_taken_is_plain_words_and_leaves_nothing(self):
         """A taken panel port fails plainly, with no orphan proxy."""
@@ -286,8 +281,10 @@ class ControllerTest(unittest.TestCase):
         self.addCleanup(held.close)
         ctl = shell_module.AppController(
             db_path=self.db_path,
-            panel_port=panel_port, proxy_port=proxy_port,
-            instance_name=f"iris-app-mode-test-{os.getpid()}-taken")
+            panel_port=panel_port,
+            proxy_port=proxy_port,
+            instance_name=f"iris-app-mode-test-{os.getpid()}-taken",
+        )
         self.assertFalse(ctl.start())
         self.assertIn(str(panel_port), ctl.start_error)
         self.assertNotIn("Traceback", ctl.start_error)
@@ -310,15 +307,13 @@ class WindowTest(unittest.TestCase):
             self.window = None
 
     def _window(self, ask_words=None, ask_confirm=None):
-        self.window = shell_module.IrisWindow(
-            self.controller, seams=self.seams,
-            ask_words=ask_words, ask_confirm=ask_confirm)
+        self.window = shell_module.IrisWindow(self.controller, seams=self.seams, ask_words=ask_words, ask_confirm=ask_confirm)
         return self.window
 
     def _set_run_url(self, trace_id=None):
         from PySide6.QtCore import QUrl
-        url = ("http://127.0.0.1:8000/runs/" + trace_id
-               if trace_id else "http://127.0.0.1:8000/")
+
+        url = "http://127.0.0.1:8000/runs/" + trace_id if trace_id else "http://127.0.0.1:8000/"
         # setUrl updates the view URL synchronously. No event pump:
         # pumping the loop crashes the offscreen WebView2 backend
         # on Windows.
@@ -330,8 +325,7 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(win.verify_button.text(), "Verify")
         self.assertEqual(win.pause_button.text(), "Pause")
         self.assertEqual(win.stop_button.text(), "Emergency stop")
-        for button in (win.verify_button, win.pause_button,
-                       win.stop_button):
+        for button in (win.verify_button, win.pause_button, win.stop_button):
             self.assertIsNot(button.parent(), win.view)
         self.assertIsNotNone(win.view)
         self.assertIn("127.0.0.1:8000", win.view.url().toString())
@@ -351,8 +345,7 @@ class WindowTest(unittest.TestCase):
         for index in range(layout.count()):
             item = layout.itemAt(index)
             widget = item.widget() if item is not None else None
-            if (widget is not None
-                    and widget.windowHandle() is win.view.transientParent()):
+            if widget is not None and widget.windowHandle() is win.view.transientParent():
                 hosted = True
         self.assertTrue(hosted)
 
@@ -385,8 +378,7 @@ class WindowTest(unittest.TestCase):
         win = self._window(ask_words=lambda: "checked the log")
         self._set_run_url("trace-abc")
         win.verify_button.click()
-        self.assertEqual(self.seams.verified,
-                         [("trace-abc", "checked the log")])
+        self.assertEqual(self.seams.verified, [("trace-abc", "checked the log")])
 
     def test_verify_with_no_words_calls_nothing(self):
         """An empty read-back never reaches the seam."""

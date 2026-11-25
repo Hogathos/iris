@@ -1,6 +1,7 @@
 """Networking fundamentals: streaming, chunked, IP forms, smuggling hygiene,
 Upgrade/501, IPv6 parsing, and the trace fields (bytes_tx/rx, close_reason,
 connect_ms/duration_ms, honest CONNECT rows, exact blocked host:port)."""
+
 import http.client
 import json
 import os
@@ -17,7 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 import proxy as proxy_module
 import server as server_module
@@ -25,6 +27,7 @@ import server as server_module
 
 class _StreamHandler(BaseHTTPRequestHandler):
     """SSE-style upstream: headers, one chunk, wait, second chunk, close."""
+
     protocol_version = "HTTP/1.1"
     gate = None
 
@@ -95,25 +98,18 @@ class NetworkingFundamentalsTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.upstream = ThreadingHTTPServer(
-            ("127.0.0.1", 0), server_module.Handler)
+        cls.upstream = ThreadingHTTPServer(("127.0.0.1", 0), server_module.Handler)
         cls.upstream_port = cls.upstream.server_address[1]
-        threading.Thread(target=cls.upstream.serve_forever,
-                         daemon=True).start()
+        threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
         cls.stream_gate = threading.Event()
         _StreamHandler.gate = cls.stream_gate
-        cls.streamer = ThreadingHTTPServer(
-            ("127.0.0.1", 0), _StreamHandler)
+        cls.streamer = ThreadingHTTPServer(("127.0.0.1", 0), _StreamHandler)
         cls.streamer_port = cls.streamer.server_address[1]
-        threading.Thread(target=cls.streamer.serve_forever,
-                         daemon=True).start()
-        cls.chunked = ThreadingHTTPServer(
-            ("127.0.0.1", 0), _ChunkEchoHandler)
+        threading.Thread(target=cls.streamer.serve_forever, daemon=True).start()
+        cls.chunked = ThreadingHTTPServer(("127.0.0.1", 0), _ChunkEchoHandler)
         cls.chunked_port = cls.chunked.server_address[1]
-        threading.Thread(target=cls.chunked.serve_forever,
-                         daemon=True).start()
-        cls.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoTCPHandler)
+        threading.Thread(target=cls.chunked.serve_forever, daemon=True).start()
+        cls.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoTCPHandler)
         cls.echo_port = cls.echo.server_address[1]
         threading.Thread(target=cls.echo.serve_forever, daemon=True).start()
         cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path)
@@ -123,20 +119,22 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.proxy.shutdown(); cls.upstream.shutdown()
-        cls.streamer.shutdown(); cls.chunked.shutdown(); cls.echo.shutdown()
-        for server in (cls.proxy, cls.upstream, cls.streamer,
-                       cls.chunked, cls.echo):
+        cls.proxy.shutdown()
+        cls.upstream.shutdown()
+        cls.streamer.shutdown()
+        cls.chunked.shutdown()
+        cls.echo.shutdown()
+        for server in (cls.proxy, cls.upstream, cls.streamer, cls.chunked, cls.echo):
             server.server_close()
         cls.proxy.state.conn.close()
         cls.tmp.cleanup()
 
     def rows(self, trace):
         import sqlite3
+
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        out = [r for r in conn.execute(
-            "SELECT * FROM attempts ORDER BY id") if r["trace_id"] == trace]
+        out = [r for r in conn.execute("SELECT * FROM attempts ORDER BY id") if r["trace_id"] == trace]
         conn.close()
         return out
 
@@ -152,8 +150,7 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     def raw(self, text):
         """One raw request through the proxy; returns (status, head, body)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=10)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=10)
         sock.sendall(text.encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
@@ -210,8 +207,16 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     def test_ip_spellings_allowed_non_loopback_blocked(self):
         state = self.proxy.state
-        for raw in ("127.0.0.1", "0x7f.0.0.1", "2130706433", "0177.0.0.1",
-                    "::ffff:127.0.0.1", "127.1", "127.0.0.1.", "LOCALHOST"):
+        for raw in (
+            "127.0.0.1",
+            "0x7f.0.0.1",
+            "2130706433",
+            "0177.0.0.1",
+            "::ffff:127.0.0.1",
+            "127.1",
+            "127.0.0.1.",
+            "LOCALHOST",
+        ):
             with self.subTest(raw=raw):
                 self.assertTrue(state.is_allowed(raw, 18080))
         self.assertFalse(state.is_allowed("127.0.0.2", 18080))
@@ -219,11 +224,10 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     def test_allowlist_port_entry_with_ip_spelling(self):
         import sqlite3
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        state = proxy_module.ProxyState(
-            os.path.join(tmp.name, "t.db"),
-            allowlist=["0x7f.0.0.1:18080"])
+        state = proxy_module.ProxyState(os.path.join(tmp.name, "t.db"), allowlist=["0x7f.0.0.1:18080"])
         self.assertTrue(state.is_allowed("2130706433", 18080))
         self.assertFalse(state.is_allowed("2130706433", 18081))
         state.conn.close()
@@ -238,8 +242,7 @@ class NetworkingFundamentalsTest(unittest.TestCase):
         self.assertEqual(split("[::1]", 80), ("::1", 80))
         self.assertEqual(split("::1", 80), ("::1", 80))
         self.assertEqual(split("fe80::1", 443), ("fe80::1", 443))
-        for bad in ("example.com:abc", "example.com:", "[::1",
-                    "[::1]x8080", "example.com:99999"):
+        for bad in ("example.com:abc", "example.com:", "[::1", "[::1]x8080", "example.com:99999"):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
                     split(bad, 80)
@@ -247,9 +250,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
     def test_ipv6_bracketed_host_header_reaches_allowlist(self):
         # Origin-form: the Host header is the only destination source.
         status, headers, _ = self.raw(
-            "GET /echo HTTP/1.1\r\n"
-            f"Host: [::1]:{self.upstream_port}\r\n"
-            "X-Trace-Id: trace-ipv6-bracket\r\n\r\n")
+            f"GET /echo HTTP/1.1\r\nHost: [::1]:{self.upstream_port}\r\nX-Trace-Id: trace-ipv6-bracket\r\n\r\n"
+        )
         row = self.rows("trace-ipv6-bracket")[-1]
         self.assertEqual(row["dest_host"], f"[::1]:{self.upstream_port}")
 
@@ -260,7 +262,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
             f"POST {self.base}/echo HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{self.upstream_port}\r\n"
             "Content-Length: 0\r\nContent-Length: 0\r\n"
-            "X-Trace-Id: trace-dup-cl\r\n\r\n")
+            "X-Trace-Id: trace-dup-cl\r\n\r\n"
+        )
         self.assertEqual(status, 400)
         self.assertEqual(headers.get("x-trace-id"), "trace-dup-cl")
         row = self.rows("trace-dup-cl")[-1]
@@ -274,7 +277,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
             f"POST {self.base}/echo HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{self.upstream_port}\r\n"
             "Content-Length: 5\r\nTransfer-Encoding: chunked\r\n"
-            "X-Trace-Id: trace-cl-te\r\n\r\n0\r\n\r\n")
+            "X-Trace-Id: trace-cl-te\r\n\r\n0\r\n\r\n"
+        )
         self.assertEqual(status, 400)
         row = self.rows("trace-cl-te")[-1]
         self.assertEqual(row["reason"], "content_length_with_transfer_encoding")
@@ -284,7 +288,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
             f"POST {self.base}/echo HTTP/1.1\r\n"
             f"Host: 127.0.0.1:{self.upstream_port}\r\n"
             "Content-Length: 99999999\r\n"
-            "X-Trace-Id: trace-big-1\r\n\r\n")
+            "X-Trace-Id: trace-big-1\r\n\r\n"
+        )
         self.assertEqual(status, 413)
         self.assertEqual(headers.get("x-trace-id"), "trace-big-1")
         row = self.rows("trace-big-1")[-1]
@@ -295,11 +300,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
     # -- Upgrade and unknown methods: plain-words 501 plus a row. --
 
     def test_upgrade_on_plain_http_needs_connect(self):
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
-        conn.request("GET", f"{self.base}/echo",
-                     headers={"Upgrade": "websocket",
-                              "X-Trace-Id": "trace-upgrade-1"})
+        conn = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
+        conn.request("GET", f"{self.base}/echo", headers={"Upgrade": "websocket", "X-Trace-Id": "trace-upgrade-1"})
         resp = conn.getresponse()
         body = resp.read()
         conn.close()
@@ -311,9 +313,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     def test_unimplemented_method_logged_not_silent(self):
         status, headers, body = self.raw(
-            f"FROB {self.base}/echo HTTP/1.1\r\n"
-            f"Host: 127.0.0.1:{self.upstream_port}\r\n"
-            "X-Trace-Id: trace-frob-1\r\n\r\n")
+            f"FROB {self.base}/echo HTTP/1.1\r\nHost: 127.0.0.1:{self.upstream_port}\r\nX-Trace-Id: trace-frob-1\r\n\r\n"
+        )
         self.assertEqual(status, 501)
         self.assertEqual(headers.get("x-trace-id"), "trace-frob-1")
         self.assertIn("FROB", body.decode())
@@ -325,8 +326,7 @@ class NetworkingFundamentalsTest(unittest.TestCase):
     # -- Chunked requests reach the upstream intact. --
 
     def test_chunked_request_forwarded(self):
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=10)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=10)
         payload = b"hello-chunked-world"
         sock.sendall(
             f"POST http://127.0.0.1:{self.chunked_port}/echo HTTP/1.1\r\n"
@@ -334,7 +334,10 @@ class NetworkingFundamentalsTest(unittest.TestCase):
             "Transfer-Encoding: chunked\r\n"
             "Content-Type: text/plain\r\n"
             "X-Trace-Id: trace-chunked-1\r\n\r\n"
-            f"{len(payload):X}\r\n".encode() + payload + b"\r\n0\r\n\r\n")
+            f"{len(payload):X}\r\n".encode()
+            + payload
+            + b"\r\n0\r\n\r\n"
+        )
         raw = b""
         while b"\r\n\r\n" not in raw:
             raw += sock.recv(65536)
@@ -360,12 +363,14 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     def test_sse_first_chunk_streams_before_upstream_finishes(self):
         self.stream_gate.clear()
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=10)
-        sock.sendall((
-            f"GET http://127.0.0.1:{self.streamer_port}/stream HTTP/1.1\r\n"
-            f"Host: 127.0.0.1:{self.streamer_port}\r\n"
-            "X-Trace-Id: trace-stream-1\r\n\r\n").encode())
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=10)
+        sock.sendall(
+            (
+                f"GET http://127.0.0.1:{self.streamer_port}/stream HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{self.streamer_port}\r\n"
+                "X-Trace-Id: trace-stream-1\r\n\r\n"
+            ).encode()
+        )
         raw = b""
         while b"\r\n\r\n" not in raw:
             raw += sock.recv(65536)
@@ -404,10 +409,9 @@ class NetworkingFundamentalsTest(unittest.TestCase):
     def test_success_row_carries_tx_rx_timing_and_reason(self):
         data = b'{"probe": 1}'
         req = urllib.request.Request(
-            self.base + "/echo", data=data, method="POST",
-            headers={"Content-Type": "application/json"})
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-            {"http": f"http://127.0.0.1:{self.proxy_port}"}))
+            self.base + "/echo", data=data, method="POST", headers={"Content-Type": "application/json"}
+        )
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{self.proxy_port}"}))
         trace = "trace-fields-1"
         req.add_header("X-Trace-Id", trace)
         with opener.open(req, timeout=10) as resp:
@@ -429,10 +433,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
         dead.bind(("127.0.0.1", 0))
         port = dead.getsockname()[1]
         dead.close()
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
-        conn.request("GET", f"http://127.0.0.1:{port}/echo",
-                     headers={"X-Trace-Id": "trace-reset-1"})
+        conn = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
+        conn.request("GET", f"http://127.0.0.1:{port}/echo", headers={"X-Trace-Id": "trace-reset-1"})
         resp = conn.getresponse()
         resp.read()
         conn.close()
@@ -443,10 +445,8 @@ class NetworkingFundamentalsTest(unittest.TestCase):
         self.assertIsNotNone(row["connect_ms"])
 
     def test_blocked_row_names_exact_host_port(self):
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", self.proxy_port, timeout=10)
-        conn.request("GET", "http://10.9.9.9:1234/echo",
-                     headers={"X-Trace-Id": "trace-blocked-port"})
+        conn = http.client.HTTPConnection("127.0.0.1", self.proxy_port, timeout=10)
+        conn.request("GET", "http://10.9.9.9:1234/echo", headers={"X-Trace-Id": "trace-blocked-port"})
         resp = conn.getresponse()
         resp.read()
         conn.close()
@@ -458,9 +458,7 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     def test_rate_limited_row_carries_reason(self):
         tmp = tempfile.TemporaryDirectory()
-        limited = proxy_module.serve(
-            "127.0.0.1", 0, os.path.join(tmp.name, "limited.db"),
-            rate_limit=1, rate_window=60)
+        limited = proxy_module.serve("127.0.0.1", 0, os.path.join(tmp.name, "limited.db"), rate_limit=1, rate_window=60)
         port = limited.server_address[1]
         threading.Thread(target=limited.serve_forever, daemon=True).start()
         # Cleanups run last-added first, so add them in reverse stop order.
@@ -468,8 +466,7 @@ class NetworkingFundamentalsTest(unittest.TestCase):
         self.addCleanup(limited.state.conn.close)
         self.addCleanup(limited.server_close)
         self.addCleanup(limited.shutdown)
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-            {"http": f"http://127.0.0.1:{port}"}))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{port}"}))
 
         def get(trace):
             req = urllib.request.Request(self.base + "/echo")
@@ -483,10 +480,10 @@ class NetworkingFundamentalsTest(unittest.TestCase):
         self.assertEqual(get("trace-limit-1"), 200)
         self.assertEqual(get("trace-limit-2"), 429)
         import sqlite3
+
         conn = sqlite3.connect(os.path.join(tmp.name, "limited.db"))
         conn.row_factory = sqlite3.Row
-        rows = [r for r in conn.execute("SELECT * FROM attempts")
-                if r["trace_id"] == "trace-limit-2"]
+        rows = [r for r in conn.execute("SELECT * FROM attempts") if r["trace_id"] == "trace-limit-2"]
         conn.close()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["outcome"], "rate_limited")
@@ -496,12 +493,9 @@ class NetworkingFundamentalsTest(unittest.TestCase):
 
     def test_connect_tunnel_is_one_honest_row(self):
         payload = b"tunnel-bytes-12345"
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=10)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=10)
         dest = f"127.0.0.1:{self.echo_port}"
-        sock.sendall(
-            f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\n"
-            "X-Trace-Id: trace-tunnel-1\r\n\r\n".encode())
+        sock.sendall(f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: trace-tunnel-1\r\n\r\n".encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             raw += sock.recv(65536)
@@ -523,30 +517,27 @@ class NetworkingFundamentalsTest(unittest.TestCase):
         self.assertGreaterEqual(row["bytes_tx"], len(payload))
         self.assertGreaterEqual(row["bytes_rx"], len(payload))
         self.assertIsNotNone(row["connect_ms"])
-        self.assertGreaterEqual(
-            row["duration_ms"], row["connect_ms"])
+        self.assertGreaterEqual(row["duration_ms"], row["connect_ms"])
 
     # -- The dashboard API exposes the new fields. --
 
     def test_trace_api_exposes_new_fields(self):
         import api as api_module
+
         old_path = api_module.DB_PATH
         api_module.DB_PATH = self.db_path
         self.addCleanup(setattr, api_module, "DB_PATH", old_path)
         traces = api_module.list_traces()["traces"]
         by_trace = {t["trace_id"]: t for t in traces}
         self.assertIn("trace-chunked-1", by_trace)
-        for key in ("bytes_tx", "bytes_rx", "close_reason",
-                    "connect_ms", "duration_ms"):
+        for key in ("bytes_tx", "bytes_rx", "close_reason", "connect_ms", "duration_ms"):
             self.assertIn(key, by_trace["trace-chunked-1"])
         self.assertIn("tunnels", by_trace["trace-tunnel-1"])
         self.assertEqual(by_trace["trace-tunnel-1"]["tunnels"], 1)
         detail = api_module.get_trace("trace-chunked-1")
-        for key in ("bytes_tx", "bytes_rx", "close_reason",
-                    "connect_ms", "duration_ms"):
+        for key in ("bytes_tx", "bytes_rx", "close_reason", "connect_ms", "duration_ms"):
             self.assertIn(key, detail["attempts"][0])
-        tunnels = [t for t in traces
-                   if t["method"] == "CONNECT"]
+        tunnels = [t for t in traces if t["method"] == "CONNECT"]
         self.assertTrue(tunnels)
 
 

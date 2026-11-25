@@ -44,6 +44,7 @@ implementation is written.
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -94,19 +95,15 @@ class SteerNetworkOverrideTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, two loopback destinations."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        self.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         threading.Thread(target=self.echoA.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoB.serve_forever, daemon=True).start()
         # Gap 1: rate limiting has its own tests; this proxy serves a
         # high limit so a 429 never masks the 503 cut refusal below.
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         # addCleanup runs LIFO: shutdowns are added last so they run
         # first then closes, then DB, then temp. Closing a listening
         # socket while serve_forever still selects on it crashes
@@ -128,9 +125,7 @@ class SteerNetworkOverrideTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,)).fetchall()
+            return conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,)).fetchall()
         finally:
             conn.close()
 
@@ -139,24 +134,15 @@ class SteerNetworkOverrideTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(
-                "SELECT * FROM attempts ORDER BY id").fetchall()
+            return conn.execute("SELECT * FROM attempts ORDER BY id").fetchall()
         finally:
             conn.close()
 
     def open_tunnel(self, dest, trace_id):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -221,37 +207,28 @@ class SteerNetworkOverrideTest(unittest.TestCase):
                 hasattr(self.proxy.state, "set_override"),
                 "Override endpoint does not exist (expected failure, test-first)",
             )
-            applied = self.proxy.state.set_override(
-                self.destA, "pause", reason="human override")
+            applied = self.proxy.state.set_override(self.destA, "pause", reason="human override")
             self.assertTrue(applied, "set_override refused net A")
             # Gap 5: a non-allowlisted name is refused AND journaled,
             # dest = the name as given, outcome blocked. No live tunnel
             # is cut for it, no pause row either.
             self.assertFalse(
-                self.proxy.state.set_override(
-                    "exfil.example.test:9999", "pause",
-                    reason="human override"),
+                self.proxy.state.set_override("exfil.example.test:9999", "pause", reason="human override"),
                 "non-allowlisted override must be refused",
             )
             # The refusal names a destination, not a Run: it journals
             # under its own override-attempt trace, exactly one row, and
             # touches no Run's history.
             refused = [
-                r for r in self.rows_for(
-                    "override::exfil.example.test:9999")
-                if r["reason"] == "non-allowlisted override name"
+                r for r in self.rows_for("override::exfil.example.test:9999") if r["reason"] == "non-allowlisted override name"
             ]
-            self.assertEqual(len(refused), 1,
-                             "exactly one row for the refused attempt")
-            self.assertEqual(
-                refused[0]["dest_host"], "exfil.example.test:9999")
+            self.assertEqual(len(refused), 1, "exactly one row for the refused attempt")
+            self.assertEqual(refused[0]["dest_host"], "exfil.example.test:9999")
             self.assertEqual(refused[0]["outcome"], "blocked")
             self.assertEqual(refused[-1]["outcome"], "blocked")
+            self.assertEqual(refused[-1]["dest_host"], "exfil.example.test:9999")
             self.assertEqual(
-                refused[-1]["dest_host"], "exfil.example.test:9999")
-            self.assertEqual(
-                [r for r in self.rows_for("exfil.example.test:9999")
-                 if r["outcome"] == "paused"],
+                [r for r in self.rows_for("exfil.example.test:9999") if r["outcome"] == "paused"],
                 [],
                 "no pause row for the refused name",
             )
@@ -270,17 +247,12 @@ class SteerNetworkOverrideTest(unittest.TestCase):
                 self.echo_roundtrip(sockB, b"run-still-on-B"),
                 b"run-still-on-B",
             )
-            pause_rows = [
-                r for r in self.rows_for(traceA)
-                if r["outcome"] == "paused"
-            ]
+            pause_rows = [r for r in self.rows_for(traceA) if r["outcome"] == "paused"]
             self.assertTrue(pause_rows, "override must journal a pause row")
             pause_row = pause_rows[-1]
             self.assertEqual(pause_row["dest_host"], self.destA)
             self.assertEqual(pause_row["reason"], "human override")
-            self.assertEqual(
-                pause_row["status"], "unknown",
-                "override verdict must be Unverified, explicitly")
+            self.assertEqual(pause_row["status"], "unknown", "override verdict must be Unverified, explicitly")
             # Gap 10: pause rows cost $0.00, never the tunnel's cost.
             self.assertEqual(api_module.attempt_cost(pause_row), 0.0)
             # Gap 9: B has no pause row by trace_id AND by dest_host,
@@ -292,9 +264,7 @@ class SteerNetworkOverrideTest(unittest.TestCase):
             )
             all_rows = self.rows_all()
             self.assertEqual(
-                [r for r in all_rows
-                 if r["dest_host"] == self.destB
-                 and r["outcome"] == "paused"],
+                [r for r in all_rows if r["dest_host"] == self.destB and r["outcome"] == "paused"],
                 [],
                 "no paused row names B's destination",
             )
@@ -305,11 +275,16 @@ class SteerNetworkOverrideTest(unittest.TestCase):
                 conn.close()
             total = len(all_rows)
             self.assertEqual(
-                counts["allowed"] + counts["blocked"]
-                + counts["rate_limited"] + counts["paused"]
-                + counts["redirected"] + counts["stopped"]
-                + counts["verified"] + counts["other"],
-                total)
+                counts["allowed"]
+                + counts["blocked"]
+                + counts["rate_limited"]
+                + counts["paused"]
+                + counts["redirected"]
+                + counts["stopped"]
+                + counts["verified"]
+                + counts["other"],
+                total,
+            )
 
             # Step 5: Gap 4, Verify gate. A Correct verdict alone never
             # unblocks a retry; only verify_run stamps permission. So a
@@ -324,18 +299,19 @@ class SteerNetworkOverrideTest(unittest.TestCase):
                 os.fsync(proof.fileno())
             verdict, _ = self.proxy.state.verify_read_back(
                 traceA,
-                {"kind": "local-file", "path": proof_path,
-                 "expected_text": "row exists after close/fsync",
-                 "idempotency_key": "override-verify-1"},
-                done_clause=done)
+                {
+                    "kind": "local-file",
+                    "path": proof_path,
+                    "expected_text": "row exists after close/fsync",
+                    "idempotency_key": "override-verify-1",
+                },
+                done_clause=done,
+            )
             self.assertEqual(verdict, "Correct")
             allowed, why = self.proxy.state.retry_run(traceA)
             self.assertFalse(allowed, "retry without Verify must be blocked")
             self.assertIn("verify", why.lower())
-            blocked_rows = [
-                r for r in self.rows_for(traceA)
-                if r["reason"] == "verify required before retry"
-            ]
+            blocked_rows = [r for r in self.rows_for(traceA) if r["reason"] == "verify required before retry"]
             self.assertTrue(blocked_rows, "blocked retry must be journaled")
             self.assertEqual(api_module.attempt_cost(blocked_rows[-1]), 0.0)
         finally:

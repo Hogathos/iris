@@ -3,6 +3,7 @@
 Verifies that repository root metadata files exist, follow semantic
 versioning, and document the initial release.
 """
+
 import os
 import re
 import unittest

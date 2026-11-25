@@ -7,6 +7,7 @@ refuses in plain words and starts nothing.
 Loopback only. Metadata only. No bodies, no keys. This module never
 sets QT_QPA_PLATFORM: a real window needs a real display.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,17 +48,14 @@ def _ensure_stdio():
 
 _ensure_stdio()
 
-from appmode.shell import (
-    DEFAULT_PANEL_PORT, DEFAULT_PROXY_PORT, AppController, IrisWindow)
+from appmode.shell import DEFAULT_PANEL_PORT, DEFAULT_PROXY_PORT, AppController, IrisWindow
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Command line for the app: ports, journal, instance name."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--panel-port", type=int,
-                        default=DEFAULT_PANEL_PORT)
-    parser.add_argument("--proxy-port", type=int,
-                        default=DEFAULT_PROXY_PORT)
+    parser.add_argument("--panel-port", type=int, default=DEFAULT_PANEL_PORT)
+    parser.add_argument("--proxy-port", type=int, default=DEFAULT_PROXY_PORT)
     parser.add_argument("--db", default=None)
     parser.add_argument("--instance-name", default="iris-app-mode")
     return parser
@@ -70,8 +68,8 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     app = QApplication(sys.argv)
     controller = AppController(
-        db_path=args.db, panel_port=args.panel_port,
-        proxy_port=args.proxy_port, instance_name=args.instance_name)
+        db_path=args.db, panel_port=args.panel_port, proxy_port=args.proxy_port, instance_name=args.instance_name
+    )
     if not controller.start():
         if controller.already_running:
             print("Iris is already running on this machine.")

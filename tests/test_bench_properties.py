@@ -4,6 +4,7 @@ Five properties, each runnable alone (`pytest tests/test_bench_properties.py -k 
 No scores, no judges: each property states one rule and checks it over
 generated inputs. Hypothesis is a test dependency only.
 """
+
 import os
 import socket
 import socketserver
@@ -46,11 +47,26 @@ class AccountingPropertyTest(unittest.TestCase):
     """Outcome accounting always reconciles, for any mix of outcomes."""
 
     @_no_db_cache
-    @given(st.lists(
-        st.sampled_from(["allowed", "blocked", "rate_limited", "paused",
-                         "redirected", "stopped", "verified", "",
-                         "legacy-outcome", "OTHER"]),
-        min_size=0, max_size=25))
+    @given(
+        st.lists(
+            st.sampled_from(
+                [
+                    "allowed",
+                    "blocked",
+                    "rate_limited",
+                    "paused",
+                    "redirected",
+                    "stopped",
+                    "verified",
+                    "",
+                    "legacy-outcome",
+                    "OTHER",
+                ]
+            ),
+            min_size=0,
+            max_size=25,
+        )
+    )
     def test_outcome_counts_always_reconcile(self, outcomes):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -58,18 +74,30 @@ class AccountingPropertyTest(unittest.TestCase):
         self.addCleanup(conn.close)
         for i, outcome in enumerate(outcomes):
             db_module.log_attempt(
-                conn, trace_id=f"bench-t-{i % 5}", task_number=1,
-                attempt=1, status="success", dest_host="127.0.0.1",
-                endpoint="/x", method="GET", outcome=outcome)
+                conn,
+                trace_id=f"bench-t-{i % 5}",
+                task_number=1,
+                attempt=1,
+                status="success",
+                dest_host="127.0.0.1",
+                endpoint="/x",
+                method="GET",
+                outcome=outcome,
+            )
         counts = db_module.fetch_outcome_counts(conn)
         total = conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
         self.assertEqual(total, len(outcomes))
         self.assertEqual(
-            counts["allowed"] + counts["blocked"]
-            + counts["rate_limited"] + counts["paused"]
-            + counts["redirected"] + counts["stopped"]
-            + counts["verified"] + counts["other"],
-            total)
+            counts["allowed"]
+            + counts["blocked"]
+            + counts["rate_limited"]
+            + counts["paused"]
+            + counts["redirected"]
+            + counts["stopped"]
+            + counts["verified"]
+            + counts["other"],
+            total,
+        )
 
 
 class CostPropertyTest(unittest.TestCase):
@@ -79,20 +107,18 @@ class CostPropertyTest(unittest.TestCase):
 
     @_no_db_cache
     @given(
-        outcome=st.sampled_from(["allowed", "blocked", "rate_limited",
-                                 "paused", "redirected", "stopped",
-                                 "verified", "", "legacy"]),
-        dest=st.sampled_from(["127.0.0.1", "127.0.0.1:8888", "localhost",
-                              "::1", "[::1]:9000", "pay.example.com",
-                              "exfil.example.test"]),
-        cost=st.floats(allow_nan=False, allow_infinity=False,
-                       min_value=0.0, max_value=10.0))
+        outcome=st.sampled_from(
+            ["allowed", "blocked", "rate_limited", "paused", "redirected", "stopped", "verified", "", "legacy"]
+        ),
+        dest=st.sampled_from(
+            ["127.0.0.1", "127.0.0.1:8888", "localhost", "::1", "[::1]:9000", "pay.example.com", "exfil.example.test"]
+        ),
+        cost=st.floats(allow_nan=False, allow_infinity=False, min_value=0.0, max_value=10.0),
+    )
     def test_priced_cost_rules(self, outcome, dest, cost):
-        row = {"outcome": outcome, "status": "success",
-               "dest_host": dest, "cost_dollars": cost}
+        row = {"outcome": outcome, "status": "success", "dest_host": dest, "cost_dollars": cost}
         got = api_module.attempt_cost(row)
-        if outcome in ("blocked", "rate_limited", "paused",
-                       "redirected", "stopped", "verified"):
+        if outcome in ("blocked", "rate_limited", "paused", "redirected", "stopped", "verified"):
             self.assertEqual(got, 0.0)
         elif cost:
             self.assertEqual(got, cost)
@@ -113,15 +139,13 @@ class LiveProxyPropertyBase(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        cls.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         cls.echo_port = cls.echo.server_address[1]
         threading.Thread(target=cls.echo.serve_forever, daemon=True).start()
         # High rate limit: rate limiting has its own tests; these
         # properties must never trip it, or a 429 would mask the 503
         # cut refusal the assertions check for.
-        cls.proxy = proxy_module.serve(
-            "127.0.0.1", 0, cls.db_path, rate_limit=10000)
+        cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path, rate_limit=10000)
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.dest = f"127.0.0.1:{cls.echo_port}"
@@ -140,19 +164,14 @@ class LiveProxyPropertyBase(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,)).fetchall()
+            return conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,)).fetchall()
         finally:
             conn.close()
 
     def open_tunnel(self, dest, trace_id):
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\n"
-             f"X-Trace-Id: {trace_id}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -187,15 +206,13 @@ class PauseDestPropertyTest(LiveProxyPropertyBase):
     """Pause rows name the live destination, never '', for any trace."""
 
     @settings(max_examples=30, deadline=None, database=None)
-    @given(st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789",
-                   min_size=1, max_size=12))
+    @given(st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=1, max_size=12))
     def test_pause_row_names_live_destination(self, slug):
         trace = self.fresh_trace(f"dest-{slug}")
         sock = self.open_tunnel(self.dest, trace)[0]
         try:
             self.assertTrue(self.proxy.state.pause_run(trace))
-            rows = [r for r in self.rows_for(trace)
-                    if r["outcome"] == "paused"]
+            rows = [r for r in self.rows_for(trace) if r["outcome"] == "paused"]
             self.assertTrue(rows, "pause must be journaled")
             self.assertEqual(rows[-1]["dest_host"], self.dest)
         finally:
@@ -207,20 +224,22 @@ class JournalBeforeCutPropertyTest(LiveProxyPropertyBase):
     returns, and no new tunnel opens after, for any set of runs."""
 
     @settings(max_examples=20, deadline=None, database=None)
-    @given(st.lists(
-        st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789",
-                min_size=1, max_size=8),
-        min_size=1, max_size=8, unique=True))
+    @given(
+        st.lists(
+            st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=1, max_size=8),
+            min_size=1,
+            max_size=8,
+            unique=True,
+        )
+    )
     def test_pause_journals_before_cutting(self, slugs):
         traces = [self.fresh_trace(f"cut-{s}") for s in slugs]
         socks = [self.open_tunnel(self.dest, t)[0] for t in traces]
         try:
             for trace in traces:
-                self.assertTrue(
-                    self.proxy.state.pause_run(trace, reason="human pause"))
+                self.assertTrue(self.proxy.state.pause_run(trace, reason="human pause"))
             for trace in traces:
-                rows = [r for r in self.rows_for(trace)
-                        if r["outcome"] == "paused"]
+                rows = [r for r in self.rows_for(trace) if r["outcome"] == "paused"]
                 self.assertTrue(rows, f"no pause row for {trace}")
                 self.assertEqual(rows[0]["dest_host"], self.dest)
             for trace in traces:

@@ -51,6 +51,7 @@ Tests use a temp home dir, never the real one. Config paths come
 from the module, given a home dir, so the same test runs on all
 three OSes in CI.
 """
+
 import json
 import os
 import sys
@@ -129,65 +130,48 @@ class ConnectTest(unittest.TestCase):
             return f.read()
 
     def test_claude_connect_writes_proxy_and_backs_up(self):
-        path = self._write(
-            "claude-code", json.dumps(_claude_settings()))
+        path = self._write("claude-code", json.dumps(_claude_settings()))
         original = self._read(path)
-        result = connect_module.connect_agent(
-            "claude-code", PROXY_URL, self.home)
+        result = connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         # The config now carries the Iris proxy.
         settings = json.loads(self._read(path))
-        self.assertEqual(
-            settings["env"]["HTTP_PROXY"], PROXY_URL)
-        self.assertEqual(
-            settings["env"]["HTTPS_PROXY"], PROXY_URL)
+        self.assertEqual(settings["env"]["HTTP_PROXY"], PROXY_URL)
+        self.assertEqual(settings["env"]["HTTPS_PROXY"], PROXY_URL)
         # The backup holds the original content, byte for byte.
-        self.assertEqual(
-            self._read(path + ".iris-backup"), original)
+        self.assertEqual(self._read(path + ".iris-backup"), original)
         # The result is plain words: agent, file, change.
         self.assertIn("Claude Code", result)
         self.assertIn(path, result)
         self.assertIn(PROXY_URL, result)
 
     def test_cursor_connect_writes_proxy_and_backs_up(self):
-        path = self._write(
-            "cursor", json.dumps(_cursor_settings()))
+        path = self._write("cursor", json.dumps(_cursor_settings()))
         original = self._read(path)
-        result = connect_module.connect_agent(
-            "cursor", PROXY_URL, self.home)
+        result = connect_module.connect_agent("cursor", PROXY_URL, self.home)
         settings = json.loads(self._read(path))
         self.assertEqual(settings["http.proxy"], PROXY_URL)
-        self.assertEqual(
-            settings["http.proxySupport"], "override")
-        self.assertEqual(
-            self._read(path + ".iris-backup"), original)
+        self.assertEqual(settings["http.proxySupport"], "override")
+        self.assertEqual(self._read(path + ".iris-backup"), original)
         self.assertIn("Cursor", result)
         self.assertIn(PROXY_URL, result)
 
     def test_continue_connect_writes_proxy_and_backs_up(self):
-        path = self._write(
-            "continue", json.dumps(_continue_config()))
+        path = self._write("continue", json.dumps(_continue_config()))
         original = self._read(path)
-        result = connect_module.connect_agent(
-            "continue", PROXY_URL, self.home)
+        result = connect_module.connect_agent("continue", PROXY_URL, self.home)
         # The module parses YAML, so read the file back as YAML
         # through the module's own reader, not as JSON.
         config = connect_module.read_config("continue", path)
-        self.assertEqual(
-            config["models"][0]["requestOptions"]["proxy"],
-            PROXY_URL)
-        self.assertEqual(
-            self._read(path + ".iris-backup"), original)
+        self.assertEqual(config["models"][0]["requestOptions"]["proxy"], PROXY_URL)
+        self.assertEqual(self._read(path + ".iris-backup"), original)
         self.assertIn("Continue", result)
         self.assertIn(PROXY_URL, result)
 
     def test_connect_refuses_when_proxy_already_set(self):
-        path = self._write(
-            "claude-code",
-            json.dumps(_claude_settings(EXISTING_PROXY_URL)))
+        path = self._write("claude-code", json.dumps(_claude_settings(EXISTING_PROXY_URL)))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "claude-code", PROXY_URL, self.home)
+            connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         # Plain words: the refusal names the existing proxy.
         self.assertIn(EXISTING_PROXY_URL, str(ctx.exception))
         # Nothing changed, and no backup was made.
@@ -196,39 +180,31 @@ class ConnectTest(unittest.TestCase):
 
     def test_connect_refuses_unknown_agent(self):
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "not-an-agent", PROXY_URL, self.home)
+            connect_module.connect_agent("not-an-agent", PROXY_URL, self.home)
         self.assertIn("not-an-agent", str(ctx.exception))
 
     def test_connect_refuses_missing_config(self):
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "claude-code", PROXY_URL, self.home)
+            connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         self.assertIn("Claude Code", str(ctx.exception))
 
     def test_disconnect_restores_backup(self):
-        path = self._write(
-            "claude-code", json.dumps(_claude_settings()))
+        path = self._write("claude-code", json.dumps(_claude_settings()))
         original = self._read(path)
-        connect_module.connect_agent(
-            "claude-code", PROXY_URL, self.home)
+        connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         self.assertNotEqual(self._read(path), original)
-        result = connect_module.disconnect_agent(
-            "claude-code", self.home)
+        result = connect_module.disconnect_agent("claude-code", self.home)
         # The config is back to the original content, byte for byte.
         self.assertEqual(self._read(path), original)
         self.assertIn("Claude Code", result)
 
     def test_disconnect_refuses_when_not_connected(self):
-        path = self._write(
-            "claude-code", json.dumps(_claude_settings()))
+        path = self._write("claude-code", json.dumps(_claude_settings()))
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.disconnect_agent(
-                "claude-code", self.home)
+            connect_module.disconnect_agent("claude-code", self.home)
         self.assertIn("Claude Code", str(ctx.exception))
         # The config is untouched.
-        self.assertEqual(
-            self._read(path), json.dumps(_claude_settings()))
+        self.assertEqual(self._read(path), json.dumps(_claude_settings()))
 
     def test_config_path_is_under_home(self):
         # The path must stay inside the given home dir, never the
@@ -236,18 +212,15 @@ class ConnectTest(unittest.TestCase):
         for agent_id in ("claude-code", "cursor", "continue"):
             path = connect_module.config_path(agent_id, self.home)
             self.assertTrue(
-                os.path.abspath(path).startswith(
-                    os.path.abspath(self.home)),
-                f"{agent_id} path escapes home: {path}")
+                os.path.abspath(path).startswith(os.path.abspath(self.home)), f"{agent_id} path escapes home: {path}"
+            )
 
     def test_connect_result_does_not_leak_secrets(self):
         # The Continue config holds a model apiKey. The result
         # must not carry it: the read-back names the proxy only,
         # never the whole config.
-        path = self._write(
-            "continue", json.dumps(_continue_config()))
-        result = connect_module.connect_agent(
-            "continue", PROXY_URL, self.home)
+        path = self._write("continue", json.dumps(_continue_config()))
+        result = connect_module.connect_agent("continue", PROXY_URL, self.home)
         self.assertNotIn("sk-test-only", result)
         self.assertIn(PROXY_URL, result)
 
@@ -258,8 +231,7 @@ class ConnectTest(unittest.TestCase):
         path = self._write("continue", json.dumps({"models": []}))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "continue", PROXY_URL, self.home)
+            connect_module.connect_agent("continue", PROXY_URL, self.home)
         self.assertIn("Continue", str(ctx.exception))
         # Nothing changed, and no backup was made.
         self.assertEqual(self._read(path), original)
@@ -272,8 +244,7 @@ class ConnectTest(unittest.TestCase):
         settings = _claude_settings()
         settings["env"] = {"NO_PROXY": "example.com"}
         path = self._write("claude-code", json.dumps(settings))
-        connect_module.connect_agent(
-            "claude-code", PROXY_URL, self.home)
+        connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         settings = json.loads(self._read(path))
         no_proxy = settings["env"]["NO_PROXY"]
         self.assertIn("example.com", no_proxy)
@@ -283,11 +254,9 @@ class ConnectTest(unittest.TestCase):
     def test_continue_connect_appends_loopback_to_no_proxy(self):
         # An existing noProxy list without localhost must gain it.
         config = _continue_config()
-        config["models"][0]["requestOptions"] = {
-            "noProxy": ["example.com"]}
+        config["models"][0]["requestOptions"] = {"noProxy": ["example.com"]}
         path = self._write("continue", json.dumps(config))
-        connect_module.connect_agent(
-            "continue", PROXY_URL, self.home)
+        connect_module.connect_agent("continue", PROXY_URL, self.home)
         config = connect_module.read_config("continue", path)
         no_proxy = config["models"][0]["requestOptions"]["noProxy"]
         self.assertIn("example.com", no_proxy)
@@ -297,12 +266,10 @@ class ConnectTest(unittest.TestCase):
     def test_connect_refuses_non_dict_config(self):
         # A config that parses but is not a dict is broken. Iris
         # refuses instead of replacing it with a fresh dict.
-        path = self._write(
-            "claude-code", json.dumps(["not", "a", "dict"]))
+        path = self._write("claude-code", json.dumps(["not", "a", "dict"]))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused):
-            connect_module.connect_agent(
-                "claude-code", PROXY_URL, self.home)
+            connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
@@ -313,10 +280,9 @@ class ConnectTest(unittest.TestCase):
         # file just before writing and refuses when the bytes
         # differ from what it read at the start.
         from unittest import mock
-        path = self._write(
-            "claude-code", json.dumps(_claude_settings()))
-        changed = json.dumps(
-            {**_claude_settings(), "theme": "light"})
+
+        path = self._write("claude-code", json.dumps(_claude_settings()))
+        changed = json.dumps({**_claude_settings(), "theme": "light"})
         calls = []
         real_read_bytes = connect_module._read_bytes
 
@@ -329,12 +295,9 @@ class ConnectTest(unittest.TestCase):
                     f.write(changed)
             return data
 
-        with mock.patch.object(
-                connect_module, "_read_bytes",
-                side_effect=_changing_read):
+        with mock.patch.object(connect_module, "_read_bytes", side_effect=_changing_read):
             with self.assertRaises(connect_module.Refused) as ctx:
-                connect_module.connect_agent(
-                    "claude-code", PROXY_URL, self.home)
+                connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         self.assertIn("changed", str(ctx.exception).lower())
         # The agent's change is intact, and no backup was made.
         self.assertEqual(self._read(path), changed)
@@ -345,10 +308,8 @@ class ConnectTest(unittest.TestCase):
         # disconnected. Iris refuses instead of overwriting the
         # backup with a new one, so disconnect still restores
         # the original state.
-        path = self._write(
-            "claude-code", json.dumps(_claude_settings()))
-        connect_module.connect_agent(
-            "claude-code", PROXY_URL, self.home)
+        path = self._write("claude-code", json.dumps(_claude_settings()))
+        connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         # The user removes the proxy by hand, so a second
         # connect would proceed, but the backup is still there.
         settings = json.loads(self._read(path))
@@ -356,37 +317,29 @@ class ConnectTest(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as f:
             f.write(json.dumps(settings))
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "claude-code", PROXY_URL, self.home)
+            connect_module.connect_agent("claude-code", PROXY_URL, self.home)
         self.assertIn("backup", str(ctx.exception).lower())
         # Nothing changed, and the original backup is intact.
         self.assertEqual(self._read(path), json.dumps(settings))
-        self.assertEqual(
-            self._read(path + ".iris-backup"),
-            json.dumps(_claude_settings()))
+        self.assertEqual(self._read(path + ".iris-backup"), json.dumps(_claude_settings()))
 
     def test_connect_refuses_non_loopback_proxy_url(self):
         # Iris is loopback only. A proxy URL that points
         # elsewhere is refused in plain words, and nothing is
         # written.
-        path = self._write(
-            "claude-code", json.dumps(_claude_settings()))
+        path = self._write("claude-code", json.dumps(_claude_settings()))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused):
-            connect_module.connect_agent(
-                "claude-code", "http://proxy.example.com:8080",
-                self.home)
+            connect_module.connect_agent("claude-code", "http://proxy.example.com:8080", self.home)
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
     def test_connect_refuses_malformed_proxy_url(self):
         # A proxy URL that is not a URL at all is refused.
-        path = self._write(
-            "claude-code", json.dumps(_claude_settings()))
+        path = self._write("claude-code", json.dumps(_claude_settings()))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused):
-            connect_module.connect_agent(
-                "claude-code", "not-a-url", self.home)
+            connect_module.connect_agent("claude-code", "not-a-url", self.home)
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
@@ -395,10 +348,8 @@ class ConnectTest(unittest.TestCase):
         # and extension downloads through Iris too, and Iris
         # blocks non-allowlisted destinations. The result says
         # so in plain words, so the user is not surprised.
-        path = self._write(
-            "cursor", json.dumps(_cursor_settings()))
-        result = connect_module.connect_agent(
-            "cursor", PROXY_URL, self.home)
+        path = self._write("cursor", json.dumps(_cursor_settings()))
+        result = connect_module.connect_agent("cursor", PROXY_URL, self.home)
         self.assertIn("update", result.lower())
 
 

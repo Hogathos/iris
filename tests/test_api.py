@@ -3,6 +3,7 @@
 Calls the endpoint functions directly: the sandbox blocks even
 loopback listen(), so no test here may open a socket.
 """
+
 import os
 import sys
 import tempfile
@@ -10,7 +11,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 from fastapi import HTTPException
 
@@ -18,27 +20,64 @@ import db
 import api
 
 ALLOWED_KEYS = {
-    "id", "trace_id", "attempt", "status", "latency_seconds",
-    "created_at", "dest_host", "endpoint", "method", "bytes_in",
-    "bytes_out", "bytes_tx", "bytes_rx", "close_reason", "connect_ms",
-    "duration_ms", "http_status", "outcome", "reason", "attempt_count",
-    "tunnels", "cost", "cost_wasted", "cost_line",
+    "id",
+    "trace_id",
+    "attempt",
+    "status",
+    "latency_seconds",
+    "created_at",
+    "dest_host",
+    "endpoint",
+    "method",
+    "bytes_in",
+    "bytes_out",
+    "bytes_tx",
+    "bytes_rx",
+    "close_reason",
+    "connect_ms",
+    "duration_ms",
+    "http_status",
+    "outcome",
+    "reason",
+    "attempt_count",
+    "tunnels",
+    "cost",
+    "cost_wasted",
+    "cost_line",
 }
 
 
 def _seed(path):
     conn = db.init_db(path)
-    db.log_attempt(conn, trace_id="t-old", task_number=1, attempt=1,
-                   status="blocked", latency_seconds=2.0,
-                   dest_host="example.com", endpoint="/x", method="GET",
-                   outcome="blocked", reason="not_allowlisted")
+    db.log_attempt(
+        conn,
+        trace_id="t-old",
+        task_number=1,
+        attempt=1,
+        status="blocked",
+        latency_seconds=2.0,
+        dest_host="example.com",
+        endpoint="/x",
+        method="GET",
+        outcome="blocked",
+        reason="not_allowlisted",
+    )
     for i in (1, 2):
-        db.log_attempt(conn, trace_id="t-new", task_number=1,
-                       attempt=i, status="success",
-                       latency_seconds=0.5,
-                       dest_host="127.0.0.1", endpoint="/ok",
-                       method="GET", bytes_in=10, bytes_out=20,
-                       http_status=200, outcome="allowed")
+        db.log_attempt(
+            conn,
+            trace_id="t-new",
+            task_number=1,
+            attempt=i,
+            status="success",
+            latency_seconds=0.5,
+            dest_host="127.0.0.1",
+            endpoint="/ok",
+            method="GET",
+            bytes_in=10,
+            bytes_out=20,
+            http_status=200,
+            outcome="allowed",
+        )
     conn.close()
 
 
@@ -83,24 +122,27 @@ class ApiShapeTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 404)
 
     def test_stats(self):
-        self.assertEqual(api.stats(), {
-            "total_attempts": 3,
-            "allowed": 2,
-            "blocked": 1,
-            "rate_limited": 0,
-            "paused": 0,
-            "redirected": 0,
-            "stopped": 0,
-            "verified": 0,
-            "warned": 0,
-            "other": 0,
-            "successes": 2,
-            "avg_latency_seconds": 1.0,
-            "total_cost": 0.0,
-            "wasted_cost": 0.0,
-            "unknown_runs": 0,
-            "cost_line": "all runs cost $0.00, $0.00 of it was wasted on failed or blocked runs.",
-        })
+        self.assertEqual(
+            api.stats(),
+            {
+                "total_attempts": 3,
+                "allowed": 2,
+                "blocked": 1,
+                "rate_limited": 0,
+                "paused": 0,
+                "redirected": 0,
+                "stopped": 0,
+                "verified": 0,
+                "warned": 0,
+                "other": 0,
+                "successes": 2,
+                "avg_latency_seconds": 1.0,
+                "total_cost": 0.0,
+                "wasted_cost": 0.0,
+                "unknown_runs": 0,
+                "cost_line": "all runs cost $0.00, $0.00 of it was wasted on failed or blocked runs.",
+            },
+        )
 
 
 class ApiRefreshTest(unittest.TestCase):
@@ -111,17 +153,33 @@ class ApiRefreshTest(unittest.TestCase):
         tmp.close()
         self.addCleanup(os.unlink, tmp.name)
         conn = db.init_db(tmp.name)
-        db.log_attempt(conn, trace_id="t-first", task_number=1, attempt=1,
-                       status="success", dest_host="127.0.0.1",
-                       endpoint="/old", method="GET", outcome="allowed")
+        db.log_attempt(
+            conn,
+            trace_id="t-first",
+            task_number=1,
+            attempt=1,
+            status="success",
+            dest_host="127.0.0.1",
+            endpoint="/old",
+            method="GET",
+            outcome="allowed",
+        )
         old_db_path, api.DB_PATH = api.DB_PATH, tmp.name
         self.addCleanup(setattr, api, "DB_PATH", old_db_path)
         first = [t["trace_id"] for t in api.list_traces()["traces"]]
         self.assertEqual(first, ["t-first"])
         # proxy logs a later run; the next refresh must show it on top
-        db.log_attempt(conn, trace_id="t-second", task_number=1, attempt=1,
-                       status="success", dest_host="127.0.0.1",
-                       endpoint="/new", method="GET", outcome="allowed")
+        db.log_attempt(
+            conn,
+            trace_id="t-second",
+            task_number=1,
+            attempt=1,
+            status="success",
+            dest_host="127.0.0.1",
+            endpoint="/new",
+            method="GET",
+            outcome="allowed",
+        )
         conn.close()
         second = [t["trace_id"] for t in api.list_traces()["traces"]]
         self.assertEqual(second, ["t-second", "t-first"])

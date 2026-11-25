@@ -11,6 +11,7 @@ Run standalone (proxy + test server already running):
   python agent_b.py --port 18081 --proxy http://127.0.0.1:8888 \
       --upstream http://127.0.0.1:18080
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,8 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def make_handler(proxy_url: str, upstream_base: str):
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({"http": proxy_url}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy_url}))
 
     class AgentBHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -55,11 +55,9 @@ def make_handler(proxy_url: str, upstream_base: str):
                     downstream_status = resp.status
                     carried = resp.headers.get("X-Trace-Id") or trace_id
             except Exception:
-                self._json(502, {"agent": "B", "trace_id": trace_id,
-                                 "downstream_status": 502})
+                self._json(502, {"agent": "B", "trace_id": trace_id, "downstream_status": 502})
                 return
-            self._json(200, {"agent": "B", "trace_id": carried,
-                             "downstream_status": downstream_status})
+            self._json(200, {"agent": "B", "trace_id": carried, "downstream_status": downstream_status})
 
         do_GET = _handle
         do_POST = _handle
@@ -67,10 +65,8 @@ def make_handler(proxy_url: str, upstream_base: str):
     return AgentBHandler
 
 
-def serve(host: str, port: int, proxy_url: str,
-          upstream_base: str) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer(
-        (host, port), make_handler(proxy_url, upstream_base))
+def serve(host: str, port: int, proxy_url: str, upstream_base: str) -> ThreadingHTTPServer:
+    return ThreadingHTTPServer((host, port), make_handler(proxy_url, upstream_base))
 
 
 def main():
@@ -81,8 +77,7 @@ def main():
     parser.add_argument("--upstream", default="http://127.0.0.1:18080")
     args = parser.parse_args()
     server = serve(args.host, args.port, args.proxy, args.upstream)
-    print(f"agent B listening on {args.host}:{args.port} "
-          f"proxy={args.proxy} upstream={args.upstream}")
+    print(f"agent B listening on {args.host}:{args.port} proxy={args.proxy} upstream={args.upstream}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
