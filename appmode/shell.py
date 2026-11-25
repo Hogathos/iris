@@ -1509,7 +1509,12 @@ class IrisWindow(QWidget):
     def _emergency_off_dialog(self):
         """Turn-off dialog: Keep it on is the default."""
         box = QMessageBox(self)
-        box.setWindowTitle("Let agents work again?")
+        # QMessageBox.setWindowTitle shadows QWidget.setWindowTitle and
+        # drops the title on macOS, where an alert has no title. Set
+        # the plain QWidget title instead, at construction time, so
+        # windowTitle() holds on every platform. Same words, same
+        # look: elsewhere the shadow only forwards to this call.
+        QDialog.setWindowTitle(box, "Let agents work again?")
         box.setText("Agents that use Iris will be able to make calls "
                     "again. Runs that were stopped stay stopped.")
         keep = box.addButton(

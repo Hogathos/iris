@@ -1638,7 +1638,12 @@ def make_handler(state: ProxyState):
         # -- M2: CONNECT tunnelling, bytes only, never decrypted. -----
         def do_CONNECT(self):
             start = time.perf_counter()
-            trace_id = self.headers.get("X-Trace-Id") or str(uuid.uuid4())
+            # A request header can carry a line break, which would
+            # split the answer when Iris repeats it in X-Trace-Id.
+            # Strip those at the door: real ids never hold one.
+            trace_id = (self.headers.get("X-Trace-Id")
+                        or str(uuid.uuid4()))
+            trace_id = trace_id.replace("\r", "").replace("\n", "")
             try:
                 dest_host, dest_port = _split_authority(self.path, 443)
             except ValueError:

@@ -22,6 +22,7 @@ import secrets
 import sqlite3
 import sys
 import threading
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -289,8 +290,36 @@ def _money(value) -> str:
 
 
 def _tier_query(tier: str) -> str:
-    """Query string that keeps the tier, or empty when no tier."""
-    return f"?tier={tier}" if tier else ""
+    """Query string that keeps the tier, or empty when no tier.
+
+    The tier rides in page links and in redirect targets, so it is
+    escaped here, once: the same value shows in HTML, and a hostile
+    tier cannot break out of an attribute or a header.
+    """
+    return f"?tier={_esc(tier)}" if tier else ""
+
+
+def _local_target(target: str) -> str:
+    """Allow only a local redirect target. Anything else goes home.
+
+    A redirect built from a human-provided value stays on this
+    computer: a path on this panel, no scheme, no host, no backslash
+    trick, no line break. Anything else falls back to "/".
+    """
+    if not isinstance(target, str):
+        return "/"
+    text = target.replace("\\", "")
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return "/"
+    if parsed.scheme or parsed.netloc:
+        return "/"
+    if not text.startswith("/"):
+        return "/"
+    if "\r" in text or "\n" in text:
+        return "/"
+    return text
 
 
 def _is_simple(tier: str) -> bool:
@@ -812,7 +841,7 @@ def _runs_list(runs, tier: str, show: str) -> str:
     simple = _is_simple(tier)
     advanced = tier == "advanced"
     tierq = _tier_query(tier)
-    filter_query = f"?tier={tier}&" if tier else "?"
+    filter_query = f"?tier={_esc(tier)}&" if tier else "?"
     if CONSUMER_BUILD:
         head = "<h2>Runs</h2>"
     else:
@@ -1666,7 +1695,8 @@ def pause_button(trace_id: str, request: Request, tier: str = "",
             f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=503)
     seam_pause_run(state, trace_id, reason="human pause")
-    return RedirectResponse(f"/runs/{trace_id}{tierq}", status_code=303)
+    return RedirectResponse(
+        _local_target("/runs/" + trace_id + tierq), status_code=303)
 
 
 @app.post("/runs/{trace_id}/verify")
@@ -1695,13 +1725,13 @@ def verify_button(trace_id: str, request: Request,
             f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=503)
     if devpanel_verify(state, trace_id, read_back=read_back):
-        return RedirectResponse(f"/runs/{trace_id}{tierq}",
-                                status_code=303)
+        return RedirectResponse(
+            _local_target("/runs/" + trace_id + tierq), status_code=303)
     return HTMLResponse(
         "<html><body><p>That Verify was refused. The Run must be "
         "paused or redirected, and the read-back must say what was "
         "checked.</p>"
-        f'<p><a href="/runs/{trace_id}{tierq}">Back to run</a></p>'
+        f'<p><a href="/runs/{_esc(trace_id)}{tierq}">Back to run</a></p>'
         "</body></html>",
         status_code=400)
 
@@ -1732,12 +1762,12 @@ def redirect_button(trace_id: str, request: Request,
             f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=503)
     if state.redirect_run(trace_id, new_dest):
-        return RedirectResponse(f"/runs/{trace_id}{tierq}",
-                                status_code=303)
+        return RedirectResponse(
+            _local_target("/runs/" + trace_id + tierq), status_code=303)
     return HTMLResponse(
         "<html><body><p>That destination was refused. Use a destination "
         "Iris already allows.</p>"
-        f'<p><a href="/runs/{trace_id}{tierq}">Back to run</a></p>'
+        f'<p><a href="/runs/{_esc(trace_id)}{tierq}">Back to run</a></p>'
         "</body></html>",
         status_code=400)
 
@@ -1899,9 +1929,11 @@ def emergency_stop_execute(request: Request, tier: str = "",
     # turn-off page keeps the stop in place. Anything else stops.
     keep_word = keep if isinstance(keep, str) else ""
     if keep_word:
-        return RedirectResponse(f"/{tierq}", status_code=303)
+        return RedirectResponse(
+            _local_target("/" + tierq), status_code=303)
     state.red_button()
-    return RedirectResponse(f"/{tierq}", status_code=303)
+    return RedirectResponse(
+        _local_target("/" + tierq), status_code=303)
 
 
 @app.get("/map", response_class=HTMLResponse)
@@ -1963,8 +1995,8 @@ def limit_button(request: Request, daily: str = Form(""),
                 f'<p><a href="/limits{_tier_query(tier)}">Back to limits'
                 "</a></p></body></html>",
                 status_code=400)
-    return RedirectResponse(f"/limits{_tier_query(tier)}",
-                            status_code=303)
+    return RedirectResponse(
+        _local_target("/limits" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/settings/allow-place")
@@ -1981,8 +2013,8 @@ def allow_place_button(request: Request, dest: str = Form(""),
     if state is None:
         return _watch_only(request, tier)
     state.allow_place(dest or "")
-    return RedirectResponse(f"/limits{_tier_query(tier)}",
-                            status_code=303)
+    return RedirectResponse(
+        _local_target("/limits" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/settings/unallow-place")
@@ -1999,8 +2031,8 @@ def unallow_place_button(request: Request, dest: str = Form(""),
     if state is None:
         return _watch_only(request, tier)
     state.unallow_place(dest or "")
-    return RedirectResponse(f"/limits{_tier_query(tier)}",
-                            status_code=303)
+    return RedirectResponse(
+        _local_target("/limits" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/settings/unblock-network")
@@ -2017,8 +2049,8 @@ def unblock_network_button(request: Request, dest: str = Form(""),
     if state is None:
         return _watch_only(request, tier)
     state.clear_override(dest or "")
-    return RedirectResponse(f"/limits{_tier_query(tier)}",
-                            status_code=303)
+    return RedirectResponse(
+        _local_target("/limits" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/runs/send")
@@ -2191,7 +2223,8 @@ def run_demo_button(request: Request, tier: str = Form(""),
         kwargs={"interval_seconds": 2.0}, daemon=True,
         name="iris-demo")
     thread.start()
-    return RedirectResponse(f"/{_tier_query(tier)}", status_code=303)
+    return RedirectResponse(
+        _local_target("/" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/tools/test-place")
@@ -2209,8 +2242,8 @@ def test_place_button(request: Request, name: str = Form(""),
         _start_test_place(name)
     else:
         _stop_test_place(name)
-    return RedirectResponse(f"/tools{_tier_query(tier)}",
-                            status_code=303)
+    return RedirectResponse(
+        _local_target("/tools" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/tools/samples")
@@ -2230,8 +2263,8 @@ def samples_button(request: Request, action: str = Form(""),
         _add_sample_runs(state)
     elif action == "remove":
         _remove_sample_runs(state)
-    return RedirectResponse(f"/tools{_tier_query(tier)}",
-                            status_code=303)
+    return RedirectResponse(
+        _local_target("/tools" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/tools/log-detail")
@@ -2249,8 +2282,8 @@ def log_detail_button(request: Request, level: str = Form(""),
         return _watch_only(request, tier)
     if level in ("warnings", "normal", "everything"):
         db_module.set_setting(state.conn, "log_detail", level)
-    return RedirectResponse(f"/tools{_tier_query(tier)}",
-                            status_code=303)
+    return RedirectResponse(
+        _local_target("/tools" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/tools/watching")
@@ -2268,10 +2301,10 @@ def watching_button(request: Request, on: str = Form(""),
         return _watch_only(request, tier)
     state.set_watching(on == "on")
     if CONSUMER_BUILD:
-        return RedirectResponse(f"/{_tier_query(tier)}",
-                                status_code=303)
-    return RedirectResponse(f"/tools{_tier_query(tier)}",
-                            status_code=303)
+        return RedirectResponse(
+            _local_target("/" + _tier_query(tier)), status_code=303)
+    return RedirectResponse(
+        _local_target("/tools" + _tier_query(tier)), status_code=303)
 
 
 @app.post("/tools/reload-settings")
