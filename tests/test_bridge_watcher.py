@@ -1417,6 +1417,252 @@ class DiscoveryTest(unittest.TestCase):
                          [("app-mode/x", "new-prompt.md", 0)])
 
 
+class TokenAuthTest(unittest.TestCase):
+    """GITHUB_TOKEN auth: API calls carry it, raw downloads never do.
+
+    The watcher lists branches and prompt files through the GitHub
+    API. Without a token the API allows 60 requests per hour, so
+    discovery fails on the rate limit. With GITHUB_TOKEN set, every
+    api.github.com call carries Authorization: Bearer <token> and
+    discovery works. The raw file download never carries it. The
+    token value never reaches the log or an error message. A bad
+    token (401) is logged plainly and the poll continues.
+    """
+
+    TOKEN = "test-token-abc123"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "seen.json")
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.downloads = os.path.join(self.tmp.name, "prompts")
+        self.config = {
+            "branches": ["app-mode/x"],
+            "repo": "Hogathos/iris",
+            "prompts_dir": "prompts",
+            "poll_interval_seconds": 120,
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.downloads,
+        }
+
+    def _auth_of(self, request):
+        """The Authorization header on a captured request, or None."""
+        seen = {}
+        for store in (getattr(request, "headers", {}),
+                      getattr(request, "unredirected_hdrs", {})):
+            for key, value in dict(store).items():
+                seen[str(key).lower()] = value
+        if hasattr(request, "get_header"):
+            try:
+                value = request.get_header("Authorization")
+            except Exception:
+                value = None
+            if value is not None:
+                return value
+            try:
+                value = request.get_header("AuthorizatioN")
+            except Exception:
+                value = None
+            if value is not None:
+                return value
+        return seen.get("authorization")
+
+    def _resp(self, payload, link=""):
+        class _FakeResp:
+            def __init__(self, payload, link):
+                self._payload = payload
+                self.headers = {"Link": link}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *args):
+                if isinstance(self._payload, bytes):
+                    return self._payload
+                return json.dumps(self._payload)
+
+        return _FakeResp(payload, link)
+
+    def _read_log(self):
+        with open(self.log, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_github_list_sends_bearer_when_token_set(self):
+        """With the token set, the contents API call carries it."""
+        from unittest import mock
+
+        seen_requests = []
+        payload = [{"type": "file",
+                    "name": "a-prompt.md",
+                    "download_url": "https://raw.invalid/a-prompt.md"}]
+
+        def fake_urlopen(request, timeout=None):
+            seen_requests.append(request)
+            return self._resp(payload)
+
+        with mock.patch.dict(os.environ,
+                             {"GITHUB_TOKEN": self.TOKEN}):
+            with mock.patch.object(
+                    watcher.urllib.request, "urlopen",
+                    side_effect=fake_urlopen):
+                files = watcher.github_list(
+                    "Hogathos/iris", "app-mode/x", "prompts")
+        self.assertEqual(files, [{"name": "a-prompt.md",
+                                  "url": "https://raw.invalid/a-prompt.md"}])
+        self.assertEqual(len(seen_requests), 1)
+        self.assertEqual(self._auth_of(seen_requests[0]),
+                         "Bearer " + self.TOKEN)
+
+    def test_github_list_branches_sends_bearer_on_all_pages(self):
+        """With the token set, every branches page carries it,
+        including paginated follow-ups."""
+        from unittest import mock
+
+        seen_requests = []
+        first = self._resp(
+            [{"name": "a"}],
+            link='<https://api.github.com/repos/x/y/branches'
+                 '?per_page=100&page=2>; rel="next"')
+        second = self._resp([{"name": "b"}])
+
+        def fake_urlopen(request, timeout=None):
+            seen_requests.append(request)
+            if len(seen_requests) == 1:
+                return first
+            return second
+
+        with mock.patch.dict(os.environ,
+                             {"GITHUB_TOKEN": self.TOKEN}):
+            with mock.patch.object(
+                    watcher.urllib.request, "urlopen",
+                    side_effect=fake_urlopen):
+                names = watcher.github_list_branches("Hogathos/iris")
+        self.assertEqual(names, ["a", "b"])
+        self.assertEqual(len(seen_requests), 2)
+        for request in seen_requests:
+            self.assertEqual(self._auth_of(request),
+                             "Bearer " + self.TOKEN)
+
+    def test_no_token_sends_no_authorization(self):
+        """Without the token, neither API call carries it."""
+        from unittest import mock
+
+        seen_requests = []
+
+        def fake_urlopen(request, timeout=None):
+            seen_requests.append(request)
+            url = request.get_full_url()
+            if "/branches" in url:
+                return self._resp([{"name": "a"}])
+            return self._resp([{"type": "file",
+                                "name": "a-prompt.md",
+                                "download_url": "https://raw.invalid/a.md"}])
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GITHUB_TOKEN", None)
+            with mock.patch.object(
+                    watcher.urllib.request, "urlopen",
+                    side_effect=fake_urlopen):
+                watcher.github_list(
+                    "Hogathos/iris", "app-mode/x", "prompts")
+                watcher.github_list_branches("Hogathos/iris")
+        self.assertTrue(seen_requests)
+        for request in seen_requests:
+            self.assertIsNone(self._auth_of(request))
+
+    def test_download_file_never_sends_token(self):
+        """The raw file download never carries the token, even
+        when the token is set."""
+        from unittest import mock
+
+        seen_requests = []
+
+        def fake_urlopen(request, timeout=None):
+            seen_requests.append(request)
+            return self._resp(b"prompt body")
+
+        dest = os.path.join(self.downloads, "a-prompt.md")
+        with mock.patch.dict(os.environ,
+                             {"GITHUB_TOKEN": self.TOKEN}):
+            with mock.patch.object(
+                    watcher.urllib.request, "urlopen",
+                    side_effect=fake_urlopen):
+                watcher.download_file("https://raw.invalid/a.md", dest)
+        self.assertEqual(len(seen_requests), 1)
+        self.assertIsNone(self._auth_of(seen_requests[0]))
+        with open(dest, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "prompt body")
+
+    def test_token_never_appears_in_log(self):
+        """A normal poll with the token set never writes the token
+        to the log file."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+
+        def listing(branch):
+            return [{"name": "new-prompt.md",
+                     "url": "https://example.invalid/new-prompt.md"}]
+
+        def download(url, dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as handle:
+                handle.write("prompt")
+
+        def run(cmd):
+            return 0
+
+        with mock.patch.dict(os.environ,
+                             {"GITHUB_TOKEN": self.TOKEN}):
+            watcher.run_once(
+                self.config, listing, download, run,
+                now="2026-11-24T00:00:00Z")
+        logged = self._read_log()
+        self.assertNotIn(self.TOKEN, logged)
+
+    def test_unauthorized_is_logged_plainly_and_poll_continues(self):
+        """A 401 from the API is logged plainly and the poll
+        continues: no crash, nothing marked seen, retry next poll."""
+        import io
+        import urllib.error
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        watcher.run_once(
+            self.config,
+            lambda branch: [],
+            lambda url, dest: None,
+            lambda cmd: 0,
+            now="2026-11-24T00:00:00Z",
+            branch_lister=lambda: [])
+        before = watcher.load_seen(self.state)
+
+        def failing_branches():
+            raise urllib.error.HTTPError(
+                "https://api.github.com/repos/Hogathos/iris/branches",
+                401, "Unauthorized", {}, io.BytesIO(b""))
+
+        with mock.patch.dict(os.environ,
+                             {"GITHUB_TOKEN": self.TOKEN}):
+            report = watcher.run_once(
+                self.config,
+                lambda branch: [],
+                lambda url, dest: None,
+                lambda cmd: 0,
+                now="2026-11-24T00:01:00Z",
+                branch_lister=failing_branches)
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(watcher.load_seen(self.state), before)
+        logged = self._read_log()
+        self.assertIn("401", logged)
+        self.assertNotIn(self.TOKEN, logged)
+
+
 class WatchedBranchesPropertyTest(unittest.TestCase):
     """The watched set is the union of config and discovery."""
 

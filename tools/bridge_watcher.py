@@ -51,6 +51,32 @@ _API_HEADERS = {"User-Agent": "iris-bridge-watcher/1.0",
 _REQUEST_TIMEOUT = 60
 
 
+def _github_token():
+    """The GitHub token from the environment, or empty when unset.
+
+    Read on every call, so tests can fake it through os.environ
+    and the Dell can set it without restarting anything else. An
+    empty or whitespace-only value means no token: the caller
+    behaves exactly as before, unauthenticated.
+    """
+    return os.environ.get("GITHUB_TOKEN", "").strip()
+
+
+def _api_headers():
+    """Base API headers plus bearer auth when a token is set.
+
+    Used for api.github.com calls only. The raw file download
+    never uses these headers, so the token never leaves the API.
+    The token value is only placed on the outgoing request: it is
+    never logged, never printed, and never written to a file.
+    """
+    headers = dict(_API_HEADERS)
+    token = _github_token()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return headers
+
+
 class ConfigError(ValueError):
     """A config or seen-list file is unusable, in plain words.
 
@@ -275,7 +301,7 @@ def github_list(repo, branch, prompts_dir, timeout=_REQUEST_TIMEOUT):
     path = urllib.parse.quote(prompts_dir.strip("/"))
     url = (f"https://api.github.com/repos/{repo}/contents/"
            f"{path}?ref={urllib.parse.quote(branch)}")
-    request = urllib.request.Request(url, headers=_API_HEADERS)
+    request = urllib.request.Request(url, headers=_api_headers())
     with urllib.request.urlopen(request,
                                 timeout=timeout) as resp:
         entries = json.load(resp)
@@ -312,7 +338,7 @@ def github_list_branches(repo, timeout=_REQUEST_TIMEOUT):
     url = (f"https://api.github.com/repos/{repo}/branches"
            f"?per_page=100")
     while url:
-        request = urllib.request.Request(url, headers=_API_HEADERS)
+        request = urllib.request.Request(url, headers=_api_headers())
         with urllib.request.urlopen(request,
                                     timeout=timeout) as resp:
             entries = json.load(resp)
@@ -328,6 +354,8 @@ def download_file(url, dest_path, timeout=_REQUEST_TIMEOUT):
     """Fetch one file to disk, creating folders as needed."""
     parent = os.path.dirname(os.path.abspath(dest_path))
     os.makedirs(parent, exist_ok=True)
+    # Base headers only: the token is for api.github.com, never for
+    # raw downloads, so it is never sent here.
     request = urllib.request.Request(url, headers=_API_HEADERS)
     with urllib.request.urlopen(request,
                                 timeout=timeout) as resp:
