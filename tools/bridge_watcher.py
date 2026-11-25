@@ -18,7 +18,9 @@ Rules, enforced below:
   list plus every branch GitHub returns. The run rules never
   change.
 - Never merge, open pull requests, commit, or review. Only
-  launch Muse Code.
+  launch Muse Code, then push the branch it ran on.
+- After each run, push that branch to origin by name. Never
+  force-push. A failed push is logged and the poll goes on.
 - A network blip never kills the watcher. It skips and retries
   on the next poll.
 """
@@ -454,6 +456,30 @@ def checkout_branch(repo_dir, branch):
         capture_output=True, text=True, check=True)
 
 
+def push_branch(repo_dir, branch):
+    """Push one branch to origin, naming it out loud.
+
+    Runs ``git push origin <branch>`` in repo_dir. The watcher
+    runs outside the sandbox as the user, so this push can use
+    the credential helper where the sandboxed run cannot. Never
+    force-pushes under any flag: a behind branch is refused by
+    the remote, and the caller logs that and moves on. Raises
+    when git fails: the caller logs it plainly instead of
+    crashing or retrying.
+    """
+    subprocess.run(
+        ["git", "-C", repo_dir, "push", "origin", branch],
+        capture_output=True, text=True, check=True)
+
+
+def _log_push(log_path, now, branch, outcome):
+    """One plain-words push line: time, branch, what happened."""
+    parent = os.path.dirname(os.path.abspath(log_path))
+    os.makedirs(parent, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(f"{now} push branch={branch} {outcome}\n")
+
+
 def _log_skip(log_path, now, branch, name, reason):
     """One plain-words skip line: time, branch, file, reason."""
     parent = os.path.dirname(os.path.abspath(log_path))
@@ -536,7 +562,10 @@ def run_once(config, lister, downloader, runner, now,
     download failure leaves the file unmarked, so a later poll
     retries it. A Muse run is marked seen whatever its exit
     code: Iris never runs a prompt twice. Every launch is logged
-    with time, branch, file, and exit code.
+    with time, branch, file, and exit code. After each run the
+    branch is pushed to origin and the push outcome is logged
+    beside the run entries; a failed push never unmarks the run
+    and never stops the poll.
     """
     state_file = config["state_file"]
     baselining = _is_baseline_run(state_file)
@@ -712,6 +741,21 @@ def run_once(config, lister, downloader, runner, now,
             log_launch(config["log_file"], now, branch, name,
                        code)
             launched.append((branch, name, code))
+            # The run is done and marked seen above, whatever its
+            # exit code. Push the branch it was on as a separate
+            # step. A push failure never unmarks the run, never
+            # re-runs it, never crashes the poll, and never
+            # retries in a loop. A behind branch is logged and
+            # left alone: no rebase, which is a separate prompt.
+            if config.get("repo_dir"):
+                try:
+                    push_branch(config["repo_dir"], branch)
+                except Exception as exc:
+                    _log_push(config["log_file"], now, branch,
+                              f"push failed ({exc})")
+                else:
+                    _log_push(config["log_file"], now, branch,
+                              "pushed to origin")
     if baselining and all_listed:
         # Baseline complete, even when nothing was found: an
         # empty saved list still ends baseline mode, so a file
