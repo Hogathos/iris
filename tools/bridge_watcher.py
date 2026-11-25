@@ -12,8 +12,11 @@ plain Python 3.
 Rules, enforced below:
 - Never run the same prompt twice, even across a restart. The
   seen-list on disk is the guarantee.
-- Never run prompts on a branch outside the config. Main is
-  not special: it runs only if Charles lists it.
+- Never run an old prompt again: the first poll baselines every
+  watched branch instead of running.
+- Discovery only widens which branches are watched: the config
+  list plus every branch GitHub returns. The run rules never
+  change.
 - Never merge, open pull requests, commit, or review. Only
   launch Muse Code.
 - A network blip never kills the watcher. It skips and retries
@@ -216,6 +219,18 @@ def is_watched(branch, branches):
     return branch in branches
 
 
+def watched_branches(configured, discovered):
+    """Every watched branch: the config list first, then each
+    discovered branch not already listed, each once. Discovery
+    widens the watched set: it never removes or reorders a
+    config branch."""
+    watched = list(configured)
+    for name in discovered:
+        if name not in watched:
+            watched.append(name)
+    return watched
+
+
 def is_prompt_file(name):
     """True when the file is a runnable prompt: its name ends in
     -prompt.md. Any other file in the prompts dir (a report, a
@@ -270,6 +285,43 @@ def github_list(repo, branch, prompts_dir, timeout=_REQUEST_TIMEOUT):
             files.append({"name": entry.get("name", ""),
                           "url": entry.get("download_url", "")})
     return [item for item in files if item["name"] and item["url"]]
+
+
+def _next_branches_url(link_header):
+    """The next page URL from a GitHub Link header, or None."""
+    if not link_header:
+        return None
+    for part in link_header.split(","):
+        pieces = [piece.strip() for piece in part.split(";")]
+        if len(pieces) == 2 and pieces[1] == 'rel="next"':
+            url = pieces[0]
+            if url.startswith("<") and url.endswith(">"):
+                return url[1:-1]
+    return None
+
+
+def github_list_branches(repo, timeout=_REQUEST_TIMEOUT):
+    """Every branch name in the repo, via the GitHub branches API.
+
+    Follows pages until no next page remains, so a repo with more
+    branches than one page holds still returns them all. Lets
+    network errors rise: the caller treats them as a blip, not a
+    death.
+    """
+    names = []
+    url = (f"https://api.github.com/repos/{repo}/branches"
+           f"?per_page=100")
+    while url:
+        request = urllib.request.Request(url, headers=_API_HEADERS)
+        with urllib.request.urlopen(request,
+                                    timeout=timeout) as resp:
+            entries = json.load(resp)
+            link = resp.headers.get("Link", "")
+        for entry in entries or []:
+            if isinstance(entry, dict) and entry.get("name"):
+                names.append(entry["name"])
+        url = _next_branches_url(link)
+    return names
 
 
 def download_file(url, dest_path, timeout=_REQUEST_TIMEOUT):
@@ -406,22 +458,57 @@ def _baseline_branch(config, branch, files, now):
     return names
 
 
-def run_once(config, lister, downloader, runner, now):
+def _discovery_baseline_path(state_file):
+    """The marker file: discovery baselined once, so the first poll
+    after discovery lands marks every branch seen instead of
+    running old prompts as if they were new."""
+    return state_file + ".discovery-baselined"
+
+
+def _mark_discovery_baselined(state_file):
+    """Remember that discovery baselined once. Atomic, like the
+    seen-list: a crash mid-write never leaves a half file."""
+    path = _discovery_baseline_path(state_file)
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    handle, tmp = tempfile.mkstemp(
+        dir=parent, prefix=".seen-", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write("discovery-baselined\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def run_once(config, lister, downloader, runner, now,
+             branch_lister=None):
     """One poll: list, download the new, run each once, log it.
 
     The very first poll baselines instead of running: with no
     seen-list file yet, every file found is marked seen and
     nothing runs, so old prompts are never re-done. A later
     poll runs only files that appeared after the baseline.
-    Only watched branches are listed. A listing failure skips
-    that branch and retries next poll. Before running a prompt
-    from branch B, the working tree in repo_dir is switched to
-    B with a local checkout. A checkout skip leaves the prompt
-    unmarked, so a later poll retries it. A download failure
-    leaves the file unmarked, so a later poll retries it. A
-    Muse run is marked seen whatever its exit code: Iris never
-    runs a prompt twice. Every launch is logged with time,
-    branch, file, and exit code.
+    Only watched branches are listed: the config list plus, when
+    a branch lister is given, every branch it returns. Discovery
+    runs once per poll before the branch loop; a discovery
+    failure skips discovery for that poll, is logged plainly,
+    and the config branches still process. The first poll after
+    discovery lands baselines every watched branch even when a
+    seen-list already exists, so old prompts on newly found
+    branches are marked seen instead of running. A listing
+    failure skips that branch and retries next poll. Before
+    running a prompt from branch B, the working tree in repo_dir
+    is switched to B with a local checkout. A checkout skip
+    leaves the prompt unmarked, so a later poll retries it. A
+    download failure leaves the file unmarked, so a later poll
+    retries it. A Muse run is marked seen whatever its exit
+    code: Iris never runs a prompt twice. Every launch is logged
+    with time, branch, file, and exit code.
     """
     state_file = config["state_file"]
     baselining = _is_baseline_run(state_file)
@@ -434,16 +521,39 @@ def run_once(config, lister, downloader, runner, now):
     skipped_reported = []
     baselined = []
     all_listed = True
-    for branch in config["branches"]:
-        if not is_watched(branch, config["branches"]):
-            continue
+    discovered = []
+    if branch_lister is not None:
+        try:
+            discovered = [name for name in branch_lister()
+                          if isinstance(name, str) and name.strip()]
+        except Exception as exc:
+            all_listed = False
+            parent = os.path.dirname(
+                os.path.abspath(config["log_file"]))
+            os.makedirs(parent, exist_ok=True)
+            with open(config["log_file"], "a",
+                      encoding="utf-8") as handle:
+                handle.write(f"{now} discover branches failed "
+                             f"({exc}), config list only, "
+                             f"retry next poll\n")
+    watched = watched_branches(config["branches"], discovered)
+    # The first poll with discovery baselines every watched branch,
+    # even when a seen-list already exists from before discovery:
+    # old prompts on newly found branches are marked seen instead
+    # of running as if they were new.
+    need_discovery_baseline = (
+        branch_lister is not None
+        and not os.path.exists(
+            _discovery_baseline_path(state_file)))
+    baseline_mode = baselining or need_discovery_baseline
+    for branch in watched:
         try:
             files = lister(branch)
         except Exception:
             skipped_branches.append(branch)
             all_listed = False
             continue
-        if baselining:
+        if baseline_mode:
             # First run: mark everything found, run nothing.
             # The save happens below, only when every watched
             # branch listed cleanly, so a blip keeps the next
@@ -581,12 +691,19 @@ def run_once(config, lister, downloader, runner, now):
         for name in baselined:
             seen = mark_seen(seen, name)
         save_seen(state_file, seen)
+    if need_discovery_baseline and all_listed:
+        # Discovery baselined cleanly: later polls run only files
+        # that appear after this poll. A poll that could not list
+        # every branch leaves no marker, so the next poll stays in
+        # baseline mode instead of running.
+        _mark_discovery_baselined(state_file)
     return {"launched": launched,
             "skipped_branches": skipped_branches,
             "failed_downloads": failed_downloads,
             "skipped_checkouts": skipped_checkouts,
             "skipped_reported": skipped_reported,
-            "baselined": baselined if baselining else []}
+            "discovered": discovered,
+            "baselined": baselined if baseline_mode else []}
 
 
 def build_parser():
@@ -624,7 +741,9 @@ def main(argv=None):
                     config["repo"], b, config["prompts_dir"]),
                 download_file,
                 lambda cmd: run_muse(cmd, config["repo_dir"]),
-                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                branch_lister=lambda: github_list_branches(
+                    config["repo"]))
         except ConfigError as exc:
             print(f"bridge watcher: {exc}", flush=True)
             return 2
