@@ -1195,5 +1195,250 @@ class FetchMissingBranchTest(unittest.TestCase):
         self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
 
+class DiscoveryTest(unittest.TestCase):
+    """run_once discovers prompt branches, with no cascade.
+
+    Discovery lists every branch through a branch lister and
+    watches the union of the config list and the discovered
+    branches. The anti-cascade rules hold for discovered branches
+    exactly as for config branches: only *-prompt.md files run,
+    a prompt with a report is skipped and marked seen, and the
+    seen-list is global. The first poll baselines every branch
+    instead of running. A branch-listing failure skips discovery
+    for that poll and the config branches still process.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "seen.json")
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.downloads = os.path.join(self.tmp.name, "prompts")
+        self.config = {
+            "branches": ["app-mode/x"],
+            "repo": "Hogathos/iris",
+            "prompts_dir": "prompts",
+            "poll_interval_seconds": 120,
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.downloads,
+        }
+        self.listed = []
+        self.downloaded = []
+        self.ran = []
+
+    def _files(self, mapping):
+        def listing(branch):
+            self.listed.append(branch)
+            return [{"name": name,
+                     "url": "https://example.invalid/"
+                     + branch + "/" + name}
+                    for name in mapping.get(branch, [])]
+        return listing
+
+    def _branches(self, branches):
+        def branch_listing():
+            return list(branches)
+        return branch_listing
+
+    def _failing_branches(self):
+        def branch_listing():
+            raise ConnectionError("branch listing blip")
+        return branch_listing
+
+    def _downloader(self):
+        def download(url, dest):
+            self.downloaded.append(dest)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as handle:
+                handle.write("prompt")
+        return download
+
+    def _runner(self, code=0):
+        def run(cmd):
+            self.ran.append(cmd)
+            return code
+        return run
+
+    def _read_log(self):
+        with open(self.log, encoding="utf-8") as handle:
+            return handle.read()
+
+    def _pass_baseline(self, branches=(), mapping=None):
+        """One clean first poll: baselines all, runs nothing."""
+        return watcher.run_once(
+            self.config, self._files(mapping or {}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:00:00Z",
+            branch_lister=self._branches(branches))
+
+    def test_discovered_branch_prompt_is_downloaded_and_run(self):
+        """A prompt on a branch found only by discovery runs once."""
+        self._pass_baseline()
+        report = watcher.run_once(
+            self.config,
+            self._files({"feature/new": ["new-prompt.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z",
+            branch_lister=self._branches(["feature/new"]))
+        self.assertIn("app-mode/x", self.listed)
+        self.assertIn("feature/new", self.listed)
+        self.assertEqual(report["launched"],
+                         [("feature/new", "new-prompt.md", 0)])
+        self.assertEqual(self.downloaded,
+                         [os.path.join(self.downloads,
+                                       "new-prompt.md")])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
+
+    def test_seen_prompt_on_discovered_branch_never_runs_again(self):
+        """The seen-list is global: a seen file never runs again,
+        on any branch."""
+        self._pass_baseline()
+        watcher.save_seen(self.state, {"old-prompt.md"})
+        report = watcher.run_once(
+            self.config,
+            self._files({"feature/new": ["old-prompt.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z",
+            branch_lister=self._branches(["feature/new"]))
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(self.ran, [])
+
+    def test_reported_prompt_on_discovered_branch_is_skipped(self):
+        """A discovered prompt with a report is marked seen and
+        skipped in plain words, never downloaded or run."""
+        self._pass_baseline()
+        report = watcher.run_once(
+            self.config,
+            self._files({"feature/new": ["done-prompt.md",
+                                         "done-report.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z",
+            branch_lister=self._branches(["feature/new"]))
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"done-prompt.md"})
+        self.assertTrue(report["skipped_reported"])
+        self.assertIn("report", self._read_log().lower())
+
+    def test_non_prompt_file_on_discovered_branch_never_runs(self):
+        """Reports and other files on a discovered branch are not
+        prompts: never downloaded, never run, never a failure."""
+        self._pass_baseline()
+        report = watcher.run_once(
+            self.config,
+            self._files({"feature/new": ["notes.md",
+                                         "done-report.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z",
+            branch_lister=self._branches(["feature/new"]))
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(report["failed_downloads"], [])
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+
+    def test_first_poll_baselines_every_discovered_branch(self):
+        """No seen-list file: every prompt on every discovered
+        branch is marked seen, nothing downloads, nothing runs,
+        even on branches never watched before."""
+        self.assertFalse(os.path.exists(self.state))
+        report = watcher.run_once(
+            self.config,
+            self._files({"app-mode/x": ["old-prompt.md"],
+                         "feature/new": ["new-prompt.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:00:00Z",
+            branch_lister=self._branches(["feature/new",
+                                          "feature/other"]))
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"old-prompt.md", "new-prompt.md"})
+        self.assertIn("baseline", self._read_log().lower())
+
+    def test_branch_listing_failure_keeps_config_branches_running(self):
+        """A branch-listing failure skips discovery for that poll,
+        logs it plainly, and the config branches still process."""
+        self._pass_baseline()
+        report = watcher.run_once(
+            self.config,
+            self._files({"app-mode/x": ["new-prompt.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z",
+            branch_lister=self._failing_branches())
+        self.assertEqual(report["launched"],
+                         [("app-mode/x", "new-prompt.md", 0)])
+        logged = self._read_log().lower()
+        self.assertIn("discover", logged)
+        self.assertIn("branch", logged)
+
+    def test_prompt_after_baseline_runs_once_then_quiet(self):
+        """A prompt appearing on a discovered branch after the
+        baseline runs exactly once; the next poll runs nothing."""
+        self._pass_baseline(branches=["feature/new"],
+                            mapping={"feature/new":
+                                     ["old-prompt.md"]})
+        second = watcher.run_once(
+            self.config,
+            self._files({"feature/new": ["old-prompt.md",
+                                         "new-prompt.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z",
+            branch_lister=self._branches(["feature/new"]))
+        self.assertEqual(second["launched"],
+                         [("feature/new", "new-prompt.md", 0)])
+        third = watcher.run_once(
+            self.config,
+            self._files({"feature/new": ["old-prompt.md",
+                                         "new-prompt.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:02:00Z",
+            branch_lister=self._branches(["feature/new"]))
+        self.assertEqual(third["launched"], [])
+        self.assertEqual(len(self.ran), 1)
+
+    def test_config_branch_still_runs_as_before(self):
+        """No regression: a config branch prompt runs with a
+        branch lister attached, discovery or none."""
+        self._pass_baseline()
+        report = watcher.run_once(
+            self.config,
+            self._files({"app-mode/x": ["new-prompt.md"]}),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z",
+            branch_lister=self._branches([]))
+        self.assertEqual(report["launched"],
+                         [("app-mode/x", "new-prompt.md", 0)])
+
+
+class WatchedBranchesPropertyTest(unittest.TestCase):
+    """The watched set is the union of config and discovery."""
+
+    def test_union_keeps_order_without_repeats(self):
+        """Config branches first, then new discovered names, each
+        once: the independent check on the discovery union."""
+        from hypothesis import given, strategies as st
+
+        @given(st.lists(st.text(min_size=1), unique=True),
+               st.lists(st.text(min_size=1), unique=True))
+        def check(configured, discovered):
+            watched = watcher.watched_branches(configured,
+                                              discovered)
+            self.assertEqual(set(watched),
+                             set(configured) | set(discovered))
+            self.assertEqual(len(watched), len(set(watched)))
+            self.assertEqual(watched[:len(configured)], configured)
+            rest = [name for name in discovered
+                    if name not in set(configured)]
+            self.assertEqual(watched[len(configured):], rest)
+        check()
+
+
 if __name__ == "__main__":
     unittest.main()
