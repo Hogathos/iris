@@ -37,16 +37,10 @@ jobs:
       run: choco install innosetup -y
     - name: Set installer version from tag
       run: |
-        python - <<'EOF'
-        import re
-        tag = "${{ github.ref_name }}"
-        version = tag[1:] if tag.startswith("v") else tag
-        path = "installer.iss"
-        text = open(path).read()
-        text = re.sub(r'#define MyAppVersion "[^"]*"', f'#define MyAppVersion "{version}"', text)
-        open(path, "w").write(text)
-        print("installer version set to", version)
-        EOF
+        VERSION="${{ github.ref_name }}"
+        VERSION="${VERSION#v}"
+        sed -i -E "s/#define MyAppVersion \"[^\"]*\"/#define MyAppVersion \"$VERSION\"/" installer.iss
+        grep MyAppVersion installer.iss
     - name: Build exe and installer
       run: |
         pyinstaller iris.spec
