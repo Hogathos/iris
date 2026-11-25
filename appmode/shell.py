@@ -564,6 +564,38 @@ class _DemoWorker:
             thread.join(timeout=timeout)
 
 
+class _LoadingPage(QWidget):
+    """The loading state page: starting words, a bar, a retry button.
+
+    The builder fills these in after construction, so they are
+    declared here and assigned there. Plain QWidget does not know
+    them, which the type check refused.
+    """
+
+    _label: QLabel
+    _bar: QProgressBar
+    _retry: QPushButton
+
+
+class _VerifyDialog(QDialog):
+    """The Verify dialog: words in, stamp out. Never the web view."""
+
+    _field: QLineEdit
+
+
+class _LimitsDialog(QDialog):
+    """The Limits dialog: spending, allowed, blocked, save."""
+
+    _field: QLineEdit
+    _no_limit: QCheckBox
+
+
+class _SettingsDialog(QDialog):
+    """The Settings dialog: journal, updates, spot, keep."""
+
+    _keep: QComboBox
+
+
 class IrisWindow(QWidget):
     """One window on the loopback panel.
 
@@ -740,7 +772,7 @@ class IrisWindow(QWidget):
 
     def _build_loading_page(self):
         """The loading state: Starting Iris, with a slow path."""
-        page = QWidget()
+        page = _LoadingPage()
         layout = QVBoxLayout(page)
         label = QLabel(panel_module.LOADING_STARTING)
         bar = QProgressBar()
@@ -911,8 +943,10 @@ class IrisWindow(QWidget):
             state = self._controller.proxy_state
             if state is None:
                 return
-            notebook = os.path.join(self._journal_folder(),
-                                    "demo-notebook.json")
+            folder = self._journal_folder()
+            if folder is None:
+                return
+            notebook = os.path.join(folder, "demo-notebook.json")
             func = lambda: self._run_demo(state, notebook)
         self._demo_worker.start(func)
 
@@ -1067,7 +1101,7 @@ class IrisWindow(QWidget):
             return f"Watching. {count} Runs are running."
         return "Watching. No Runs are running."
 
-    def _status_cost(self):
+    def _cost_text(self):
         """The status bar cost, right side."""
         try:
             return f"Cost: {panel_module._top_cost(self._runs_now())}"
@@ -1078,7 +1112,7 @@ class IrisWindow(QWidget):
         """Write the status bar: one sentence left, cost right."""
         try:
             self._status_text.setText(self._status_sentence())
-            self._status_cost.setText(self._status_cost())
+            self._status_cost.setText(self._cost_text())
         except Exception:
             pass
 
@@ -1444,7 +1478,7 @@ class IrisWindow(QWidget):
 
     def _verify_dialog(self):
         """The Verify dialog: words in, stamp out. Never the web view."""
-        dialog = QDialog(self)
+        dialog = _VerifyDialog(self)
         dialog.setWindowTitle("Verify")
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel("What was checked, in plain words:"))
@@ -1631,7 +1665,7 @@ class IrisWindow(QWidget):
 
     def _limits_dialog(self):
         """The Limits dialog: spending, allowed, blocked, save."""
-        dialog = QDialog(self)
+        dialog = _LimitsDialog(self)
         dialog.setWindowTitle("Limits")
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel("Spending."))
@@ -1849,7 +1883,7 @@ class IrisWindow(QWidget):
 
     def _settings_dialog(self):
         """The Settings dialog: journal, updates, spot, keep."""
-        dialog = QDialog(self)
+        dialog = _SettingsDialog(self)
         dialog.setWindowTitle("Settings")
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel("Where Iris keeps its journal:"))
