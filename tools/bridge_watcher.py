@@ -216,6 +216,26 @@ def is_watched(branch, branches):
     return branch in branches
 
 
+def is_prompt_file(name):
+    """True when the file is a runnable prompt: its name ends in
+    -prompt.md. Any other file in the prompts dir (a report, a
+    note, anything else) is simply not a prompt: it is never
+    downloaded, never run, and never logged as a failure."""
+    return (isinstance(name, str)
+            and name.endswith("-prompt.md"))
+
+
+def report_name(prompt_name):
+    """The report file for a prompt: <name>-prompt.md keeps its
+    report at <name>-report.md on the same branch. Anything that
+    is not a prompt has no report."""
+    suffix = "-prompt.md"
+    if (isinstance(prompt_name, str)
+            and prompt_name.endswith(suffix)):
+        return prompt_name[:-len(suffix)] + "-report.md"
+    return None
+
+
 def build_command(prompt_path):
     """The headless Muse Code command for one prompt file."""
     return ["muse", "exec", "--prompt-file", prompt_path,
@@ -381,6 +401,7 @@ def run_once(config, lister, downloader, runner, now):
     skipped_branches = []
     failed_downloads = []
     skipped_checkouts = []
+    skipped_reported = []
     baselined = []
     all_listed = True
     for branch in config["branches"]:
@@ -401,11 +422,18 @@ def run_once(config, lister, downloader, runner, now):
             baselined.extend(_baseline_branch(
                 config, branch, files, now))
             continue
+        # The listing already holds every file in the prompts
+        # dir, so the report check below needs no extra API call.
+        listed_names = {item.get("name") for item in files
+                        if item.get("name")}
         pending = [item for item in files
                    if item.get("name") not in seen
                    and os.path.basename(item.get("name", "")) ==
                    item.get("name", "")
-                   and item.get("name") not in (".", "..")]
+                   and item.get("name") not in (".", "..")
+                   and is_prompt_file(item.get("name", ""))
+                   and report_name(item.get("name", ""))
+                   not in listed_names]
         if pending and config.get("repo_dir"):
             repo_dir = config["repo_dir"]
             try:
@@ -464,9 +492,28 @@ def run_once(config, lister, downloader, runner, now):
             name = item["name"]
             if name in seen:
                 continue
+            # Not a prompt, not a failure: skip it quietly, so a
+            # report file or any other file never downloads, never
+            # runs, and never triggers a checkout either.
+            if not is_prompt_file(name):
+                continue
             if os.path.basename(name) != name or name in (
                     ".", ".."):
                 failed_downloads.append(name)
+                continue
+            # The prompt already ran (by hand or by an earlier
+            # poll): its report is on the same branch. Mark it
+            # seen and skip it in plain words, without downloading
+            # or running it.
+            expected = report_name(name)
+            if expected in listed_names:
+                reason = (f"report {expected} already exists, "
+                          f"run skipped")
+                seen = mark_seen(seen, name)
+                save_seen(config["state_file"], seen)
+                _log_skip(config["log_file"], now, branch, name,
+                          reason)
+                skipped_reported.append((branch, name, reason))
                 continue
             dest = os.path.join(config["download_dir"], name)
             try:
@@ -494,6 +541,7 @@ def run_once(config, lister, downloader, runner, now):
             "skipped_branches": skipped_branches,
             "failed_downloads": failed_downloads,
             "skipped_checkouts": skipped_checkouts,
+            "skipped_reported": skipped_reported,
             "baselined": baselined if baselining else []}
 
 
