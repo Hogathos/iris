@@ -334,6 +334,192 @@ class RunOnceTest(unittest.TestCase):
         self.assertEqual(report["failed_downloads"], ["bad.md"])
 
 
+class PromptReportSkipTest(unittest.TestCase):
+    """run_once runs only *-prompt.md, and skips reported prompts.
+
+    Only a file ending in -prompt.md is runnable. A prompt whose
+    report (<name>-report.md) is already listed on the same branch
+    is done: it is marked seen and skipped, never downloaded or
+    run. Any other file is simply not a prompt.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "seen.json")
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.downloads = os.path.join(self.tmp.name, "prompts")
+        self.config = {
+            "branches": ["app-mode/x"],
+            "repo": "Hogathos/iris",
+            "prompts_dir": "prompts",
+            "poll_interval_seconds": 120,
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.downloads,
+        }
+        self.ran = []
+        self.downloaded = []
+
+    def _lister(self, files):
+        def listing(branch):
+            assert branch == "app-mode/x"
+            return [{"name": name,
+                     "url": "https://example.invalid/" + name}
+                    for name in files]
+        return listing
+
+    def _downloader(self):
+        def download(url, dest):
+            self.downloaded.append(dest)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as handle:
+                handle.write("prompt for " + url)
+        return download
+
+    def _runner(self, code=0):
+        def run(cmd):
+            self.ran.append(cmd)
+            return code
+        return run
+
+    def _read_log(self):
+        with open(self.log, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_report_file_is_never_downloaded_or_run(self):
+        """A *-report.md file is not a prompt: no download, no run,
+        no launch entry, and no checkout."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                side_effect=AssertionError("no checkout expected")), \
+            mock.patch.object(watcher, "checkout_branch",
+                              side_effect=AssertionError(
+                                  "no checkout expected")):
+            report = watcher.run_once(
+                dict(self.config,
+                     repo_dir=os.path.join(self.tmp.name, "repo")),
+                self._lister(["job-report.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(report["failed_downloads"], [])
+        self.assertEqual(report["skipped_reported"], [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+
+    def test_file_without_prompt_suffix_never_runs(self):
+        """A file with no -prompt.md suffix is never downloaded
+        or run, and never logged as a failure."""
+        watcher.save_seen(self.state, set())
+        report = watcher.run_once(
+            self.config, self._lister(["notes.md"]),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:00:00Z")
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(report["failed_downloads"], [])
+        self.assertEqual(report["skipped_reported"], [])
+
+    def test_prompt_with_report_is_skipped(self):
+        """A prompt whose report is listed is skipped: not
+        downloaded, not run, marked seen, logged in plain words,
+        and listed in skipped_reported."""
+        watcher.save_seen(self.state, set())
+        report = watcher.run_once(
+            self.config,
+            self._lister(["job-prompt.md", "job-report.md"]),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:00:00Z")
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"job-prompt.md"})
+        logged = self._read_log().lower()
+        self.assertIn("skip", logged)
+        self.assertIn("job-prompt.md", self._read_log())
+        self.assertEqual(len(report["skipped_reported"]), 1)
+        branch, name, reason = report["skipped_reported"][0]
+        self.assertEqual((branch, name), ("app-mode/x",
+                                          "job-prompt.md"))
+        self.assertIn("job-report.md", reason)
+
+    def test_prompt_without_report_runs_as_normal(self):
+        """A prompt with no report in the listing runs as normal."""
+        watcher.save_seen(self.state, set())
+        report = watcher.run_once(
+            self.config, self._lister(["solo-prompt.md"]),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:00:00Z")
+        self.assertEqual(len(self.ran), 1)
+        self.assertIn("solo-prompt.md", self.ran[0][3])
+        self.assertEqual(report["launched"],
+                         [("app-mode/x", "solo-prompt.md", 0)])
+        self.assertEqual(report["skipped_reported"], [])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"solo-prompt.md"})
+
+    def test_reported_only_pending_triggers_no_checkout(self):
+        """When the only pending prompt is already reported, no
+        checkout is attempted and the runner is never called. The
+        prompt is still marked seen."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        config = dict(
+            self.config,
+            repo_dir=os.path.join(self.tmp.name, "repo"))
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                side_effect=AssertionError(
+                    "no checkout expected")) as current, \
+            mock.patch.object(
+                watcher, "working_tree_dirty") as dirty, \
+            mock.patch.object(
+                watcher, "branch_exists_locally") as exists, \
+            mock.patch.object(
+                watcher, "checkout_branch") as checkout:
+            report = watcher.run_once(
+                config,
+                self._lister(["job-prompt.md", "job-report.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        current.assert_not_called()
+        dirty.assert_not_called()
+        exists.assert_not_called()
+        checkout.assert_not_called()
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.downloaded, [])
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(len(report["skipped_reported"]), 1)
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"job-prompt.md"})
+
+    def test_second_poll_runs_nothing_after_report_skip(self):
+        """A prompt skipped for its report is in the seen-list now,
+        so the next poll runs nothing."""
+        watcher.save_seen(self.state, set())
+        listing = self._lister(["job-prompt.md", "job-report.md"])
+        first = watcher.run_once(
+            self.config, listing,
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:00:00Z")
+        self.assertEqual(len(first["skipped_reported"]), 1)
+        second = watcher.run_once(
+            self.config, listing,
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z")
+        self.assertEqual(self.ran, [])
+        self.assertEqual(second["launched"], [])
+        self.assertEqual(second["skipped_reported"], [])
+
+
 class RunMuseCommandTest(unittest.TestCase):
     """run_muse takes a command list, not a prompt path (Bug 1).
 
