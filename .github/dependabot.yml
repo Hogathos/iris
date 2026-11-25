@@ -1,0 +1,18 @@
+# Dependabot watches the repo dependencies for known vulnerabilities
+# and opens a pull request when an update is available. Pip covers
+# requirements.txt (fastapi, uvicorn, PySide6, PyYAML). GitHub
+# Actions covers the workflow files (actions/checkout,
+# setup-python, codeql-action). Weekly on Mondays, so updates
+# arrive in one batch, not a drip.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
