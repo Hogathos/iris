@@ -1686,5 +1686,367 @@ class WatchedBranchesPropertyTest(unittest.TestCase):
         check()
 
 
+class PushBranchCommandTest(unittest.TestCase):
+    """push_branch pushes one branch explicitly, never force.
+
+    The watcher runs outside the sandbox as the user, so its
+    git push can use the credential helper. The command names
+    the branch out loud: ``git push origin <branch>``. No
+    force flag under any spelling: a behind branch is logged
+    and left alone.
+    """
+
+    def test_push_command_is_plain_push_origin_branch(self):
+        """The exact argv, with no force flag anywhere."""
+        from unittest import mock
+
+        seen = []
+
+        def _fake_run(cmd, **kwargs):
+            seen.append((cmd, dict(kwargs)))
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(watcher.subprocess, "run",
+                               side_effect=_fake_run):
+            watcher.push_branch("/tmp/iris-repo", "feature/b")
+        self.assertEqual(len(seen), 1)
+        cmd, kwargs = seen[0]
+        self.assertEqual(cmd, ["git", "-C", "/tmp/iris-repo",
+                              "push", "origin", "feature/b"])
+        self.assertFalse(any("force" in str(part).lower()
+                             for part in cmd))
+        self.assertTrue(kwargs.get("check"))
+
+    def test_push_failure_raises_for_the_caller_to_log(self):
+        """A failing push raises: run_once logs it, never retries."""
+        import subprocess
+        from unittest import mock
+
+        with mock.patch.object(
+                watcher.subprocess, "run",
+                side_effect=subprocess.CalledProcessError(
+                    1, ["git", "push"])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                watcher.push_branch("/tmp/iris-repo", "feature/b")
+
+
+class PushAfterRunTest(unittest.TestCase):
+    """run_once pushes the branch after each run it starts.
+
+    A ``muse exec`` run finishes (whatever its exit code) and
+    the watcher pushes that branch to origin itself, so the
+    sandbox push block stops mattering. Marked seen stays
+    marked: a push failure never unmarks the run and never
+    causes a re-run. A failed push never crashes the poll and
+    never retries in a loop. No push happens without a run:
+    not on a skip, not on a baseline.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "seen.json")
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.downloads = os.path.join(self.tmp.name, "prompts")
+        self.repo_dir = os.path.join(self.tmp.name, "repo")
+        os.makedirs(self.repo_dir, exist_ok=True)
+        self.branch = "feature/b"
+        self.config = {
+            "branches": [self.branch],
+            "repo": "Hogathos/iris",
+            "prompts_dir": "prompts",
+            "poll_interval_seconds": 120,
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.downloads,
+            "repo_dir": self.repo_dir,
+        }
+        self.ran = []
+        self.pushed = []
+
+    def _lister(self, files):
+        def listing(branch):
+            self.assertEqual(branch, self.branch)
+            return [{"name": name,
+                     "url": "https://example.invalid/" + name}
+                    for name in files]
+        return listing
+
+    def _downloader(self):
+        def download(url, dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as handle:
+                handle.write("prompt")
+        return download
+
+    def _runner(self, code=0):
+        def run(cmd):
+            self.ran.append(cmd)
+            return code
+        return run
+
+    def _pusher(self, fail_with=None):
+        def push(repo_dir, branch):
+            self.pushed.append((repo_dir, branch))
+            if fail_with is not None:
+                raise fail_with
+        return push
+
+    def _read_log(self):
+        with open(self.log, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_push_runs_after_successful_run(self):
+        """Exit 0: the branch is pushed, the run is logged, and
+        the log says the push went through."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value=self.branch), \
+            mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
+        logged = self._read_log()
+        self.assertIn(self.branch, logged)
+        self.assertIn("push", logged.lower())
+        self.assertIn("pushed", logged.lower())
+
+    def test_push_runs_after_failed_run(self):
+        """A nonzero exit still marks seen and still pushes: the
+        push is a separate step after the run, whatever the code."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value=self.branch), \
+            mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(code=3),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 3)])
+        self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
+
+    def test_no_push_on_report_skip(self):
+        """A prompt skipped for its report never ran, so nothing
+        pushes."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value=self.branch), \
+            mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                self.config,
+                self._lister(["job-prompt.md", "job-report.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(self.pushed, [])
+        self.assertEqual(self.ran, [])
+
+    def test_no_push_on_dirty_tree_skip(self):
+        """Uncommitted changes skip the run, so nothing pushes and
+        the prompt stays unmarked."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=True), \
+            mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(self.pushed, [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+
+    def test_no_push_on_fetch_failure_skip(self):
+        """A failing fetch skips the run, so nothing pushes."""
+        import subprocess
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "fetch_branch",
+                side_effect=subprocess.CalledProcessError(
+                    1, ["git", "fetch"])), \
+            mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(self.pushed, [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+
+    def test_no_push_on_baseline(self):
+        """The first poll runs nothing, so nothing pushes."""
+        from unittest import mock
+
+        self.assertFalse(os.path.exists(self.state))
+        with mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                self.config, self._lister(["old-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(self.pushed, [])
+        self.assertEqual(self.ran, [])
+
+    def test_push_failure_is_logged_and_poll_continues(self):
+        """A failing push never crashes the poll, never unmarks
+        the run, and never retries: the next poll is quiet."""
+        import subprocess
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value=self.branch), \
+            mock.patch.object(
+                watcher, "push_branch",
+                side_effect=self._pusher(
+                    fail_with=subprocess.CalledProcessError(
+                        1, ["git", "push"]))):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(len(self.pushed), 1)
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
+        logged = self._read_log().lower()
+        self.assertIn("push", logged)
+        self.assertIn("fail", logged)
+        self.assertIn(self.branch.lower(), logged)
+        second = watcher.run_once(
+            self.config, self._lister(["new-prompt.md"]),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z")
+        self.assertEqual(second["launched"], [])
+        self.assertEqual(len(self.pushed), 1)
+
+    def test_behind_branch_is_logged_not_rebased(self):
+        """A non-fast-forward push failure is logged in plain
+        words and the poll moves on: no rebase, no retry, the
+        run stays marked seen."""
+        import subprocess
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        failure = subprocess.CalledProcessError(
+            1, ["git", "-C", self.repo_dir,
+                "push", "origin", self.branch],
+            output="",
+            stderr="rejected: non-fast-forward")
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value=self.branch), \
+            mock.patch.object(
+                watcher, "checkout_branch") as checkout, \
+            mock.patch.object(
+                watcher, "fetch_branch") as fetch, \
+            mock.patch.object(
+                watcher, "push_branch",
+                side_effect=self._pusher(fail_with=failure)):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
+        checkout.assert_not_called()
+        fetch.assert_not_called()
+        logged = self._read_log().lower()
+        self.assertIn("push", logged)
+        self.assertIn("fail", logged)
+
+    def test_discovered_branch_pushes_too(self):
+        """Auto-discovered branches push exactly like config
+        branches: the push step sits on the shared run path."""
+        from unittest import mock
+
+        watcher.run_once(
+            self.config, self._lister([]),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:00:00Z",
+            branch_lister=lambda: [])
+
+        def listing(branch):
+            return [{"name": "new-prompt.md",
+                     "url": "https://example.invalid/new-prompt.md"}]
+
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value=self.branch), \
+            mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                dict(self.config, branches=["other/config-branch"]),
+                listing, self._downloader(), self._runner(),
+                now="2026-11-24T00:01:00Z",
+                branch_lister=lambda: [self.branch])
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
+
+    def test_no_push_without_repo_dir(self):
+        """With no repo_dir there is no tree to push from, so a
+        run completes with no push attempt and no crash."""
+        from unittest import mock
+
+        config = dict(self.config)
+        del config["repo_dir"]
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(watcher, "push_branch",
+                              side_effect=self._pusher()):
+            report = watcher.run_once(
+                config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(self.pushed, [])
+
+
 if __name__ == "__main__":
     unittest.main()
