@@ -46,7 +46,7 @@ jobs:
         pyinstaller iris.spec
         iscc installer.iss
     - name: Create Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         files: installer-out/*.exe
         generate_release_notes: true
