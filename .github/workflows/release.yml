@@ -1,0 +1,58 @@
+# Release builds the Windows installer when a version tag is
+# pushed (v0.1.0, v0.2.0, ...). It runs PyInstaller from iris.spec,
+# then Inno Setup from installer.iss, and attaches the single
+# setup exe to the GitHub Release for that tag. The tag version is
+# written into installer.iss before the build, so the installer
+# and the release agree. Runs on Windows, because Inno Setup is
+# Windows only. This is the build only: the smoke checks in
+# smoke_packaging.py still run on the Dell by hand before a
+# release is published.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v5
+    - name: Set up Python 3.14
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.14"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt pyinstaller
+    - name: Install Inno Setup
+      run: choco install innosetup -y
+    - name: Set installer version from tag
+      run: |
+        python - <<'EOF'
+        import re
+        tag = "${{ github.ref_name }}"
+        version = tag[1:] if tag.startswith("v") else tag
+        path = "installer.iss"
+        text = open(path).read()
+        text = re.sub(r'#define MyAppVersion "[^"]*"', f'#define MyAppVersion "{version}"', text)
+        open(path, "w").write(text)
+        print("installer version set to", version)
+        EOF
+    - name: Build exe and installer
+      run: |
+        pyinstaller iris.spec
+        iscc installer.iss
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: installer-out/*.exe
+        generate_release_notes: true
