@@ -954,5 +954,246 @@ class BranchCheckoutTest(unittest.TestCase):
         self.assertIn(self.branch.lower(), logged)
 
 
+class FetchMissingBranchTest(unittest.TestCase):
+    """run_once fetches a branch missing locally before running it.
+
+    Regression: on Nov 24 the watcher skipped a prompt with
+    ``no local branch <branch>, no fetch attempted`` when the
+    branch existed on GitHub but the Dell had never checked it
+    out. The watcher now runs ``git fetch origin <branch>`` on
+    the missing-branch path, checks out, and runs. A fetch
+    failure is a plain skip, never a crash. A branch still
+    missing after a fetch is skipped as before. A branch that
+    already exists locally is never fetched.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "seen.json")
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.downloads = os.path.join(self.tmp.name, "prompts")
+        self.repo_dir = os.path.join(self.tmp.name, "repo")
+        os.makedirs(self.repo_dir, exist_ok=True)
+        self.branch = "feature/b"
+        self.config = {
+            "branches": [self.branch],
+            "repo": "Hogathos/iris",
+            "prompts_dir": "prompts",
+            "poll_interval_seconds": 120,
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.downloads,
+            "repo_dir": self.repo_dir,
+        }
+        self.order = []
+
+    def _lister(self, files):
+        def listing(branch):
+            self.assertEqual(branch, self.branch)
+            return [{"name": name,
+                     "url": "https://example.invalid/" + name}
+                    for name in files]
+        return listing
+
+    def _downloader(self):
+        def download(url, dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as handle:
+                handle.write("prompt")
+        return download
+
+    def _runner(self, code=0):
+        def run(cmd):
+            self.order.append("run")
+            return code
+        return run
+
+    def _read_log(self):
+        with open(self.log, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_fetchable_remote_branch_is_fetched_checked_out_and_run(self):
+        """No local branch, but the fetch brings the branch down:
+        the watcher fetches just that branch, checks it out, and
+        runs the prompt exactly once."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                side_effect=[False, False]), \
+            mock.patch.object(
+                watcher, "remote_branch_exists",
+                return_value=True), \
+            mock.patch.object(
+                watcher, "fetch_branch",
+                side_effect=lambda d, b: self.order.append(
+                    ("fetch", d, b))), \
+            mock.patch.object(
+                watcher, "checkout_branch",
+                side_effect=lambda d, b: self.order.append(
+                    ("checkout", d, b))):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        fetches = [entry for entry in self.order
+                   if isinstance(entry, tuple) and entry[0] == "fetch"]
+        self.assertEqual(
+            fetches, [("fetch", self.repo_dir, self.branch)])
+        self.assertEqual(self.order[-2:], [
+            ("checkout", self.repo_dir, self.branch), "run"])
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
+
+    def test_fetch_failure_is_a_plain_skip(self):
+        """A failing fetch never crashes the poll. The prompt is
+        not run, not marked seen, logged in plain words naming
+        the fetch failure, and listed in skipped_checkouts."""
+        from unittest import mock
+        import subprocess
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "fetch_branch",
+                side_effect=subprocess.CalledProcessError(
+                    1, ["git", "fetch"])), \
+            mock.patch.object(watcher, "checkout_branch") as checkout:
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        checkout.assert_not_called()
+        self.assertEqual(self.order, [])
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+        self.assertTrue(report["skipped_checkouts"])
+        logged = self._read_log().lower()
+        self.assertIn("fetch", logged)
+        self.assertIn(self.branch.lower(), logged)
+        reasons = " ".join(
+            reason for _, _, reason in report["skipped_checkouts"])
+        self.assertIn("fetch", reasons.lower())
+
+    def test_branch_still_missing_after_fetch_is_skipped_as_before(self):
+        """A successful fetch that still leaves no branch behind
+        skips with the existing reason. Nothing runs, nothing is
+        marked seen."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                side_effect=[False, False]), \
+            mock.patch.object(
+                watcher, "remote_branch_exists",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "fetch_branch",
+                return_value=None), \
+            mock.patch.object(watcher, "checkout_branch") as checkout:
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        checkout.assert_not_called()
+        self.assertEqual(report["launched"], [])
+        self.assertEqual(watcher.load_seen(self.state), set())
+        logged = self._read_log().lower()
+        self.assertIn("no local branch", logged)
+        self.assertIn(self.branch.lower(), logged)
+
+    def test_existing_local_branch_is_never_fetched(self):
+        """A branch that already exists locally runs as normal.
+        The watcher makes no extra git fetch call on that path."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                return_value=True), \
+            mock.patch.object(
+                watcher, "fetch_branch") as fetch, \
+            mock.patch.object(
+                watcher, "checkout_branch",
+                side_effect=lambda d, b: self.order.append("checkout")):
+            report = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        fetch.assert_not_called()
+        self.assertEqual(self.order, ["checkout", "run"])
+        self.assertEqual(report["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
+
+    def test_second_poll_runs_nothing_after_fetched_run(self):
+        """A prompt fetched and run this way is in the seen-list
+        now, so the next identical poll runs nothing."""
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        with mock.patch.object(
+                watcher, "get_current_branch",
+                return_value="other-branch"), \
+            mock.patch.object(
+                watcher, "working_tree_dirty",
+                return_value=False), \
+            mock.patch.object(
+                watcher, "branch_exists_locally",
+                side_effect=[False, False]), \
+            mock.patch.object(
+                watcher, "remote_branch_exists",
+                return_value=True), \
+            mock.patch.object(
+                watcher, "fetch_branch",
+                return_value=None), \
+            mock.patch.object(
+                watcher, "checkout_branch",
+                return_value=None):
+            first = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:00:00Z")
+        self.assertEqual(first["launched"],
+                         [(self.branch, "new-prompt.md", 0)])
+        second = watcher.run_once(
+            self.config, self._lister(["new-prompt.md"]),
+            self._downloader(), self._runner(),
+            now="2026-11-24T00:01:00Z")
+        self.assertEqual(second["launched"], [])
+        self.assertEqual(len(self.order), 1)
+        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
+
+
 if __name__ == "__main__":
     unittest.main()

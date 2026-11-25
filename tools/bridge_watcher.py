@@ -319,11 +319,41 @@ def get_current_branch(repo_dir):
 
 
 def branch_exists_locally(repo_dir, branch):
-    """True when refs/heads/branch exists locally. No fetch: the
-    watcher has no credentials for that."""
+    """True when refs/heads/branch exists in the local repo.
+
+    It checks only the local ref. It never fetches. The repo
+    is public, and fetch works without credentials on the Dell.
+    """
     proc = subprocess.run(
         ["git", "-C", repo_dir, "rev-parse", "--verify",
          "--quiet", "refs/heads/" + branch],
+        capture_output=True, text=True)
+    return proc.returncode == 0
+
+
+def fetch_branch(repo_dir, branch):
+    """Fetch one branch from origin.
+
+    It downloads objects and updates the remote-tracking ref.
+    It never touches the working tree and never moves a local
+    branch. It fetches just this branch, not the whole remote.
+    It raises when git fails: the caller logs a plain skip.
+    """
+    subprocess.run(
+        ["git", "-C", repo_dir, "fetch", "origin", branch],
+        capture_output=True, text=True, check=True)
+
+
+def remote_branch_exists(repo_dir, branch):
+    """True when refs/remotes/origin/branch exists locally.
+
+    After a fetch, this is enough: git checkout branch creates
+    the local tracking branch when no local branch exists but
+    origin/branch does.
+    """
+    proc = subprocess.run(
+        ["git", "-C", repo_dir, "rev-parse", "--verify",
+         "--quiet", "refs/remotes/origin/" + branch],
         capture_output=True, text=True)
     return proc.returncode == 0
 
@@ -469,14 +499,28 @@ def run_once(config, lister, downloader, runner, now):
                             (branch, item["name"], reason))
                     continue
                 if not branch_exists_locally(repo_dir, branch):
-                    reason = (f"no local branch {branch}, no fetch "
-                              f"attempted, run skipped")
-                    for item in pending:
-                        _log_skip(config["log_file"], now, branch,
-                                  item["name"], reason)
-                        skipped_checkouts.append(
-                            (branch, item["name"], reason))
-                    continue
+                    try:
+                        fetch_branch(repo_dir, branch)
+                    except Exception as exc:
+                        reason = (f"fetch of {branch} failed "
+                                  f"({exc}), run skipped")
+                        for item in pending:
+                            _log_skip(config["log_file"], now, branch,
+                                      item["name"], reason)
+                            skipped_checkouts.append(
+                                (branch, item["name"], reason))
+                        continue
+                    if (not branch_exists_locally(repo_dir, branch)
+                            and not remote_branch_exists(
+                                repo_dir, branch)):
+                        reason = (f"no local branch {branch}, no fetch "
+                                  f"attempted, run skipped")
+                        for item in pending:
+                            _log_skip(config["log_file"], now, branch,
+                                      item["name"], reason)
+                            skipped_checkouts.append(
+                                (branch, item["name"], reason))
+                        continue
                 try:
                     checkout_branch(repo_dir, branch)
                 except Exception as exc:
