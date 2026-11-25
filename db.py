@@ -73,6 +73,9 @@ def init_db(path: str) -> sqlite3.Connection:
     conn.execute(RED_BUTTON_TRACES_TABLE_SQL)
     conn.execute(OVERRIDE_RULES_TABLE_SQL)
     conn.execute(CAP_RULES_TABLE_SQL)
+    conn.execute(CLAIMS_TABLE_SQL)
+    conn.execute(SETTINGS_TABLE_SQL)
+    conn.execute(ALLOWED_PLACES_TABLE_SQL)
     conn.commit()
     # M4 migration: add outcome/reason to a pre-M4 database in place.
     # Two processes can arrive here together; if a peer wins the race
@@ -411,6 +414,29 @@ def save_override(conn, dest_host: str, action: str, target: str,
         conn.commit()
 
 
+def clear_override(conn, dest_host: str) -> None:
+    """Forget one per-network override rule.
+
+    Human-only callers; never the agent. The network flows again.
+    """
+    with _write_lock:
+        conn.execute("DELETE FROM override_rules WHERE dest_host = ?",
+                     (dest_host,))
+        conn.commit()
+
+
+def clear_red_button(conn) -> None:
+    """Forget the Red button press. Old stopped Runs stay stopped.
+
+    Human-only callers; never the agent. New Runs may flow again;
+    traces the button stopped stay in red_button_traces and never
+    restart on their own.
+    """
+    with _write_lock:
+        conn.execute("DELETE FROM red_button_state WHERE id = 1")
+        conn.commit()
+
+
 def load_red_button(conn):
     """Red button state that survives an Iris restart: never auto-lift.
 
@@ -509,6 +535,136 @@ def clear_cap(conn, dest_host: str) -> None:
     """Forget one spend cap: a human unblocked it after Verify."""
     with _write_lock:
         conn.execute("DELETE FROM cap_rules WHERE dest_host = ?",
+                     (dest_host,))
+        conn.commit()
+
+
+CLAIMS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id TEXT NOT NULL,
+    claim TEXT NOT NULL DEFAULT '',
+    verdict TEXT NOT NULL DEFAULT '',
+    looked_at TEXT NOT NULL DEFAULT '',
+    found TEXT NOT NULL DEFAULT '',
+    took_ms REAL,
+    created_at TEXT NOT NULL
+);
+"""
+
+
+def save_claim(conn, trace_id: str, claim: str, verdict: str,
+               looked_at: str, found: str, took_ms,
+               created_at: str) -> None:
+    """Record one checked claim for a Run. The verdict came from a read.
+
+    Claims are what the agent said, plus what Iris found when it
+    looked. The verdict is never written before the read that
+    produced it. Human-visible words only: Correct, Incorrect,
+    Unverified.
+    """
+    with _write_lock:
+        conn.execute(
+            "INSERT INTO claims "
+            "(trace_id, claim, verdict, looked_at, found, took_ms,"
+            " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (trace_id, claim, verdict, looked_at, found, took_ms,
+             created_at),
+        )
+        conn.commit()
+
+
+def load_claims(conn, trace_id: str) -> list:
+    """Every checked claim for one Run, oldest first. Read only."""
+    prev_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM claims WHERE trace_id = ? ORDER BY id",
+            (trace_id,))]
+    finally:
+        conn.row_factory = prev_factory
+
+
+SETTINGS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+"""
+
+
+def get_setting(conn, key: str):
+    """One saved setting, or None when the human never set it."""
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row is not None else None
+
+
+def set_setting(conn, key: str, value: str) -> None:
+    """Save one setting. Human-only callers; never the agent."""
+    with _write_lock:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value)"
+            " VALUES (?, ?)",
+            (key, value),
+        )
+        conn.commit()
+
+
+def clear_setting(conn, key: str) -> None:
+    """Forget one setting. The default applies again."""
+    with _write_lock:
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        conn.commit()
+
+
+ALLOWED_PLACES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS allowed_places (
+    dest_host TEXT PRIMARY KEY,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+"""
+
+
+def load_allowed_places(conn) -> dict:
+    """Places the human allowed despite an Unverified cost.
+
+    Returns {dest_host: {"reason": ..., "created_at": ...}}. Calls to
+    these places go through when a daily limit is set, and they are
+    not counted toward the limit. Survives a restart, like every
+    other human choice.
+    """
+    prev_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        return {
+            row["dest_host"]: {"reason": row["reason"],
+                               "created_at": row["created_at"]}
+            for row in conn.execute(
+                "SELECT dest_host, reason, created_at FROM allowed_places")
+        }
+    finally:
+        conn.row_factory = prev_factory
+
+
+def save_allowed_place(conn, dest_host: str, reason: str,
+                       created_at: str) -> None:
+    """Allow one place. Human-only callers; never the agent."""
+    with _write_lock:
+        conn.execute(
+            "INSERT OR REPLACE INTO allowed_places "
+            "(dest_host, reason, created_at) VALUES (?, ?, ?)",
+            (dest_host, reason, created_at),
+        )
+        conn.commit()
+
+
+def clear_allowed_place(conn, dest_host: str) -> None:
+    """Stop allowing one place. Human-only callers; never the agent."""
+    with _write_lock:
+        conn.execute("DELETE FROM allowed_places WHERE dest_host = ?",
                      (dest_host,))
         conn.commit()
 

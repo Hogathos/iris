@@ -189,6 +189,41 @@ def _format_label(host: str, port: int | None) -> str:
     return f"{host}:{port}"
 
 
+def _valid_place_host(host: str) -> bool:
+    """True when the host is an IP address or a plain hostname.
+
+    Fail closed: punctuation soup is not a place, even when the
+    authority splitter reads it as a bare name. IPv6 in brackets or
+    bare must parse; anything else must be dot-separated labels of
+    letters, digits, and hyphens that start and end alnum.
+    """
+    text = (host or "").strip()
+    if not text or len(text) > 253:
+        return False
+    bare = text
+    if bare.startswith("[") and bare.endswith("]") and len(bare) > 2:
+        bare = bare[1:-1]
+    if ":" in bare:
+        try:
+            ipaddress.ip_address(bare)
+        except ValueError:
+            return False
+        return True
+    try:
+        ipaddress.ip_address(bare)
+        return True
+    except ValueError:
+        pass
+    for label in bare.split("."):
+        if not label or len(label) > 63:
+            return False
+        if label.startswith("-") or label.endswith("-"):
+            return False
+        if not all(ch.isalnum() or ch == "-" for ch in label):
+            return False
+    return True
+
+
 def _normalize_host(text: str) -> str:
     """One canonical spelling per host, for allowlist matching only.
 
@@ -323,6 +358,225 @@ class ProxyState:
         self._next_task = 1
         self._attempts: dict[tuple[str, str, str], list[float]] = {}
         self._rate_stamps: dict[str, list[float]] = {}
+        # Watching switch: one human click stops new calls reaching
+        # anything, one click lets them through again. Memory only,
+        # on at launch. Existing Runs keep their state; their next
+        # calls are refused until watching is back on. Blocked, never
+        # paused: turning it on needs no Verify.
+        self.watching = True
+        # Spending limit: a daily dollar cap the human sets, or None
+        # for no limit. Survives a restart, like every human choice.
+        # When a limit is set, Iris blocks calls whose cost it cannot
+        # work out, unless the human allowed that place.
+        self.daily_limit = self._load_daily_limit()
+        self._allowed_places: dict = db_module.load_allowed_places(
+            self.conn)
+
+    def _load_daily_limit(self):
+        """The saved daily limit in dollars, or None for no limit."""
+        try:
+            raw = db_module.get_setting(self.conn, "daily_limit")
+        except Exception:
+            return None
+        if raw is None or not str(raw).strip():
+            return None
+        try:
+            value = float(str(raw).strip())
+        except ValueError:
+            return None
+        return value if value > 0 else None
+
+    def set_daily_limit(self, dollars) -> bool:
+        """Set the daily limit, or clear it with None. Human-only.
+
+        A number above zero is saved and enforced from the next call.
+        None clears it: with no limit set, calls flow as before. Any
+        other value is refused and changes nothing.
+        """
+        import datetime
+        if dollars is None:
+            db_module.clear_setting(self.conn, "daily_limit")
+            self.daily_limit = None
+            return True
+        try:
+            value = float(dollars)
+        except (TypeError, ValueError):
+            return False
+        if not value > 0:
+            return False
+        db_module.set_setting(self.conn, "daily_limit", str(value))
+        self.daily_limit = value
+        return True
+
+    def set_watching(self, on: bool) -> bool:
+        """Turn watching off or on. One click, no confirmation."""
+        self.watching = bool(on)
+        return self.watching
+
+    @staticmethod
+    def _place_label(dest_label: str):
+        """Normalize a destination label to host:port, or None.
+
+        Fail closed: an empty host, a missing port, a port outside
+        1..65535, or a host that is neither an IP address nor a
+        plain hostname is not a place, so it never lands on the
+        allowed list or past the limit gate.
+        """
+        try:
+            host, port = _split_authority(dest_label, 443)
+        except ValueError:
+            return None
+        if not host or port is None:
+            return None
+        try:
+            port_number = int(port)
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= port_number <= 65535:
+            return None
+        if not _valid_place_host(host):
+            return None
+        return _format_label(host.lower(), port_number)
+
+    def allow_place(self, dest_label: str,
+                    reason: str = "human allow") -> bool:
+        """Allow one place despite its Unverified cost. Human-only.
+
+        One call, no typing beyond the name, no confirmation. The next
+        call there goes through when a limit is set, and it is not
+        counted toward the limit. The blocked call itself never
+        retries on its own.
+        """
+        if reason not in ("human allow", "Steer allow"):
+            return False
+        label = self._place_label(dest_label)
+        if not label:
+            return False
+        import datetime
+        now = datetime.datetime.now(
+            datetime.timezone.utc).isoformat(timespec="seconds")
+        db_module.save_allowed_place(self.conn, label, reason, now)
+        self._allowed_places[label] = {"reason": reason,
+                                       "created_at": now}
+        return True
+
+    def unallow_place(self, dest_label: str,
+                      reason: str = "human unallow") -> bool:
+        """Stop allowing one place. Human-only (Undo included)."""
+        if reason not in ("human unallow", "human allow", "Steer allow",
+                          "Steer unallow"):
+            return False
+        label = self._place_label(dest_label)
+        if not label or label not in self._allowed_places:
+            return False
+        db_module.clear_allowed_place(self.conn, label)
+        self._allowed_places.pop(label, None)
+        return True
+
+    def is_allowed_place(self, dest_label: str) -> bool:
+        """True when the human allowed this place through a limit."""
+        label = self._place_label(dest_label)
+        return bool(label) and label in self._allowed_places
+
+    def allowed_places(self) -> list:
+        """Every allowed place, oldest first. Read only."""
+        return sorted(self._allowed_places)
+
+    def price_known(self, dest_label: str) -> bool:
+        """True when Iris can work out what a call there costs.
+
+        Loopback calls cost $0.00: this computer, nothing to pay.
+        Everything else stays Unverified in v1: no vendor price table
+        is wired in, and Iris never guesses.
+        """
+        try:
+            host, _port = _split_authority(dest_label, None)
+        except ValueError:
+            return False
+        if host is None:
+            return False
+        return _normalize_host(host) in ("127.0.0.1", "localhost", "::1")
+
+    def unpriceable_blocked(self, dest_label: str):
+        """Why this call is blocked, or None when it may go through.
+
+        With no daily limit set, nothing is blocked here. With a
+        limit set, a call Iris cannot price is blocked unless the
+        human allowed that place. Loopback and allowed places always
+        go through.
+        """
+        if self.daily_limit is None:
+            return None
+        label = self._place_label(dest_label) or dest_label
+        if self.price_known(label):
+            return None
+        if label in self._allowed_places:
+            return None
+        return ("unpriceable with daily limit set: Iris could not "
+                "work out what the call costs")
+
+    def note_blocked_call(self, trace_id: str, dest_label: str,
+                          reason: str) -> None:
+        """Journal one blocked call. Metadata only, costs $0.00."""
+        last = db_module.last_attempt(self.conn, trace_id)
+        method = last["method"] if last else ""
+        dest = last["dest_host"] if last else dest_label
+        endpoint = last["endpoint"] if last else dest_label
+        self._control_row(trace_id, method, dest or dest_label,
+                          endpoint or dest_label, "unknown", "blocked",
+                          reason, "unpriceable")
+
+    def recently_blocked(self, limit: int = 20) -> list:
+        """Destinations blocked lately for an Unverified cost.
+
+        Newest first, each place once, allowed places left out: this
+        is the list the human picks from, so it never offers a place
+        that is already allowed.
+        """
+        rows = self.conn.execute(
+            "SELECT dest_host FROM attempts WHERE outcome = 'blocked'"
+            " AND reason LIKE 'unpriceable%' ORDER BY id DESC"
+            f" LIMIT {int(limit) * 5}").fetchall()
+        found = []
+        for row in rows:
+            dest = row[0] or ""
+            if not dest or dest in found:
+                continue
+            label = self._place_label(dest) or dest
+            if label in self._allowed_places:
+                continue
+            found.append(dest)
+            if len(found) >= int(limit):
+                break
+        return found
+
+    def stop_run(self, trace_id: str,
+                 reason: str = "human stop") -> bool:
+        """Stop one Run. Journal first, then cut its tunnels.
+
+        Human-only: a plain method on the local proxy state, never an
+        HTTP route. Every other Run keeps flowing. The stopped Run
+        stays stopped: retries need a fresh human word, through the
+        existing gate. Incorrect claims stop the Run they belong to
+        through this method, not through the global red button.
+        """
+        if reason not in ("human stop", "Steer stop",
+                          "incorrect claim"):
+            return False
+        last = db_module.last_attempt(self.conn, trace_id)
+        dest_host = last["dest_host"] if last else ""
+        endpoint = last["endpoint"] if last else ""
+        method = last["method"] if last else ""
+        self._control_row(trace_id, method, dest_host, endpoint,
+                          "unknown", "stopped", reason, "stopped")
+        with self._lock:
+            live = self._live.pop(trace_id, {})
+            self._stopped_traces.add(trace_id)
+            self._paused.pop(trace_id, None)
+            self._verified.pop(trace_id, None)
+        for sock in live:
+            self._cut_socket(sock, "stop")
+        return True
 
     def is_allowed(self, dest_host: str, dest_port: int) -> bool:
         """Allowlist entries are hosts, or host:port for one exact port.
@@ -403,6 +657,25 @@ class ProxyState:
     # local proxy state, never an HTTP route, so proxied agent traffic
     # cannot call them. Local-first, fail-closed: if Iris dies, the
     # proxy is down and the agent stops, not continues. -------------
+
+    def lift_red_button(self, reason: str = "human lift") -> bool:
+        """Let agents work again after Emergency stop. Human-only.
+
+        Human-only: a plain method on the local proxy state, never an
+        HTTP route. Clears the global stop so new calls may flow. Runs
+        the button stopped stay stopped: their traces remain refused
+        until a fresh human word, and the journal keeps every stop row.
+        """
+        if reason not in ("human lift", "Steer lift"):
+            return False
+        db_module.clear_red_button(self.conn)
+        with self._lock:
+            self._stopped = None
+        self._control_row("", "APPROVE", "", "",
+                          "unknown", "",
+                          "emergency stop lifted, agents may work again",
+                          "allowed")
+        return True
 
     def is_paused(self, trace_id: str) -> bool:
         """True when this Run is paused: nothing forwards for it."""
@@ -773,6 +1046,33 @@ class ProxyState:
                     for sock in self._live.pop(tid, {}).keys()]
         for sock in live:
             self._cut_socket(sock, "pause")
+        return True
+
+    def clear_override(self, dest_label: str,
+                       reason: str = "human unblock") -> bool:
+        """Forget one per-network override rule. Human-only.
+
+        Human-only: a plain method on the local proxy state, never an
+        HTTP route. Refuses (False, no row) when there is no rule or
+        the reason is not human. Otherwise journals the lift and the
+        network flows again.
+        """
+        if reason not in ("human unblock", "Steer unblock"):
+            return False
+        try:
+            host, port = _split_authority(dest_label, 443)
+            label = _format_label(host, port)
+        except ValueError:
+            return False
+        with self._lock:
+            if label not in self._overrides:
+                return False
+            self._overrides.pop(label, None)
+        db_module.clear_override(self.conn, label)
+        self._control_row("", "OVERRIDE", label, label,
+                          "unknown", "",
+                          "override lifted, network flows again",
+                          "allowed")
         return True
 
     def _control_row(self, trace_id: str, method: str, dest_host: str,
@@ -1338,7 +1638,12 @@ def make_handler(state: ProxyState):
         # -- M2: CONNECT tunnelling, bytes only, never decrypted. -----
         def do_CONNECT(self):
             start = time.perf_counter()
-            trace_id = self.headers.get("X-Trace-Id") or str(uuid.uuid4())
+            # A request header can carry a line break, which would
+            # split the answer when Iris repeats it in X-Trace-Id.
+            # Strip those at the door: real ids never hold one.
+            trace_id = (self.headers.get("X-Trace-Id")
+                        or str(uuid.uuid4()))
+            trace_id = trace_id.replace("\r", "").replace("\n", "")
             try:
                 dest_host, dest_port = _split_authority(self.path, 443)
             except ValueError:
@@ -1368,6 +1673,18 @@ def make_handler(state: ProxyState):
                     close_reason=close_reason, connect_ms=connect_ms,
                     duration_ms=duration_ms)
 
+            if not state.watching:
+                # Watching is off: no new tunnel for anyone. Blocked,
+                # never paused, so turning watching back on needs no
+                # Verify. Unknown, never Correct. Nothing fails open.
+                attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
+                log_connect("blocked", "blocked", "watching is off",
+                            503, 0, 0, "watching")
+                self.send_response(503)
+                self.send_header("X-Trace-Id", trace_id)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if not state.red_gate(trace_id):
                 # Red button is on and this trace has no fresh human
                 # approval plus Verify: no new tunnel. Unknown, never
@@ -1446,6 +1763,22 @@ def make_handler(state: ProxyState):
                                 503, 0, 0, "capped")
                     state._cap_block(endpoint)
                     self.send_response(503)
+                    self.send_header("X-Trace-Id", trace_id)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                unpriceable = state.unpriceable_blocked(endpoint)
+                if unpriceable is not None:
+                    # A daily limit is set and Iris cannot work out
+                    # what this call costs, and the human did not
+                    # allow this place. The tunnel is never opened.
+                    # Blocked, never guessed; the place stays blocked
+                    # until the human allows it.
+                    attempt = state.peek_attempt(trace_id, endpoint,
+                                                 "CONNECT")
+                    log_connect("blocked", "blocked", unpriceable,
+                                403, 0, 0, "unpriceable")
+                    self.send_response(403)
                     self.send_header("X-Trace-Id", trace_id)
                     self.send_header("Content-Length", "0")
                     self.end_headers()
@@ -1853,6 +2186,18 @@ def make_handler(state: ProxyState):
                     b"not Upgrade on plain HTTP\n",
                     trace_id=trace_id)
                 return
+            if not state.watching:
+                # Watching is off: nothing forwards for anyone.
+                # Blocked, never paused, so turning watching back on
+                # needs no Verify. Unknown, never Correct.
+                self._refused(
+                    503, "blocked", "watching is off",
+                    dest_label, endpoint,
+                    b"blocked: Watching is off. Turn watching on, "
+                    b"then try again\n",
+                    trace_id=trace_id, close_reason="watching",
+                    outcome="blocked")
+                return
             if not state.red_gate(trace_id):
                 # Red button is on and this trace has no fresh human
                 # approval plus Verify: nothing forwards. Unknown, never
@@ -1924,6 +2269,21 @@ def make_handler(state: ProxyState):
                         trace_id=trace_id, close_reason="capped",
                         outcome="blocked")
                     state._cap_block(dest_label)
+                    return
+                unpriceable = state.unpriceable_blocked(dest_label)
+                if unpriceable is not None:
+                    # A daily limit is set and Iris cannot work out
+                    # what this call costs, and the human did not
+                    # allow this place. Nothing forwards. Blocked,
+                    # never guessed; the place stays blocked until
+                    # the human allows it.
+                    self._refused(
+                        403, "blocked", unpriceable,
+                        dest_label, endpoint,
+                        b"blocked: Iris could not work out what the "
+                        b"call costs, and you have a daily limit set\n",
+                        trace_id=trace_id, close_reason="unpriceable",
+                        outcome="blocked")
                     return
                 # Money is counted in cents, so the 80% threshold is
                 # rounded to cents: 0.8 times 5 cents is a hair above
