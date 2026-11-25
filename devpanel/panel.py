@@ -123,19 +123,23 @@ def _host_of(request) -> str | None:
     return None
 
 
-def _refused_request(request, token: str = ""):
+def _refused_request(request, token: str | None = None):
     """Refuse a request that fails the Host or token check, or None.
 
     The Host check runs on every request. The token check runs on
-    every post. A refused post changes nothing and says so in plain
-    words. A refused Host is a 403 in plain words.
+    every post, never on a plain read: a GET carries no token, and
+    refusing it for that would lock the human out of their own
+    dashboard. A refused post changes nothing and says so in plain
+    words. A refused Host is a 403 in plain words. A token that is
+    not a real string (a direct call that leaves the default in
+    place) carries no token, so the check stays out of its way.
     """
     if not check_host(_host_of(request)):
         return HTMLResponse(
             "<html><body><p>Iris refused this request because it did "
             "not come from this computer.</p></body></html>",
             status_code=403)
-    if not check_token(token):
+    if isinstance(token, str) and not check_token(token):
         return HTMLResponse(
             "<html><body><p>This page is out of date. Reload it.</p>"
             "</body></html>",
@@ -1883,8 +1887,6 @@ def emergency_stop_execute(request: Request, tier: str = "",
     if gone is not None:
         return gone
     tierq = _tier_query(tier)
-    if keep:
-        return RedirectResponse(f"/{tierq}", status_code=303)
     state = _state_of(request)
     if state is None:
         return HTMLResponse(
@@ -1892,6 +1894,12 @@ def emergency_stop_execute(request: Request, tier: str = "",
             "a live proxy to stop everything.</p>"
             f'<p><a href="/{tierq}">Back to runs</a></p></body></html>',
             status_code=503)
+    # A direct call leaves the Form default in place, and that marker
+    # object is always truthy. Only a real "keep it on" word from the
+    # turn-off page keeps the stop in place. Anything else stops.
+    keep_word = keep if isinstance(keep, str) else ""
+    if keep_word:
+        return RedirectResponse(f"/{tierq}", status_code=303)
     state.red_button()
     return RedirectResponse(f"/{tierq}", status_code=303)
 
