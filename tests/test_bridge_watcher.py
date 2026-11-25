@@ -240,37 +240,38 @@ class RunOnceTest(unittest.TestCase):
 
     def test_only_new_prompts_run_and_are_logged(self):
         """A new file runs once, is logged, and is marked seen."""
-        watcher.save_seen(self.state, {"old.md"})
+        watcher.save_seen(self.state, {"old-prompt.md"})
         report = watcher.run_once(
-            self.config, self._lister(["old.md", "new.md"]),
+            self.config,
+            self._lister(["old-prompt.md", "new-prompt.md"]),
             self._downloader(), self._runner(),
             now="2026-11-24T00:00:00Z")
         self.assertEqual(len(self.ran), 1)
         self.assertEqual(
             self.ran[0],
             ["muse", "exec", "--prompt-file",
-             os.path.join(self.downloads, "new.md"),
+             os.path.join(self.downloads, "new-prompt.md"),
              "--disable-approval", "--trust-workspace"])
         with open(self.log, encoding="utf-8") as handle:
             logged = handle.read()
         self.assertIn("2026-11-24T00:00:00Z", logged)
         self.assertIn("app-mode/x", logged)
-        self.assertIn("new.md", logged)
+        self.assertIn("new-prompt.md", logged)
         self.assertIn("0", logged)
         self.assertEqual(report["launched"],
-                         [("app-mode/x", "new.md", 0)])
+                         [("app-mode/x", "new-prompt.md", 0)])
         self.assertEqual(watcher.load_seen(self.state),
-                         {"old.md", "new.md"})
+                         {"old-prompt.md", "new-prompt.md"})
 
     def test_second_poll_runs_nothing(self):
         """The seen-list survives: a rerun finds no work."""
         watcher.save_seen(self.state, set())
         watcher.run_once(
-            self.config, self._lister(["new.md"]),
+            self.config, self._lister(["new-prompt.md"]),
             self._downloader(), self._runner(),
             now="2026-11-24T00:00:00Z")
         second = watcher.run_once(
-            self.config, self._lister(["new.md"]),
+            self.config, self._lister(["new-prompt.md"]),
             self._downloader(), self._runner(),
             now="2026-11-24T00:01:00Z")
         self.assertEqual(len(self.ran), 1)
@@ -281,14 +282,15 @@ class RunOnceTest(unittest.TestCase):
         runs again. Iris never double-runs a prompt."""
         watcher.save_seen(self.state, set())
         report = watcher.run_once(
-            self.config, self._lister(["new.md"]),
+            self.config, self._lister(["new-prompt.md"]),
             self._downloader(), self._runner(code=3),
             now="2026-11-24T00:00:00Z")
         self.assertEqual(report["launched"],
-                         [("app-mode/x", "new.md", 3)])
+                         [("app-mode/x", "new-prompt.md", 3)])
         with open(self.log, encoding="utf-8") as handle:
             self.assertIn("3", handle.read().splitlines()[-1])
-        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
 
     def test_unwatched_branch_is_never_listed(self):
         """The listing is only asked for watched branches."""
@@ -319,19 +321,22 @@ class RunOnceTest(unittest.TestCase):
         watcher.save_seen(self.state, set())
 
         def download(url, dest):
-            if url.endswith("bad.md"):
+            if url.endswith("bad-prompt.md"):
                 raise ConnectionError("blip")
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write("prompt")
         report = watcher.run_once(
-            self.config, self._lister(["bad.md", "good.md"]),
+            self.config,
+            self._lister(["bad-prompt.md", "good-prompt.md"]),
             download, self._runner(),
             now="2026-11-24T00:00:00Z")
         self.assertEqual(len(self.ran), 1)
-        self.assertIn("good.md", self.ran[0][3])
-        self.assertEqual(watcher.load_seen(self.state), {"good.md"})
-        self.assertEqual(report["failed_downloads"], ["bad.md"])
+        self.assertIn("good-prompt.md", self.ran[0][3])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"good-prompt.md"})
+        self.assertEqual(report["failed_downloads"],
+                         ["bad-prompt.md"])
 
 
 class PromptReportSkipTest(unittest.TestCase):
@@ -734,33 +739,34 @@ class BaselineTest(unittest.TestCase):
         and a file appearing later runs exactly once."""
         self.assertFalse(os.path.exists(self.state))
         first = watcher.run_once(
-            self.config, self._lister(["a.md", "b.md"]),
+            self.config, self._lister(["a-prompt.md", "b-prompt.md"]),
             self._downloader(),
             lambda cmd: self.ran.append(cmd) or 0,
             now="2026-11-24T00:00:00Z")
         self.assertEqual(self.ran, [])
         self.assertEqual(self.downloaded, [])
         self.assertEqual(watcher.load_seen(self.state),
-                         {"a.md", "b.md"})
+                         {"a-prompt.md", "b-prompt.md"})
         self.assertEqual(first["launched"], [])
         with open(self.log, encoding="utf-8") as handle:
             self.assertIn("baseline", handle.read().lower())
         second = watcher.run_once(
-            self.config, self._lister(["a.md", "b.md"]),
+            self.config, self._lister(["a-prompt.md", "b-prompt.md"]),
             self._downloader(),
             lambda cmd: self.ran.append(cmd) or 0,
             now="2026-11-24T00:01:00Z")
         self.assertEqual(self.ran, [])
         self.assertEqual(second["launched"], [])
         third = watcher.run_once(
-            self.config, self._lister(["a.md", "b.md", "c.md"]),
+            self.config,
+            self._lister(["a-prompt.md", "b-prompt.md", "c-prompt.md"]),
             self._downloader(),
             lambda cmd: self.ran.append(cmd) or 0,
             now="2026-11-24T00:02:00Z")
         self.assertEqual(len(self.ran), 1)
-        self.assertIn("c.md", self.ran[0][3])
+        self.assertIn("c-prompt.md", self.ran[0][3])
         self.assertEqual(third["launched"],
-                         [("app-mode/x", "c.md", 0)])
+                         [("app-mode/x", "c-prompt.md", 0)])
 
 
 class BranchCheckoutTest(unittest.TestCase):
@@ -838,14 +844,15 @@ class BranchCheckoutTest(unittest.TestCase):
                 watcher, "checkout_branch",
                 side_effect=lambda d, b: self.order.append("checkout")):
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         self.assertEqual(current.call_args[0][0], self.repo_dir)
         self.assertEqual(self.order, ["checkout", "run"])
         self.assertEqual(report["launched"],
-                         [(self.branch, "new.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
 
     def test_no_checkout_when_already_on_branch(self):
         """A tree already on B runs with no checkout."""
@@ -857,13 +864,14 @@ class BranchCheckoutTest(unittest.TestCase):
                 return_value=self.branch), \
             mock.patch.object(watcher, "checkout_branch") as checkout:
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         checkout.assert_not_called()
         self.assertEqual(report["launched"],
-                         [(self.branch, "new.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state), {"new.md"})
+                         [(self.branch, "new-prompt.md", 0)])
+        self.assertEqual(watcher.load_seen(self.state),
+                         {"new-prompt.md"})
 
     def test_dirty_tree_skips_run_and_leaves_unmarked(self):
         """Uncommitted changes that a checkout would lose skip the
@@ -879,7 +887,7 @@ class BranchCheckoutTest(unittest.TestCase):
                 return_value=True), \
             mock.patch.object(watcher, "checkout_branch") as checkout:
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         checkout.assert_not_called()
@@ -907,7 +915,7 @@ class BranchCheckoutTest(unittest.TestCase):
                 return_value=False), \
             mock.patch.object(watcher, "checkout_branch") as checkout:
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         checkout.assert_not_called()
@@ -936,7 +944,7 @@ class BranchCheckoutTest(unittest.TestCase):
                 watcher, "checkout_branch",
                 side_effect=subprocess.CalledProcessError(1, "git")):
             report = watcher.run_once(
-                self.config, self._lister(["new.md"]),
+                self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
         self.assertEqual(report["launched"], [])
