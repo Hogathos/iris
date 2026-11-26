@@ -33,11 +33,11 @@ again.
    (the spec + prompt commit) on top of `b886e05` (main, PR #63
    merge). If the base is different, say so in your report and
    stop.
-3. Activate the venv first: the repo venv is `.venv314`. Run
+4. Activate the venv first: the repo venv is `.venv314`. Run
    `C:\Users\Quant\Documents\iris\.venv314\Scripts\Activate.ps1`
    (or the equivalent for your shell) before running Python or
    pytest. Do NOT run tests from a venv that lacks the packages.
-4. Read the spec first: `specs/bridge-watcher-codex/requirements.md`.
+5. Read the spec first: `specs/bridge-watcher-codex/requirements.md`.
    Read the current watcher: `tools/bridge_watcher.py`. Read the
    existing tests: `tests/test_bridge_watcher.py` (2,052 lines).
    Read the plan: this prompt is Step 1 of
