@@ -19,13 +19,20 @@ again.
 
 ## Base and setup
 
-1. Fetch origin FIRST: `git fetch origin`. Rebase onto
-   `origin/main` and verify the base: `git log --oneline -3`
-   must show main at `b886e05` (PR #63 merge). If the base is
-   different, say so in your report and stop.
-2. You are on branch `bridge/watcher-codex`. Verify with
-   `git branch --show-current`. If you are on another branch, say
-   so in your report and stop.
+1. Fetch origin FIRST: `git fetch origin`.
+2. Switch to branch `bridge/watcher-codex`: run
+   `git checkout bridge/watcher-codex`. If the checkout fails
+   because the working tree has uncommitted changes, say so in
+   your report and stop: do NOT discard changes, do NOT stash
+   without being told to. If the checkout fails because the
+   branch does not exist, say so in your report and stop. After
+   checkout, verify with `git branch --show-current` that you
+   are on `bridge/watcher-codex`. If you are not, say so in your
+   report and stop.
+3. Verify the base: `git log --oneline -3` must show `e0da73b`
+   (the spec + prompt commit) on top of `b886e05` (main, PR #63
+   merge). If the base is different, say so in your report and
+   stop.
 3. Activate the venv first: the repo venv is `.venv314`. Run
    `C:\Users\Quant\Documents\iris\.venv314\Scripts\Activate.ps1`
    (or the equivalent for your shell) before running Python or
