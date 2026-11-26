@@ -2048,5 +2048,169 @@ class PushAfterRunTest(unittest.TestCase):
         self.assertEqual(self.pushed, [])
 
 
+class CodexPromptNamesTest(unittest.TestCase):
+    """Both agents share the prompt directory."""
+
+    def test_prompt_names_for_both_agents(self):
+        for name in ("foo-codex-prompt.md", "foo-prompt.md"):
+            with self.subTest(name=name):
+                self.assertTrue(watcher.is_prompt_file(name))
+        for name in ("foo-codex-report.md", "foo-report.md", "note.md", ".md"):
+            with self.subTest(name=name):
+                self.assertFalse(watcher.is_prompt_file(name))
+
+    def test_report_names_for_both_agents(self):
+        self.assertEqual(watcher.report_name("foo-codex-prompt.md"), "foo-codex-report.md")
+        self.assertEqual(watcher.report_name("foo-prompt.md"), "foo-report.md")
+
+
+class CodexCommandTest(unittest.TestCase):
+    """Build the verified Windows launch and keep its output visible."""
+
+    def test_build_codex_command_reads_a_literal_prompt_path(self):
+        path = r"C:\Iris\Charles's prompt & file.md"
+        self.assertEqual(
+            watcher.build_codex_command(path),
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+                r"Get-Content -LiteralPath 'C:\Iris\Charles''s prompt & file.md' "
+                "-Raw -Encoding UTF8 -ErrorAction Stop | "
+                "& codex -a never exec --sandbox workspace-write --ephemeral "
+                "-m gpt-6.2-sol -; exit $LASTEXITCODE",
+            ],
+        )
+
+    def _run_with_mock_subprocess(self, repo_dir):
+        from unittest import mock
+
+        command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "exit 7"]
+        with mock.patch.object(watcher.subprocess, "run", return_value=mock.Mock(returncode=7)) as run:
+            code = watcher.run_codex(command, repo_dir)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args, (command,))
+        self.assertEqual(code, 7)
+        return run.call_args.kwargs
+
+    def test_run_codex_sets_subprocess_cwd(self):
+        with tempfile.TemporaryDirectory() as repo_dir:
+            kwargs = self._run_with_mock_subprocess(repo_dir)
+            self.assertEqual(kwargs.get("cwd"), repo_dir)
+
+    def test_run_codex_inherits_terminal_output(self):
+        with tempfile.TemporaryDirectory() as repo_dir:
+            kwargs = self._run_with_mock_subprocess(repo_dir)
+        self.assertFalse(kwargs.get("capture_output", False))
+        self.assertIsNone(kwargs.get("stdout"))
+        self.assertIsNone(kwargs.get("stderr"))
+
+
+class CodexRunOnceTest(unittest.TestCase):
+    """Route each prompt once and record the result on disk."""
+
+    branch = "bridge/codex-test"
+    now = "2026-11-26T12:00:00Z"
+    codex_prompt = "foo-codex-prompt.md"
+    muse_prompt = "foo-prompt.md"
+
+    def setUp(self):
+        from unittest import mock
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.state = os.path.join(temp.name, "seen.json")
+        self.log = os.path.join(temp.name, "launch.log")
+        self.download_dir = os.path.join(temp.name, "prompts")
+        self.repo_dir = os.path.join(temp.name, "repo")
+        os.makedirs(self.repo_dir)
+        self.config = {
+            "branches": [self.branch],
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": self.download_dir,
+            "repo_dir": self.repo_dir,
+        }
+        watcher.save_seen(self.state, set())
+        current_branch = mock.patch.object(watcher, "get_current_branch", return_value=self.branch)
+        push_branch = mock.patch.object(watcher, "push_branch")
+        for patch in (current_branch, push_branch):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.muse_runner = mock.Mock(return_value=0)
+        self.codex_calls = []
+        self.codex_exit_code = 0
+
+    def _poll(self, names):
+        def list_prompts(branch):
+            self.assertEqual(branch, self.branch)
+            return [{"name": name, "url": "https://example.invalid/" + name} for name in names]
+
+        def download(url, destination):
+            _write(destination, "Prompt from " + url)
+
+        def run_codex(command, cwd):
+            self.codex_calls.append((command, cwd))
+            return self.codex_exit_code
+
+        return watcher.run_once(
+            dict(self.config),
+            list_prompts,
+            download,
+            self.muse_runner,
+            now=self.now,
+            codex_runner=run_codex,
+        )
+
+    def test_run_once_routes_to_the_matching_builder_and_runner(self):
+        from unittest import mock
+
+        codex_command = ["codex test command"]
+        muse_command = ["muse test command"]
+        with mock.patch.object(watcher, "build_codex_command", return_value=codex_command) as codex_builder:
+            with mock.patch.object(watcher, "build_command", return_value=muse_command) as muse_builder:
+                self._poll([self.codex_prompt])
+                codex_builder.assert_called_once_with(os.path.join(self.download_dir, self.codex_prompt))
+                muse_builder.assert_not_called()
+                self.muse_runner.assert_not_called()
+                self.assertEqual(self.codex_calls, [(codex_command, self.repo_dir)])
+
+                self._poll([self.muse_prompt])
+                muse_builder.assert_called_once_with(os.path.join(self.download_dir, self.muse_prompt))
+                self.muse_runner.assert_called_once_with(muse_command)
+                self.assertEqual(codex_builder.call_count, 1)
+                self.assertEqual(self.codex_calls, [(codex_command, self.repo_dir)])
+
+    def test_launch_log_names_each_agent_and_its_result(self):
+        self.codex_exit_code = 7
+        self._poll([self.codex_prompt, self.muse_prompt])
+        with open(self.log, encoding="utf-8") as handle:
+            launches = [line.split() for line in handle if " exit=" in line]
+        self.assertCountEqual(
+            launches,
+            [
+                [self.now, f"branch={self.branch}", f"file={self.codex_prompt}", "agent=codex", "exit=7"],
+                [self.now, f"branch={self.branch}", f"file={self.muse_prompt}", "agent=muse", "exit=0"],
+            ],
+        )
+
+    def test_seen_codex_prompt_is_skipped_after_restart(self):
+        watcher.save_seen(self.state, {self.codex_prompt})
+        self.assertEqual(self._poll([self.codex_prompt])["launched"], [])
+        self.assertEqual(self.codex_calls, [])
+        self.muse_runner.assert_not_called()
+
+    def test_failed_codex_launch_is_saved_and_skipped_after_restart(self):
+        self.codex_exit_code = 7
+        first = self._poll([self.codex_prompt])
+        self.assertEqual(first["launched"], [(self.branch, self.codex_prompt, 7)])
+        self.assertEqual(watcher.load_seen(self.state), {self.codex_prompt})
+        self.assertEqual(self._poll([self.codex_prompt])["launched"], [])
+        self.assertEqual(len(self.codex_calls), 1)
+        self.muse_runner.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
