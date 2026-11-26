@@ -438,8 +438,44 @@ def fetch_branch(repo_dir, branch):
     branch. It fetches just this branch, not the whole remote.
     It raises when git fails: the caller logs a plain skip.
     """
+    branch_ref = "refs/heads/" + branch
     subprocess.run(
-        ["git", "-C", repo_dir, "fetch", "origin", branch],
+        ["git", "check-ref-format", branch_ref],
+        capture_output=True, check=True)
+    subprocess.run(
+        ["git", "-C", repo_dir, "fetch", "--no-tags",
+         "--no-recurse-submodules",
+         "--refmap=refs/heads/*:refs/remotes/origin/*",
+         "origin", branch_ref],
+        capture_output=True, text=True, check=True)
+
+
+def fast_forward_branch(repo_dir, branch, *, already_checked_out=False):
+    """Advance a local branch from its fetched origin ref.
+
+    Merge updates the current branch and its working tree.
+    A local fetch updates a branch that is not checked out.
+    Git enforces fast-forward updates in both cases.
+    """
+    origin_ref = f"refs/remotes/origin/{branch}"
+    if already_checked_out:
+        # Merge treats a local branch ahead of origin as up to date.
+        # Require HEAD to be at or behind the fetched commit.
+        subprocess.run(
+            ["git", "-C", repo_dir, "merge-base", "--is-ancestor",
+             "HEAD", origin_ref],
+            capture_output=True, text=True, check=True)
+        subprocess.run(
+            ["git", "-C", repo_dir, "merge", "--ff-only", "--no-squash",
+             "--no-autostash", "--no-overwrite-ignore", "--", origin_ref],
+            capture_output=True, text=True, check=True)
+        return
+
+    refspec = f"{origin_ref}:refs/heads/{branch}"
+    subprocess.run(
+        ["git", "-C", repo_dir, "fetch", "--no-tags",
+         "--no-recurse-submodules", "--no-write-fetch-head",
+         ".", refspec],
         capture_output=True, text=True, check=True)
 
 
@@ -471,6 +507,32 @@ def checkout_branch(repo_dir, branch):
     subprocess.run(
         ["git", "-C", repo_dir, "checkout", branch],
         capture_output=True, text=True, check=True)
+
+
+def _prepare_branch_checkout(repo_dir, branch, *, already_checked_out):
+    """Refresh a branch and check it out if needed, or return a skip reason."""
+    try:
+        fetch_branch(repo_dir, branch)
+    except Exception:
+        return f"fetch of {branch} failed, run skipped"
+
+    if already_checked_out or branch_exists_locally(repo_dir, branch):
+        try:
+            fast_forward_branch(
+                repo_dir, branch, already_checked_out=already_checked_out)
+        except (OSError, subprocess.SubprocessError):
+            return (f"cannot fast-forward {branch} to its origin head, "
+                    "run skipped")
+    elif not remote_branch_exists(repo_dir, branch):
+        return f"no local branch {branch} or fetched branch, run skipped"
+
+    if already_checked_out:
+        return None
+    try:
+        checkout_branch(repo_dir, branch)
+    except Exception as exc:
+        return f"checkout to {branch} failed ({exc}), run skipped"
+    return None
 
 
 def push_branch(repo_dir, branch):
@@ -572,11 +634,11 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
     seen-list already exists, so old prompts on newly found
     branches are marked seen instead of running. A listing
     failure skips that branch and retries next poll. Before
-    running a prompt from branch B, the working tree in repo_dir
-    is switched to B with a local checkout. A checkout skip
-    leaves the prompt unmarked, so a later poll retries it. A
-    download failure leaves the file unmarked, so a later poll
-    retries it. A run is marked seen whatever its exit
+    running a prompt from branch B, fetch B and fast-forward
+    its local branch if it exists. Switch to B if needed.
+    A checkout skip leaves the prompt unmarked, so a later poll
+    retries it. A download failure also leaves the file unmarked.
+    A run is marked seen whatever its exit
     code: Iris never runs a prompt twice. Every launch is logged
     with time, branch, file, agent, and exit code. After each run the
     branch is pushed to origin and the push outcome is logged
@@ -662,7 +724,8 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
                     skipped_checkouts.append(
                         (branch, item["name"], reason))
                 continue
-            if current != branch:
+            already_checked_out = current == branch
+            if not already_checked_out:
                 try:
                     dirty = working_tree_dirty(repo_dir)
                 except Exception as exc:
@@ -683,40 +746,15 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
                         skipped_checkouts.append(
                             (branch, item["name"], reason))
                     continue
-                if not branch_exists_locally(repo_dir, branch):
-                    try:
-                        fetch_branch(repo_dir, branch)
-                    except Exception as exc:
-                        reason = (f"fetch of {branch} failed "
-                                  f"({exc}), run skipped")
-                        for item in pending:
-                            _log_skip(config["log_file"], now, branch,
-                                      item["name"], reason)
-                            skipped_checkouts.append(
-                                (branch, item["name"], reason))
-                        continue
-                    if (not branch_exists_locally(repo_dir, branch)
-                            and not remote_branch_exists(
-                                repo_dir, branch)):
-                        reason = (f"no local branch {branch}, no fetch "
-                                  f"attempted, run skipped")
-                        for item in pending:
-                            _log_skip(config["log_file"], now, branch,
-                                      item["name"], reason)
-                            skipped_checkouts.append(
-                                (branch, item["name"], reason))
-                        continue
-                try:
-                    checkout_branch(repo_dir, branch)
-                except Exception as exc:
-                    reason = (f"checkout to {branch} failed "
-                              f"({exc}), run skipped")
-                    for item in pending:
-                        _log_skip(config["log_file"], now, branch,
-                                  item["name"], reason)
-                        skipped_checkouts.append(
-                            (branch, item["name"], reason))
-                    continue
+            reason = _prepare_branch_checkout(
+                repo_dir, branch, already_checked_out=already_checked_out)
+            if reason:
+                for item in pending:
+                    _log_skip(config["log_file"], now, branch,
+                              item["name"], reason)
+                    skipped_checkouts.append(
+                        (branch, item["name"], reason))
+                continue
         for item in files:
             name = item["name"]
             if name in seen:

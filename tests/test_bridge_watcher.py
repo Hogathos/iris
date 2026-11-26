@@ -839,6 +839,10 @@ class BranchCheckoutTest(unittest.TestCase):
                 return_value=False), \
             mock.patch.object(
                 watcher, "branch_exists_locally",
+                return_value=False), \
+            mock.patch.object(watcher, "fetch_branch"), \
+            mock.patch.object(
+                watcher, "remote_branch_exists",
                 return_value=True), \
             mock.patch.object(
                 watcher, "checkout_branch",
@@ -862,6 +866,10 @@ class BranchCheckoutTest(unittest.TestCase):
         with mock.patch.object(
                 watcher, "get_current_branch",
                 return_value=self.branch), \
+            mock.patch.object(watcher, "fetch_branch", return_value=None), \
+            mock.patch.object(watcher, "fast_forward_branch", return_value=None), \
+            mock.patch.object(watcher, "branch_exists_locally", return_value=True), \
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False), \
             mock.patch.object(watcher, "checkout_branch") as checkout:
             report = watcher.run_once(
                 self.config, self._lister(["new-prompt.md"]),
@@ -939,6 +947,10 @@ class BranchCheckoutTest(unittest.TestCase):
                 return_value=False), \
             mock.patch.object(
                 watcher, "branch_exists_locally",
+                return_value=False), \
+            mock.patch.object(watcher, "fetch_branch"), \
+            mock.patch.object(
+                watcher, "remote_branch_exists",
                 return_value=True), \
             mock.patch.object(
                 watcher, "checkout_branch",
@@ -963,8 +975,7 @@ class FetchMissingBranchTest(unittest.TestCase):
     out. The watcher now runs ``git fetch origin <branch>`` on
     the missing-branch path, checks out, and runs. A fetch
     failure is a plain skip, never a crash. A branch still
-    missing after a fetch is skipped as before. A branch that
-    already exists locally is never fetched.
+    missing after a fetch is skipped as before.
     """
 
     def setUp(self):
@@ -1125,36 +1136,6 @@ class FetchMissingBranchTest(unittest.TestCase):
         logged = self._read_log().lower()
         self.assertIn("no local branch", logged)
         self.assertIn(self.branch.lower(), logged)
-
-    def test_existing_local_branch_is_never_fetched(self):
-        """A branch that already exists locally runs as normal.
-        The watcher makes no extra git fetch call on that path."""
-        from unittest import mock
-
-        watcher.save_seen(self.state, set())
-        with mock.patch.object(
-                watcher, "get_current_branch",
-                return_value="other-branch"), \
-            mock.patch.object(
-                watcher, "working_tree_dirty",
-                return_value=False), \
-            mock.patch.object(
-                watcher, "branch_exists_locally",
-                return_value=True), \
-            mock.patch.object(
-                watcher, "fetch_branch") as fetch, \
-            mock.patch.object(
-                watcher, "checkout_branch",
-                side_effect=lambda d, b: self.order.append("checkout")):
-            report = watcher.run_once(
-                self.config, self._lister(["new-prompt.md"]),
-                self._downloader(), self._runner(),
-                now="2026-11-24T00:00:00Z")
-        fetch.assert_not_called()
-        self.assertEqual(self.order, ["checkout", "run"])
-        self.assertEqual(report["launched"],
-                         [(self.branch, "new-prompt.md", 0)])
-        self.assertEqual(watcher.load_seen(self.state), {"new-prompt.md"})
 
     def test_second_poll_runs_nothing_after_fetched_run(self):
         """A prompt fetched and run this way is in the seen-list
@@ -1743,6 +1724,8 @@ class PushAfterRunTest(unittest.TestCase):
     """
 
     def setUp(self):
+        from unittest import mock
+
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.state = os.path.join(self.tmp.name, "seen.json")
@@ -1763,6 +1746,16 @@ class PushAfterRunTest(unittest.TestCase):
         }
         self.ran = []
         self.pushed = []
+
+        # These tests use an empty directory in place of a Git checkout.
+        for patch in (
+            mock.patch.object(watcher, "fetch_branch", return_value=None),
+            mock.patch.object(watcher, "fast_forward_branch", return_value=None),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=True),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def _lister(self, files):
         def listing(branch):
@@ -1982,7 +1975,7 @@ class PushAfterRunTest(unittest.TestCase):
             mock.patch.object(
                 watcher, "checkout_branch") as checkout, \
             mock.patch.object(
-                watcher, "fetch_branch") as fetch, \
+                subprocess, "run", wraps=subprocess.run) as git_run, \
             mock.patch.object(
                 watcher, "push_branch",
                 side_effect=self._pusher(fail_with=failure)):
@@ -1990,15 +1983,21 @@ class PushAfterRunTest(unittest.TestCase):
                 self.config, self._lister(["new-prompt.md"]),
                 self._downloader(), self._runner(),
                 now="2026-11-24T00:00:00Z")
+            second = watcher.run_once(
+                self.config, self._lister(["new-prompt.md"]),
+                self._downloader(), self._runner(),
+                now="2026-11-24T00:01:00Z")
         self.assertEqual(report["launched"],
                          [(self.branch, "new-prompt.md", 0)])
         self.assertEqual(watcher.load_seen(self.state),
                          {"new-prompt.md"})
         checkout.assert_not_called()
-        fetch.assert_not_called()
-        logged = self._read_log().lower()
-        self.assertIn("push", logged)
-        self.assertIn("fail", logged)
+        self.assertFalse(any("rebase" in call.args[0]
+                             for call in git_run.call_args_list))
+        self.assertEqual(second["launched"], [])
+        self.assertEqual(len(self.ran), 1)
+        self.assertEqual(self.pushed, [(self.repo_dir, self.branch)])
+        self.assertIn(f"push branch={self.branch} push failed", self._read_log())
 
     def test_discovered_branch_pushes_too(self):
         """Auto-discovered branches push exactly like config
@@ -2136,7 +2135,14 @@ class CodexRunOnceTest(unittest.TestCase):
         watcher.save_seen(self.state, set())
         current_branch = mock.patch.object(watcher, "get_current_branch", return_value=self.branch)
         push_branch = mock.patch.object(watcher, "push_branch")
-        for patch in (current_branch, push_branch):
+        for patch in (
+            current_branch,
+            push_branch,
+            mock.patch.object(watcher, "fetch_branch", return_value=None),
+            mock.patch.object(watcher, "fast_forward_branch", return_value=None),
+            mock.patch.object(watcher, "branch_exists_locally", return_value=True),
+            mock.patch.object(watcher, "working_tree_dirty", return_value=False),
+        ):
             patch.start()
             self.addCleanup(patch.stop)
         self.muse_runner = mock.Mock(return_value=0)
@@ -2210,6 +2216,288 @@ class CodexRunOnceTest(unittest.TestCase):
         self.assertEqual(self._poll([self.codex_prompt])["launched"], [])
         self.assertEqual(len(self.codex_calls), 1)
         self.muse_runner.assert_not_called()
+
+
+class FetchBeforeCheckoutTest(unittest.TestCase):
+    """Exercise the watcher against real local and remote Git refs."""
+
+    branch = "bridge/test-fetch"
+    prompt = "new-codex-prompt.md"
+    other_prompt = "next-prompt.md"
+
+    def setUp(self):
+        from unittest import mock
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.origin = os.path.join(tmp.name, "origin")
+        self.repo = os.path.join(tmp.name, "repo")
+        self.state = os.path.join(tmp.name, "seen.json")
+        self.log = os.path.join(tmp.name, "run.log")
+        self.config = {
+            "branches": [self.branch],
+            "state_file": self.state,
+            "log_file": self.log,
+            "download_dir": os.path.join(tmp.name, "downloads"),
+            "repo_dir": self.repo,
+        }
+
+        os.mkdir(self.origin)
+        self._git(self.origin, "init", "--initial-branch=main")
+        self._commit(self.origin, "work.txt", "base")
+        self._git(self.origin, "branch", self.branch)
+        self._git(self.origin, "clone", "--quiet", self.origin, self.repo)
+        self._git(self.repo, "branch", self.branch, f"origin/{self.branch}")
+        self.stale_head = self._git(self.repo, "rev-parse", self.branch)
+
+        self._git(self.origin, "checkout", self.branch)
+        prompt_path = f"prompts/{self.prompt}"
+        _write(os.path.join(self.origin, prompt_path), "new prompt")
+        self._git(self.origin, "add", "--", prompt_path)
+        self.remote_head = self._commit(
+            self.origin, "work.txt", "remote prompt commit")
+        self.assertNotEqual(self.stale_head, self.remote_head)
+        self.assertEqual(
+            self._git(self.repo, "rev-parse", f"origin/{self.branch}"),
+            self.stale_head,
+        )
+
+        self.muse = mock.Mock(return_value=0)
+        self.codex = mock.Mock(return_value=0)
+        push = mock.patch.object(watcher, "push_branch")
+        self.push = push.start()
+        self.addCleanup(push.stop)
+
+    def _git(self, repo, *args):
+        import subprocess
+
+        return subprocess.run(
+            ["git", "-C", repo, *args],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    def _commit(self, repo, path, text):
+        _write(os.path.join(repo, path), text)
+        self._git(repo, "add", "--", path)
+        self._git(
+            repo, "-c", "user.name=Watcher Test",
+            "-c", "user.email=watcher@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "-m", text,
+        )
+        return self._git(repo, "rev-parse", "HEAD")
+
+    def _poll(self, *, include_main=False):
+        files = {self.branch: self.prompt}
+        if include_main:
+            files["main"] = self.other_prompt
+
+        def list_prompts(branch):
+            return [{"name": files[branch],
+                     "url": "https://example.invalid/" + files[branch]}]
+
+        return watcher.run_once(
+            dict(self.config, branches=list(files)),
+            list_prompts,
+            lambda url, destination: _write(destination, url),
+            self.muse,
+            now="2026-11-26T12:00:00Z",
+            codex_runner=self.codex,
+        )
+
+    def _assert_skip(self, result, reason):
+        self.assertEqual(len(result["skipped_checkouts"]), 1)
+        branch, name, message = result["skipped_checkouts"][0]
+        self.assertEqual((branch, name), (self.branch, self.prompt))
+        self.assertRegex(message.lower(), reason)
+        with open(self.log, encoding="utf-8") as handle:
+            self.assertIn(
+                f"skip branch={branch} file={name} reason={message}",
+                handle.read(),
+            )
+
+    def _assert_no_run(self, result):
+        self.assertEqual(result["launched"], [])
+        self.muse.assert_not_called()
+        self.codex.assert_not_called()
+        self.push.assert_not_called()
+
+    def test_existing_branch_is_updated_before_checkout_and_run(self):
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        checkout_branch = watcher.checkout_branch
+        heads_before_checkout = []
+
+        def observe_checkout(repo, branch):
+            heads_before_checkout.append((
+                self._git(repo, "rev-parse", branch),
+                self._git(repo, "rev-parse", f"origin/{branch}"),
+            ))
+            checkout_branch(repo, branch)
+
+        def run_codex(command, repo):
+            self.assertEqual(self._git(repo, "branch", "--show-current"), self.branch)
+            self._commit(repo, "result.txt", "agent result")
+            return 0
+
+        self.codex.side_effect = run_codex
+        with mock.patch.object(watcher, "checkout_branch", side_effect=observe_checkout):
+            result = self._poll()
+
+        self.assertEqual(
+            heads_before_checkout, [(self.remote_head, self.remote_head)],
+            "Both branch refs must include the remote commit before checkout.",
+        )
+        self.assertEqual(self._git(self.repo, "rev-parse", "HEAD^"), self.remote_head)
+        self.assertEqual(result["launched"], [(self.branch, self.prompt, 0)])
+        self.assertEqual(watcher.load_seen(self.state), {self.prompt})
+        self.muse.assert_not_called()
+        self.push.assert_called_once_with(self.repo, self.branch)
+
+    def test_fetch_failure_skips_existing_branch_and_poll_continues(self):
+        watcher.save_seen(self.state, set())
+        self._git(self.origin, "checkout", "main")
+        self._git(self.origin, "branch", "-D", self.branch)
+
+        result = self._poll(include_main=True)
+
+        self.codex.assert_not_called()
+        self.assertEqual(result["launched"], [("main", self.other_prompt, 0)])
+        self.muse.assert_called_once()
+        self.push.assert_called_once_with(self.repo, "main")
+        self.assertEqual(watcher.load_seen(self.state), {self.other_prompt})
+        self.assertEqual(self._git(self.repo, "rev-parse", self.branch), self.stale_head)
+        self._assert_skip(result, r"fetch.*fail")
+
+    def test_diverged_branch_preserves_local_work_without_checkout(self):
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        self._git(self.repo, "checkout", self.branch)
+        local_head = self._commit(self.repo, "work.txt", "local work")
+        self._git(self.repo, "checkout", "main")
+        with mock.patch.object(
+            watcher, "checkout_branch", wraps=watcher.checkout_branch,
+        ) as checkout:
+            result = self._poll()
+
+        checkout.assert_not_called()
+        self._assert_no_run(result)
+        self.assertEqual(watcher.load_seen(self.state), set())
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), "main")
+        self.assertEqual(self._git(self.repo, "rev-parse", self.branch), local_head)
+        self.assertEqual(self._git(self.repo, "show", f"{self.branch}:work.txt"), "local work")
+        self.assertEqual(self._git(self.repo, "rev-parse", f"origin/{self.branch}"), self.remote_head)
+        self._assert_skip(result, r"diverg|fast.forward")
+
+    def test_already_on_branch_starts_run_at_fetched_head(self):
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        self._git(self.repo, "checkout", self.branch)
+        self.assertEqual(self._git(self.repo, "rev-parse", "HEAD"), self.stale_head)
+        run_heads = []
+
+        def run_codex(command, repo):
+            run_heads.append(self._git(repo, "rev-parse", "HEAD"))
+            self._commit(repo, "result.txt", "agent result")
+            return 0
+
+        self.codex.side_effect = run_codex
+        with mock.patch.object(
+            watcher, "checkout_branch", wraps=watcher.checkout_branch,
+        ) as checkout:
+            result = self._poll()
+
+        self.assertEqual(run_heads, [self.remote_head])
+        checkout.assert_not_called()
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), self.branch)
+        self.assertEqual(self._git(self.repo, "rev-parse", "HEAD^"), self.remote_head)
+        self.assertEqual(
+            self._git(self.repo, "rev-parse", f"origin/{self.branch}"), self.remote_head,
+        )
+        self.assertEqual(result["launched"], [(self.branch, self.prompt, 0)])
+        self.assertEqual(watcher.load_seen(self.state), {self.prompt})
+        self.push.assert_called_once_with(self.repo, self.branch)
+
+    def test_already_on_branch_fetch_failure_skips_and_poll_continues(self):
+        watcher.save_seen(self.state, set())
+        self._git(self.repo, "checkout", self.branch)
+        self._git(self.origin, "checkout", "main")
+        self._git(self.origin, "branch", "-D", self.branch)
+
+        result = self._poll(include_main=True)
+
+        self.codex.assert_not_called()
+        self.assertEqual(result["launched"], [("main", self.other_prompt, 0)])
+        self.muse.assert_called_once()
+        self.push.assert_called_once_with(self.repo, "main")
+        self.assertEqual(watcher.load_seen(self.state), {self.other_prompt})
+        self.assertEqual(self._git(self.repo, "rev-parse", self.branch), self.stale_head)
+        self._assert_skip(result, r"fetch.*fail")
+
+    def test_already_on_diverged_branch_skips_and_preserves_work(self):
+        from unittest import mock
+
+        watcher.save_seen(self.state, set())
+        self._git(self.repo, "checkout", self.branch)
+        local_head = self._commit(self.repo, "work.txt", "local work")
+        with mock.patch.object(
+            watcher, "checkout_branch", wraps=watcher.checkout_branch,
+        ) as checkout:
+            result = self._poll()
+
+        self._assert_no_run(result)
+        checkout.assert_not_called()
+        self.assertEqual(watcher.load_seen(self.state), set())
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), self.branch)
+        self.assertEqual(self._git(self.repo, "rev-parse", "HEAD"), local_head)
+        self.assertEqual(self._git(self.repo, "status", "--porcelain"), "")
+        with open(os.path.join(self.repo, "work.txt"), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "local work")
+        self.assertEqual(
+            self._git(self.repo, "rev-parse", f"origin/{self.branch}"), self.remote_head,
+        )
+        self._assert_skip(result, r"diverg|fast.forward")
+
+    def test_dirty_tree_keeps_uncommitted_work(self):
+        watcher.save_seen(self.state, set())
+        dirty_path = os.path.join(self.repo, "work.txt")
+        _write(dirty_path, "uncommitted work")
+
+        result = self._poll()
+
+        self._assert_no_run(result)
+        self.assertEqual(watcher.load_seen(self.state), set())
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), "main")
+        self.assertEqual(self._git(self.repo, "rev-parse", self.branch), self.stale_head)
+        with open(dirty_path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "uncommitted work")
+        self._assert_skip(result, r"uncommitted")
+
+    def test_missing_branch_stays_missing_after_failed_fetch(self):
+        watcher.save_seen(self.state, set())
+        self._git(self.repo, "branch", "-D", self.branch)
+        self._git(self.repo, "branch", "-dr", f"origin/{self.branch}")
+        self._git(self.origin, "checkout", "main")
+        self._git(self.origin, "branch", "-D", self.branch)
+
+        result = self._poll()
+
+        self._assert_no_run(result)
+        self.assertEqual(watcher.load_seen(self.state), set())
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), "main")
+        self.assertEqual(self._git(self.repo, "branch", "--list", self.branch), "")
+        self._assert_skip(result, r"fetch.*fail")
+
+    def test_baseline_marks_prompt_seen_and_pushes_nothing(self):
+        result = self._poll()
+
+        self._assert_no_run(result)
+        self.assertEqual(result["baselined"], [self.prompt])
+        self.assertEqual(watcher.load_seen(self.state), {self.prompt})
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), "main")
+        self.assertEqual(self._git(self.repo, "rev-parse", self.branch), self.stale_head)
 
 
 if __name__ == "__main__":
