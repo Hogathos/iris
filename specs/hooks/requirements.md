@@ -7,9 +7,8 @@ into hooks that run whether the agent agrees or not. Four hooks:
    the repo ban list (AGENTS.md: `.exe`, `dist/`, `build/`, `*.db`,
    `demo_*.db`, `.pytest_cache/`, `*.spec`, secrets by filename pattern).
    One exception: the already-tracked `iris.spec` at repo root.
-2. Fast lint + types (pre-commit). Runs `ruff check .`,
-   `ruff format --check .`, and `pyright`. Blocks the commit on failure.
-   The full pytest suite stays in CI, not in the hook.
+2. Fast lint + types (pre-commit). Runs `ruff check`, `ruff format --check`,
+   and `pyright` on the staged Python files only. Blocks the commit on failure.
 3. Unplanned files (pre-commit). Compares staged files against the
    approved plan's file list. The approved plan is a file named
    `approved-plan.txt` at the repo root, one approved file path per line,
