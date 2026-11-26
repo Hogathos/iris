@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .muse/hooks/iris-pre-tool-use.py"
+          }
+        ]
+      }
+    ]
+  }
+}
