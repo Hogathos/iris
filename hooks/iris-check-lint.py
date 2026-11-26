@@ -67,9 +67,33 @@ def _run_gate(label: str, cmd: list[str], cwd: str) -> tuple[bool, str]:
     return result.returncode == 0, combined
 
 
+def _get_staged_python_files(repo_root: str) -> list[str]:
+    """Return staged non-deleted .py file paths relative to repo_root."""
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=d", "-z"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        err_text = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"git diff --cached failed: {err_text}")
+    raw = result.stdout.decode("utf-8", errors="replace")
+    return [entry for entry in raw.split("\0") if entry.endswith(".py")]
+
+
 def main() -> int:
-    """Run ruff check, ruff format --check, and pyright; block on any failure."""
+    """Run ruff check, ruff format --check, and pyright on staged .py files."""
     repo_root = _resolve_repo_root()
+    try:
+        staged_py = _get_staged_python_files(repo_root)
+    except RuntimeError as exc:
+        sys.stderr.write(f"iris-check-lint: {exc}\n")
+        return 1
+
+    # No staged Python files: nothing to lint.
+    if not staged_py:
+        return 0
 
     ruff_cmd = _resolve_tool_cmd("ruff", "ruff")
     if ruff_cmd is None:
@@ -84,9 +108,9 @@ def main() -> int:
     # Pass --pythonpath so pyright resolves packages from the active venv even
     # when VIRTUAL_ENV is not exported in the hook's shell environment.
     checks: list[tuple[str, list[str]]] = [
-        ("ruff check .", ruff_cmd + ["check", "."]),
-        ("ruff format --check .", ruff_cmd + ["format", "--check", "."]),
-        ("pyright", pyright_cmd + ["--pythonpath", sys.executable]),
+        ("ruff check", ruff_cmd + ["check"] + staged_py),
+        ("ruff format --check", ruff_cmd + ["format", "--check"] + staged_py),
+        ("pyright", pyright_cmd + ["--pythonpath", sys.executable] + staged_py),
     ]
 
     for label, cmd in checks:

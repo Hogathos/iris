@@ -91,14 +91,10 @@ def main() -> int:
     unplanned = [path for path in staged_files if path not in approved_files]
 
     if unplanned:
-        sys.stderr.write(
-            f"Commit blocked by iris-check-plan (staged files missing from {PLAN_FILENAME}):\n"
-        )
+        sys.stderr.write(f"Commit blocked by iris-check-plan (staged files missing from {PLAN_FILENAME}):\n")
         for path in unplanned:
             sys.stderr.write(f"  - {path}\n")
-        sys.stderr.write(
-            f"Update and stage {PLAN_FILENAME} alongside the commit if these files are approved.\n"
-        )
+        sys.stderr.write(f"Update and stage {PLAN_FILENAME} alongside the commit if these files are approved.\n")
         return 1
 
     return 0

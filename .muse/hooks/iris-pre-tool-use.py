@@ -43,7 +43,13 @@ WRITE_TOOL_NAMES = {
 SHELL_BAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "rm -rf",
-        re.compile(r"(?:^|[\s;&|()])rm\s+(?:-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)(?:\s|$)"),
+        re.compile(
+            r"(?:^|[\s;&|()])rm\s+(?:"
+            r"-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|"
+            r"-[a-zA-Z]*r[a-zA-Z]*(?:\s+-[a-zA-Z]+)*\s+-[a-zA-Z]*f[a-zA-Z]*|"
+            r"-[a-zA-Z]*f[a-zA-Z]*(?:\s+-[a-zA-Z]+)*\s+-[a-zA-Z]*r[a-zA-Z]*"
+            r")(?:\s|$)"
+        ),
     ),
     (
         "git add -A",
@@ -190,10 +196,7 @@ def _check_file_mutation(raw_path: str, repo_root: str) -> str | None:
     if os.path.isfile(plan_path):
         approved_files = _load_plan(plan_path)
         if norm_path not in approved_files:
-            return (
-                f"Denied write to unplanned file '{norm_path}' "
-                f"(not listed in {PLAN_FILENAME})."
-            )
+            return f"Denied write to unplanned file '{norm_path}' (not listed in {PLAN_FILENAME})."
 
     return None
 

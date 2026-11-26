@@ -89,6 +89,7 @@ Tests do NOT require a live Muse Code session.
 The hook script path is:
   <repo_root>/.muse/hooks/iris-pre-tool-use.py
 """
+
 import json
 import os
 import subprocess
@@ -223,9 +224,7 @@ def _is_deny(returncode: int, stdout: str, stderr: str = "") -> bool:
     for the wrong reason.
     """
     if returncode == 2 and "No such file or directory" in stderr:
-        raise FileNotFoundError(
-            f"Hook script not found. stderr: {stderr!r}"
-        )
+        raise FileNotFoundError(f"Hook script not found. stderr: {stderr!r}")
     if returncode == 2:
         return True
     if returncode == 0:
@@ -238,6 +237,7 @@ def _is_deny(returncode: int, stdout: str, stderr: str = "") -> bool:
 # ---------------------------------------------------------------------------
 # Tests: shell command bans
 # ---------------------------------------------------------------------------
+
 
 class TestShellCommandBans(unittest.TestCase):
     """PreToolUse hook denies banned shell commands before they run.
@@ -256,8 +256,7 @@ class TestShellCommandBans(unittest.TestCase):
         rc, stdout, err = _run_hook(payload)
         self.assertTrue(
             _is_deny(rc, stdout, err),
-            f"Hook must deny command {command!r}. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must deny command {command!r}. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
         # The deny reason must name the blocked pattern.
         output = _parse_hook_output(stdout)
@@ -294,6 +293,7 @@ class TestShellCommandBans(unittest.TestCase):
 # Tests: banned file writes
 # ---------------------------------------------------------------------------
 
+
 class TestBannedFileWrites(unittest.TestCase):
     """PreToolUse hook denies writes to banned file types before they run.
 
@@ -306,8 +306,7 @@ class TestBannedFileWrites(unittest.TestCase):
         rc, stdout, err = _run_hook(payload)
         self.assertTrue(
             _is_deny(rc, stdout, err),
-            f"Hook must deny Write to {file_path!r}. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must deny Write to {file_path!r}. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
 
     def test_denies_write_exe(self):
@@ -336,14 +335,14 @@ class TestBannedFileWrites(unittest.TestCase):
         rc, stdout, err = _run_hook(payload)
         self.assertTrue(
             _is_deny(rc, stdout, err),
-            f"Hook must deny Edit of banned file. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must deny Edit of banned file. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
 
 
 # ---------------------------------------------------------------------------
 # Tests: unplanned file writes
 # ---------------------------------------------------------------------------
+
 
 class TestUnplannedFileWrites(unittest.TestCase):
     """PreToolUse hook denies writes to files not in approved-plan.txt.
@@ -361,6 +360,7 @@ class TestUnplannedFileWrites(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _write_plan(self, approved_files: list[str]) -> None:
@@ -383,8 +383,7 @@ class TestUnplannedFileWrites(unittest.TestCase):
         rc, stdout, err = self._run_in_tmpdir(payload)
         self.assertTrue(
             _is_deny(rc, stdout, err),
-            f"Hook must deny write to unplanned file. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must deny write to unplanned file. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
         # The reason must identify the offending path.
         output = _parse_hook_output(stdout)
@@ -392,26 +391,26 @@ class TestUnplannedFileWrites(unittest.TestCase):
         reason = hso.get("permissionDecisionReason", "")
         combined = reason + err
         self.assertIn(
-            "iris/surprise.py", combined,
+            "iris/surprise.py",
+            combined,
             f"Deny must name the unplanned file. combined={combined!r}",
         )
 
     def test_allows_write_to_plan_file_itself(self):
         """Writing approved-plan.txt is always allowed (it updates the plan)."""
         self._write_plan(["iris/proxy.py"])
-        payload = _build_write_payload("approved-plan.txt",
-                                       "iris/proxy.py\niris/new.py\n")
+        payload = _build_write_payload("approved-plan.txt", "iris/proxy.py\niris/new.py\n")
         rc, stdout, err = self._run_in_tmpdir(payload)
         self.assertFalse(
             _is_deny(rc, stdout, err),
-            f"Hook must allow write to plan file. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must allow write to plan file. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
 
 
 # ---------------------------------------------------------------------------
 # Tests: clean tool calls are allowed
 # ---------------------------------------------------------------------------
+
 
 class TestCleanToolCalls(unittest.TestCase):
     """PreToolUse hook allows clean tool calls that violate no rules.
@@ -426,6 +425,7 @@ class TestCleanToolCalls(unittest.TestCase):
     def tearDown(self):
         """Remove the temporary directory created for the test."""
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_allows_clean_bash_command(self):
@@ -434,8 +434,7 @@ class TestCleanToolCalls(unittest.TestCase):
         rc, stdout, err = _run_hook(payload, repo_root=self.tmpdir)
         self.assertFalse(
             _is_deny(rc, stdout, err),
-            f"Hook must allow a clean bash command. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must allow a clean bash command. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
 
     def test_allows_read_of_any_file(self):
@@ -444,8 +443,7 @@ class TestCleanToolCalls(unittest.TestCase):
         rc, stdout, err = _run_hook(payload, repo_root=self.tmpdir)
         self.assertFalse(
             _is_deny(rc, stdout, err),
-            f"Hook must allow Read tool calls. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must allow Read tool calls. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
 
     def test_allows_write_to_planned_clean_file(self):
@@ -465,8 +463,7 @@ class TestCleanToolCalls(unittest.TestCase):
         rc, stdout, err = _run_hook(payload, repo_root=self.tmpdir)
         self.assertFalse(
             _is_deny(rc, stdout, err),
-            f"Hook must allow write to a planned, clean file. "
-            f"returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must allow write to a planned, clean file. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
 
 
