@@ -1,7 +1,7 @@
-"""Bridge watcher: poll GitHub for new prompts, run Muse Code once each.
+"""Bridge watcher: poll GitHub for new prompts, run each once.
 
 Runs on Charles's Dell at login. Polls the Iris repo for new
-Bridge prompt files and runs Muse Code headless on each one, so
+Bridge prompt files and runs Muse Code or Codex headless, so
 Charles does not paste prompts by hand. It is the automation
 half of the Bridge: Main still writes the prompt and Charles
 still checks it. The watcher only removes the paste.
@@ -18,7 +18,7 @@ Rules, enforced below:
   list plus every branch GitHub returns. The run rules never
   change.
 - Never merge, open pull requests, commit, or review. Only
-  launch Muse Code, then push the branch it ran on.
+  launch the agent, then push the branch it ran on.
 - After each run, push that branch to origin by name. Never
   force-push. A failed push is logged and the poll goes on.
 - A network blip never kills the watcher. It skips and retries
@@ -285,13 +285,25 @@ def build_command(prompt_path):
             "--disable-approval", "--trust-workspace"]
 
 
-def log_launch(log_path, when, branch, filename, exit_code):
-    """Append one launch line: time, branch, file, exit code."""
+def build_codex_command(prompt_path):
+    """Build the Windows command that sends a UTF-8 prompt to Codex."""
+    # PowerShell treats straight and curly single quotes as delimiters.
+    literal_path = prompt_path.translate({ord(quote): quote * 2 for quote in "'‘’‚‛"})
+    script = (
+        "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        f"Get-Content -LiteralPath '{literal_path}' -Raw -Encoding UTF8 -ErrorAction Stop | "
+        "& codex -a never exec --sandbox workspace-write --ephemeral "
+        "-m gpt-6.2-sol -; exit $LASTEXITCODE"
+    )
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]
+
+
+def log_launch(log_path, when, branch, filename, exit_code, agent="muse"):
+    """Append one launch line with the time, branch, file, agent, and exit code."""
     parent = os.path.dirname(os.path.abspath(log_path))
     os.makedirs(parent, exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as handle:
-        handle.write(f"{when} branch={branch} file={filename} "
-                     f"exit={exit_code}\n")
+        handle.write(f"{when} branch={branch} file={filename} agent={agent} exit={exit_code}\n")
 
 
 def github_list(repo, branch, prompts_dir, timeout=_REQUEST_TIMEOUT):
@@ -381,6 +393,11 @@ def run_muse(command, repo_dir, timeout=None):
         command, timeout=timeout, cwd=repo_dir,
         shell=(os.name == "nt"))
     return proc.returncode
+
+
+def run_codex(command, cwd):
+    """Run Codex in the repo and stream its output to the terminal."""
+    return subprocess.run(command, cwd=cwd).returncode
 
 
 def get_current_branch(repo_dir):
@@ -539,8 +556,7 @@ def _mark_discovery_baselined(state_file):
         raise
 
 
-def run_once(config, lister, downloader, runner, now,
-             branch_lister=None):
+def run_once(config, lister, downloader, runner, now, branch_lister=None, *, codex_runner=None):
     """One poll: list, download the new, run each once, log it.
 
     The very first poll baselines instead of running: with no
@@ -560,13 +576,15 @@ def run_once(config, lister, downloader, runner, now,
     is switched to B with a local checkout. A checkout skip
     leaves the prompt unmarked, so a later poll retries it. A
     download failure leaves the file unmarked, so a later poll
-    retries it. A Muse run is marked seen whatever its exit
+    retries it. A run is marked seen whatever its exit
     code: Iris never runs a prompt twice. Every launch is logged
-    with time, branch, file, and exit code. After each run the
+    with time, branch, file, agent, and exit code. After each run the
     branch is pushed to origin and the push outcome is logged
     beside the run entries; a failed push never unmarks the run
     and never stops the poll.
     """
+    if codex_runner is None:
+        codex_runner = run_codex
     state_file = config["state_file"]
     baselining = _is_baseline_run(state_file)
     seen = load_seen(state_file)
@@ -726,20 +744,23 @@ def run_once(config, lister, downloader, runner, now,
                           reason)
                 skipped_reported.append((branch, name, reason))
                 continue
+            agent = "codex" if name.endswith("-codex-prompt.md") else "muse"
             dest = os.path.join(config["download_dir"], name)
             try:
                 downloader(item["url"], dest)
             except Exception:
                 failed_downloads.append(name)
                 continue
-            code = runner(build_command(dest))
+            if agent == "codex":
+                code = codex_runner(build_codex_command(dest), config["repo_dir"])
+            else:
+                code = runner(build_command(dest))
             # Mark seen before logging: the no-rerun guarantee
             # beats a complete audit trail. A lost log line is
             # noise; a double run is a broken promise.
             seen = mark_seen(seen, name)
             save_seen(config["state_file"], seen)
-            log_launch(config["log_file"], now, branch, name,
-                       code)
+            log_launch(config["log_file"], now, branch, name, code, agent=agent)
             launched.append((branch, name, code))
             # The run is done and marked seen above, whatever its
             # exit code. Push the branch it was on as a separate
