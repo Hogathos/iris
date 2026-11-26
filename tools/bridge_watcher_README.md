@@ -1,7 +1,7 @@
 # Bridge watcher — install and run (Dell)
 
 The watcher polls the Iris repo for new Bridge prompt files and
-runs Muse Code headless on each one, once. Charles installs it
+runs each one once with Muse Code or Codex. Charles installs it
 once, by hand. Nothing here needs installing beyond Python 3:
 the watcher is standard library only.
 
@@ -19,6 +19,12 @@ the watcher is standard library only.
    `bridge_watcher.py`, start in the script folder. The
    watcher polls on its own timer from then on.
 4. No `pip install` is needed. There are no dependencies.
+
+## Name a prompt
+
+Use `*-codex-prompt.md` for Codex. The watcher needs `codex` on
+PATH. It runs Codex headless from `repo_dir` with GPT-6.2-Sol.
+Use `*-prompt.md` for Muse Code.
 
 ## Switch branches or watch several
 
@@ -46,8 +52,9 @@ nothing is captured.
 ## Read the log
 
 Open `bridge_watcher.log` next to the script. Every launch is
-one line: time, branch, file, and exit code. A failed Muse
-run is logged with its code and never runs again.
+one line with the time, branch, file, agent, and exit code.
+The agent field is `agent=codex` or `agent=muse`. A failed run
+is logged with its code and never runs again.
 
 ## Stop it
 
@@ -61,6 +68,7 @@ config: `python bridge_watcher.py --config <path>`.
 ## What it never does
 
 It never merges, never opens a pull request, never commits,
-never reviews. It only launches Muse Code with
-`muse exec --prompt-file <path> --disable-approval`. The seen-list
+never reviews. It launches Muse Code with
+`muse exec --prompt-file <path> --disable-approval`. It sends
+Codex prompts to `codex exec` on standard input. The seen-list
 and the log stay on the Dell. They are never committed.
