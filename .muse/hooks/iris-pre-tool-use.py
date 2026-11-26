@@ -150,7 +150,7 @@ def _check_banned_path(norm_path: str) -> str | None:
 
     for pattern in SECRET_NAME_PATTERNS:
         if fnmatch.fnmatch(lower_name, pattern):
-            return f"secret filename pattern '{pattern}'"
+            return "banned secret-file pattern"
 
     return None
 
