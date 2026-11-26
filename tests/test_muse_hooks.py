@@ -14,7 +14,7 @@ payload from stdin, checks the tool name and arguments against the ban rules,
 and writes its decision to stdout as JSON. It signals a deny via exit code 2
 (the standard Claude Code / Muse Code deny exit code).
 
-Stdin payload shape (Claude Code hooks reference, 2026-11-25):
+Stdin payload shape (verified against Muse Code 1.4.25 live PreToolUse hook):
   {
     "session_id": "<str>",
     "hook_event_name": "PreToolUse",
@@ -22,15 +22,15 @@ Stdin payload shape (Claude Code hooks reference, 2026-11-25):
     "tool_input": { ... tool-specific fields ... }
   }
 
-Relevant tool_input shapes:
-  Bash tool:
-    { "command": "<shell command string>", "description": "<str>" }
-  Write tool (creates or overwrites a file):
-    { "file_path": "<path>", "content": "<str>" }
-  Edit tool (edits a file in place):
-    { "file_path": "<path>", ... }
-  Read tool (reads a file; not a write; should be allowed):
-    { "file_path": "<path>" }
+Relevant tool_input shapes in Muse Code:
+  powershell / shell tool:
+    { "command": "<shell command string>", "workdir": "<str>" }
+  write_file tool (creates or overwrites a file):
+    { "path": "<path>", "content": "<str>" }
+  edit_file tool (edits a file in place):
+    { "path": "<path>", "find": "<str>", "replace": "<str>" }
+  read_file tool (reads a file; not a write; should be allowed):
+    { "path": "<path>" }
 
 Stdout deny shape (hookSpecificOutput schema):
   {
@@ -42,44 +42,41 @@ Stdout deny shape (hookSpecificOutput schema):
   }
 
 Exit codes:
-  0  - no decision (normal permission flow applies); also used for allow
-  2  - deny (hook blocks the tool call)
+  0  - no decision (empty stdout; bare allow without updatedInput is rejected)
+  2  - deny (hook blocks the tool call; stderr/reason reported to model)
 
 --- Verification points ---
 
 Point A: Does the hook fire in muse exec non-interactive mode?
-  The watcher calls: muse exec --non-interactive --prompt "<task>"
-  Claude Code's hooks reference states that PreToolUse fires for all
-  tool calls in auto (non-interactive) mode. Exit 2 blocks the tool
-  call before it runs. This is the standard behaviour documented for
-  PreToolUse in both interactive and auto mode.
-  Status: VERIFIED from docs. See report for open questions about
-  the exact muse CLI flag spelling (muse exec vs muse run).
+  The watcher calls: muse exec --prompt-file <path> --disable-approval --trust-workspace
+  Verified via live loopback muse exec run against Muse Code 1.4.25: PreToolUse
+  fires even with --disable-approval --disable-sandbox --trust-workspace
+  (permission_mode="bypassPermissions") and exit 2 blocks the tool call before
+  execution.
 
 Point B: Payload shape.
-  Sourced from Claude Code hooks reference (docs.anthropic.com),
-  confirmed against the working example in the same doc (block-rm.sh).
-  The hook reads ``tool_name`` and ``tool_input`` from stdin JSON.
-  For Bash: ``tool_input.command``.
-  For Write/Edit: ``tool_input.file_path``.
+  Verified against Muse Code 1.4.25 binary and live PreToolUse stdin capture:
+  Muse sends tool_name ("powershell", "write_file", "edit_file", "read_file")
+  and tool_input.command / tool_input.path (differs from Claude Code's
+  Bash/Write/Edit/Read and tool_input.file_path).
 
 --- Ban rules covered by this hook ---
 
-Shell ban patterns (Bash tool, tool_input.command):
+Shell ban patterns (powershell tool, tool_input.command):
   rm -rf
   git add -A
   git commit -a
   git push --force
   git reset --hard
 
-File ban patterns (Write / Edit tool, tool_input.file_path):
+File ban patterns (write_file / edit_file tool, tool_input.path):
   Same as hook 1: .exe  dist/  build/  *.db  demo_*.db
   .pytest_cache/  *.spec (except iris.spec at root)
   Secrets by filename: .env  .env.*  *.pem  *.p12  id_rsa  id_ed25519
 
-Unplanned-file rule (Write / Edit tool, tool_input.file_path):
+Unplanned-file rule (write_file / edit_file tool, tool_input.path):
   The file must appear in approved-plan.txt (repo root).
-  If the plan file itself is being written (file_path == approved-plan.txt)
+  If the plan file itself is being written (path == approved-plan.txt)
   the write is allowed.
 
 --- Test strategy ---
@@ -109,9 +106,6 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # Hook script path.
 HOOK_SCRIPT = os.path.join(REPO_ROOT, ".muse", "hooks", "iris-pre-tool-use.py")
 
-# The plan file the hook reads to decide whether a write target is approved.
-PLAN_FILE = os.path.join(REPO_ROOT, "approved-plan.txt")
-
 # A dummy session id used in all test payloads.
 DUMMY_SESSION = "test-session-001"
 
@@ -120,12 +114,13 @@ DUMMY_SESSION = "test-session-001"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_bash_payload(command: str) -> dict:
-    """Return a PreToolUse payload for a Bash tool call."""
+    """Return a PreToolUse payload for a Muse shell (powershell) tool call."""
     return {
         "session_id": DUMMY_SESSION,
         "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
+        "tool_name": "powershell",
         "tool_input": {
             "command": command,
             "description": "test command",
@@ -134,43 +129,43 @@ def _build_bash_payload(command: str) -> dict:
 
 
 def _build_write_payload(file_path: str, content: str = "") -> dict:
-    """Return a PreToolUse payload for a Write tool call."""
+    """Return a PreToolUse payload for a Muse write_file tool call."""
     return {
         "session_id": DUMMY_SESSION,
         "hook_event_name": "PreToolUse",
-        "tool_name": "Write",
+        "tool_name": "write_file",
         "tool_input": {
-            "file_path": file_path,
+            "path": file_path,
             "content": content,
         },
     }
 
 
 def _build_read_payload(file_path: str) -> dict:
-    """Return a PreToolUse payload for a Read tool call.
+    """Return a PreToolUse payload for a Muse read_file tool call.
 
-    Read is a safe tool; the hook must allow it.
+    read_file is a safe tool; the hook must allow it.
     """
     return {
         "session_id": DUMMY_SESSION,
         "hook_event_name": "PreToolUse",
-        "tool_name": "Read",
+        "tool_name": "read_file",
         "tool_input": {
-            "file_path": file_path,
+            "path": file_path,
         },
     }
 
 
 def _build_edit_payload(file_path: str) -> dict:
-    """Return a PreToolUse payload for an Edit tool call."""
+    """Return a PreToolUse payload for a Muse edit_file tool call."""
     return {
         "session_id": DUMMY_SESSION,
         "hook_event_name": "PreToolUse",
-        "tool_name": "Edit",
+        "tool_name": "edit_file",
         "tool_input": {
-            "file_path": file_path,
-            "old_string": "# old",
-            "new_string": "# new",
+            "path": file_path,
+            "find": "# old",
+            "replace": "# new",
         },
     }
 
@@ -425,27 +420,18 @@ class TestCleanToolCalls(unittest.TestCase):
     """
 
     def setUp(self):
-        """Write a plan file in the real repo root containing the test file."""
-        # The plan file must already contain the path being written so the
-        # unplanned-file rule does not interfere.
-        self._plan_exists = os.path.exists(PLAN_FILE)
-        self._plan_content = None
-        if self._plan_exists:
-            with open(PLAN_FILE, encoding="utf-8") as fh:
-                self._plan_content = fh.read()
+        """Create a temp directory that acts as the repo root for each test."""
+        self.tmpdir = tempfile.mkdtemp()
 
     def tearDown(self):
-        """Restore the original plan file if we changed it."""
-        if self._plan_content is not None:
-            with open(PLAN_FILE, "w", encoding="utf-8") as fh:
-                fh.write(self._plan_content)
-        elif os.path.exists(PLAN_FILE) and not self._plan_exists:
-            os.remove(PLAN_FILE)
+        """Remove the temporary directory created for the test."""
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_allows_clean_bash_command(self):
         """A safe bash command (python -m pytest) is allowed."""
         payload = _build_bash_payload("python -m pytest tests/ -q")
-        rc, stdout, err = _run_hook(payload)
+        rc, stdout, err = _run_hook(payload, repo_root=self.tmpdir)
         self.assertFalse(
             _is_deny(rc, stdout, err),
             f"Hook must allow a clean bash command. "
@@ -455,7 +441,7 @@ class TestCleanToolCalls(unittest.TestCase):
     def test_allows_read_of_any_file(self):
         """Read tool calls are always allowed; they are not writes."""
         payload = _build_read_payload("iris/proxy.py")
-        rc, stdout, err = _run_hook(payload)
+        rc, stdout, err = _run_hook(payload, repo_root=self.tmpdir)
         self.assertFalse(
             _is_deny(rc, stdout, err),
             f"Hook must allow Read tool calls. "
@@ -466,22 +452,17 @@ class TestCleanToolCalls(unittest.TestCase):
         """Write to a planned, non-banned file path is allowed.
 
         This test ensures the hook does not false-positive on clean writes.
-        It temporarily writes an approved-plan.txt containing the test path
-        if the plan file does not already exist.
+        It writes an approved-plan.txt containing the test path inside the
+        temporary repo root.
         """
         target = "iris/proxy.py"
 
-        # Ensure the target is in the plan.
-        plan_lines = []
-        if self._plan_content:
-            plan_lines = [l for l in self._plan_content.splitlines() if l.strip()]
-        if target not in plan_lines:
-            plan_lines.append(target)
-            with open(PLAN_FILE, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(plan_lines) + "\n")
+        plan_path = os.path.join(self.tmpdir, "approved-plan.txt")
+        with open(plan_path, "w", encoding="utf-8") as fh:
+            fh.write(target + "\n")
 
         payload = _build_write_payload(target, content="# planned\n")
-        rc, stdout, err = _run_hook(payload)
+        rc, stdout, err = _run_hook(payload, repo_root=self.tmpdir)
         self.assertFalse(
             _is_deny(rc, stdout, err),
             f"Hook must allow write to a planned, clean file. "
