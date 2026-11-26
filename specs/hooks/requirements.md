@@ -11,7 +11,9 @@ into hooks that run whether the agent agrees or not. Four hooks:
    `ruff format --check .`, and `pyright`. Blocks the commit on failure.
    The full pytest suite stays in CI, not in the hook.
 3. Unplanned files (pre-commit). Compares staged files against the
-   approved plan's file list. Blocks the commit if a staged file is not
+   approved plan's file list. The approved plan is a file named
+   `approved-plan.txt` at the repo root, one approved file path per line,
+   relative to repo root. Blocks the commit if a staged file is not
    in the plan, UNLESS the plan file itself is staged (updating the plan
    covers the new files).
 4. Muse Code PreToolUse hook. Runs before every tool call in Muse Code
@@ -21,9 +23,9 @@ into hooks that run whether the agent agrees or not. Four hooks:
    the rules: shell commands matching the ban patterns (`rm -rf`,
    `git add -A`, `git commit -a`, `git push --force`, `git reset --hard`);
    writes or edits to banned files (same ban list as hook 1); writes or
-   edits to files not in the approved plan (same rule as hook 3, at write
-   time). The hook is a plain command, not a service — no Arcjet, no
-   network call, no new dependency.
+   edits to files not in the approved plan (`approved-plan.txt`, same rule
+   as hook 3, at write time). The hook is a plain command, not a service —
+   no Arcjet, no network call, no new dependency.
 
 ## Acceptance criteria
 - A commit staging a banned file is blocked, and the block names the file.
@@ -69,3 +71,7 @@ into hooks that run whether the agent agrees or not. Four hooks:
   separate step. (Charles, Nov 25)
 - The Muse Code hook is a plain local command, not a service. No Arcjet, no
   network call, no new dependency. (Nov 25)
+- The approved plan is a file named `approved-plan.txt` at the repo root,
+  one approved file path per line, relative to repo root. The tests pin
+  this filename; the spec names it here so the two agree. (Charles, Nov 25
+  — approved the mechanism in Main after the test review.)
