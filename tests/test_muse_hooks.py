@@ -74,10 +74,9 @@ File ban patterns (write_file / edit_file tool, tool_input.path):
   .pytest_cache/  *.spec (except iris.spec at root)
   Secrets by filename: .env  .env.*  *.pem  *.p12  id_rsa  id_ed25519
 
-Unplanned-file rule (write_file / edit_file tool, tool_input.path):
-  The file must appear in approved-plan.txt (repo root).
-  If the plan file itself is being written (path == approved-plan.txt)
-  the write is allowed.
+Unplanned-file rule:
+  The target must appear in approved-plan.txt at the repository root.
+  Only a human can change the plan.
 
 --- Test strategy ---
 
@@ -96,6 +95,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -288,6 +288,16 @@ class TestShellCommandBans(unittest.TestCase):
         """git reset --hard is denied before it runs."""
         self._assert_denied("git reset --hard HEAD~1")
 
+    def test_shell_denial_omits_user_arguments(self):
+        marker = "private-argument-marker"
+        rc, stdout, err = _run_hook(_build_bash_payload(f"git push --force {marker}"))
+        self.assertTrue(_is_deny(rc, stdout, err))
+        self.assertNotIn(marker, stdout + err)
+
+    def test_commit_message_can_describe_an_option(self):
+        rc, stdout, err = _run_hook(_build_bash_payload('git commit -m "document the -a option"'))
+        self.assertEqual((rc, stdout, err), (0, "", ""))
+
 
 # ---------------------------------------------------------------------------
 # Tests: banned file writes
@@ -347,8 +357,8 @@ class TestBannedFileWrites(unittest.TestCase):
 class TestUnplannedFileWrites(unittest.TestCase):
     """PreToolUse hook denies writes to files not in approved-plan.txt.
 
-    The hook reads approved-plan.txt from the repo root (cwd). It blocks
-    writes to paths not on the list. Writing the plan file itself is allowed.
+    The hook reads approved-plan.txt from the repo root. It blocks writes
+    to paths outside the list and to the plan itself.
     """
 
     def setUp(self):
@@ -396,15 +406,51 @@ class TestUnplannedFileWrites(unittest.TestCase):
             f"Deny must name the unplanned file. combined={combined!r}",
         )
 
-    def test_allows_write_to_plan_file_itself(self):
-        """Writing approved-plan.txt is always allowed (it updates the plan)."""
+    def test_denies_write_to_plan_file_itself(self):
+        """The human owns changes to approved-plan.txt."""
         self._write_plan(["iris/proxy.py"])
         payload = _build_write_payload("approved-plan.txt", "iris/proxy.py\niris/new.py\n")
         rc, stdout, err = self._run_in_tmpdir(payload)
-        self.assertFalse(
+        self.assertTrue(
             _is_deny(rc, stdout, err),
-            f"Hook must allow write to plan file. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
+            f"Hook must deny writing the plan file. returncode={rc}, stdout={stdout!r}, stderr={err!r}",
         )
+
+    def test_missing_plan_denies_normal_write(self):
+        self.assertTrue(_is_deny(*self._run_in_tmpdir(_build_write_payload("notes.md"))))
+
+    def test_unreadable_plan_denies_normal_write(self):
+        Path(self.tmpdir, "approved-plan.txt").write_bytes(b"\xff")
+        self.assertTrue(_is_deny(*self._run_in_tmpdir(_build_write_payload("notes.md"))))
+
+    def test_plan_with_bom_allows_listed_file(self):
+        for encoding in ("utf-8-sig", "utf-16"):
+            with self.subTest(encoding=encoding):
+                Path(self.tmpdir, "approved-plan.txt").write_text("notes.md\n", encoding=encoding)
+                self.assertEqual(self._run_in_tmpdir(_build_write_payload("notes.md")), (0, "", ""))
+
+    def test_subdirectory_uses_root_plan(self):
+        subprocess.run(["git", "init", "-q"], cwd=self.tmpdir, check=True, capture_output=True)
+        Path(self.tmpdir, "docs").mkdir()
+        self._write_plan(["docs/notes.md"])
+        payload = _build_write_payload("notes.md")
+        payload["cwd"] = str(Path(self.tmpdir, "docs"))
+        self.assertEqual(self._run_in_tmpdir(payload), (0, "", ""))
+        payload["tool_input"]["path"] = "draft.md"
+        self.assertTrue(_is_deny(*self._run_in_tmpdir(payload)))
+
+    def test_supported_write_shapes_require_an_approved_target(self):
+        self._write_plan(["notes.md", "lab.ipynb"])
+        for tool, tool_input in (
+            ("apply_patch", {"input": "*** Add File: notes.md\n+Notes"}),
+            ("NotebookEdit", {"notebook_path": "lab.ipynb"}),
+            ("mcp__fs__write_file", {"filename": "notes.md"}),
+        ):
+            with self.subTest(tool=tool):
+                payload = {"tool_name": tool, "tool_input": tool_input}
+                self.assertEqual(self._run_in_tmpdir(payload), (0, "", ""))
+                bad_input = {key: None for key in tool_input}
+                self.assertTrue(_is_deny(*self._run_in_tmpdir({**payload, "tool_input": bad_input})))
 
 
 # ---------------------------------------------------------------------------

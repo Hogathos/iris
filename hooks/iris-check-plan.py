@@ -2,7 +2,7 @@
 """Pre-commit hook 3: block staged files missing from approved-plan.txt.
 
 Reads ``approved-plan.txt`` at the repository root (one relative file path per
-line). If any staged non-deleted file is not listed in the plan, the commit is
+line). If any staged file change is not listed in the plan, the commit is
 blocked and the unplanned files are printed to stderr.
 
 Escape hatch: if ``approved-plan.txt`` itself is staged in the same commit, the
@@ -39,10 +39,10 @@ def _resolve_repo_root() -> str:
     return os.getcwd()
 
 
-def _get_staged_files(repo_root: str) -> list[str]:
-    """Query git for staged non-deleted file paths relative to repo_root."""
+def _get_staged_files(repo_root: str) -> dict[str, str]:
+    """Return staged file paths and their change status, including deletions."""
     result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=d", "-z"],
+        ["git", "diff", "--cached", "--name-status", "--no-renames", "-z"],
         cwd=repo_root,
         capture_output=True,
         check=False,
@@ -51,7 +51,8 @@ def _get_staged_files(repo_root: str) -> list[str]:
         err_text = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"git diff --cached failed: {err_text}")
     raw = result.stdout.decode("utf-8", errors="replace")
-    return [_normalize_rel_path(entry) for entry in raw.split("\0") if entry]
+    fields = raw.split("\0")
+    return {_normalize_rel_path(path): status for status, path in zip(fields[::2], fields[1::2])}
 
 
 def _load_plan(plan_path: str) -> set[str]:
@@ -78,8 +79,13 @@ def main() -> int:
     if not staged_files:
         return 0
 
+    plan_status = next((status for path, status in staged_files.items() if os.path.normcase(path) == PLAN_FILENAME), None)
+    if plan_status == "D":
+        sys.stderr.write(f"Commit blocked by iris-check-plan: {PLAN_FILENAME} is staged for deletion.\n")
+        return 1
+
     # Escape hatch: staging approved-plan.txt updates the plan alongside new files.
-    if PLAN_FILENAME in staged_files:
+    if plan_status is not None:
         return 0
 
     plan_path = os.path.join(repo_root, PLAN_FILENAME)

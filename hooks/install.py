@@ -1,51 +1,77 @@
 #!/usr/bin/env python3
-"""Install Iris pre-commit hooks into the active git working tree's .git/hooks/.
+"""Install Iris pre-commit hooks into the active Git hooks directory.
 
 Copies the three gate scripts:
   - iris-check-banned-files.py
   - iris-check-lint.py
   - iris-check-plan.py
-into ``<git-dir>/hooks/`` and writes a ``pre-commit`` entrypoint that invokes
+into the Git hooks directory and writes a pre-commit entrypoint that invokes
 all three in sequence using the installing Python interpreter.
 
 Works on Windows (Git Bash) and POSIX platforms. Re-running updates the
-installed hooks in place.
+installed Iris hooks in place. The installer backs up an existing custom hook.
 """
 
 import os
+import shlex
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 
 HOOK_SCRIPTS = (
     "iris-check-banned-files.py",
     "iris-check-lint.py",
     "iris-check-plan.py",
 )
+INSTALL_MARKER = "# Installed by hooks/install.py"
 
 
 def _resolve_git_hooks_dir(repo_root: str) -> str:
-    """Return the absolute path to .git/hooks for repo_root (worktree-safe)."""
+    """Return the active hooks path, including Git configuration and worktrees."""
     result = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
+        ["git", "rev-parse", "--git-path", "hooks"],
         cwd=repo_root,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
     )
-    git_dir = result.stdout.strip()
-    if not os.path.isabs(git_dir):
-        git_dir = os.path.join(repo_root, git_dir)
-    return os.path.join(os.path.abspath(git_dir), "hooks")
+    return os.path.realpath(os.path.join(repo_root, result.stdout.rstrip("\r\n")))
+
+
+def _back_up_hook(path: str, replacement: bytes) -> None:
+    """Preserve the current hook if the installer would change it."""
+    try:
+        with open(path, "rb") as existing:
+            original = existing.read()
+    except FileNotFoundError:
+        return
+    if original == replacement:
+        return
+
+    backup = path + ".iris-backup"
+    suffix = 0
+    while True:
+        candidate = f"{backup}.{suffix}" if suffix else backup
+        try:
+            with open(candidate, "xb") as target:
+                target.write(original)
+        except FileExistsError:
+            suffix += 1
+        else:
+            shutil.copystat(path, candidate)
+            return
 
 
 def install(repo_root: str | None = None, python_executable: str | None = None) -> str:
-    """Copy hook scripts and write the pre-commit wrapper into .git/hooks/."""
+    """Copy hook scripts and write the wrapper into the active hooks directory."""
     source_dir = os.path.dirname(os.path.abspath(__file__))
     if repo_root is None:
         repo_root = os.path.dirname(source_dir)
-    python_exe = (python_executable or sys.executable).replace("\\", "/")
+    python_exe = python_executable or sys.executable
+    if os.name == "nt":
+        python_exe = python_exe.replace("\\", "/")
 
     hooks_dir = _resolve_git_hooks_dir(repo_root)
     os.makedirs(hooks_dir, exist_ok=True)
@@ -60,12 +86,11 @@ def install(repo_root: str | None = None, python_executable: str | None = None) 
 
     # POSIX shell script executed by git on both Windows (Git Bash) and Unix.
     pre_commit_path = os.path.join(hooks_dir, "pre-commit")
-    hook_dir_posix = hooks_dir.replace("\\", "/")
     lines = [
         "#!/bin/sh",
-        "# Installed by hooks/install.py — deterministic pre-commit gates for Iris.",
+        INSTALL_MARKER,
         "set -e",
-        f'PYTHON_EXE="{python_exe}"',
+        f"PYTHON_EXE={shlex.quote(python_exe)}",
         'if [ ! -x "$PYTHON_EXE" ]; then',
         "  if command -v python3 >/dev/null 2>&1; then",
         '    PYTHON_EXE="python3"',
@@ -75,13 +100,24 @@ def install(repo_root: str | None = None, python_executable: str | None = None) 
         "fi",
     ]
     for script_name in HOOK_SCRIPTS:
-        lines.append(f'"$PYTHON_EXE" "{hook_dir_posix}/{script_name}"')
+        script_path = os.path.join(hooks_dir, script_name)
+        if os.name == "nt":
+            script_path = script_path.replace("\\", "/")
+        lines.append(f'"$PYTHON_EXE" {shlex.quote(script_path)}')
 
-    with open(pre_commit_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("\n".join(lines) + "\n")
-
-    current_mode = os.stat(pre_commit_path).st_mode
-    os.chmod(pre_commit_path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    wrapper = ("\n".join(lines) + "\n").encode("utf-8")
+    _back_up_hook(pre_commit_path, wrapper)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=hooks_dir, delete=False) as fh:
+            temp_path = fh.name
+            fh.write(wrapper)
+        current_mode = os.stat(temp_path).st_mode
+        os.chmod(temp_path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        os.replace(temp_path, pre_commit_path)
+    finally:
+        if temp_path is not None and os.path.exists(temp_path):
+            os.unlink(temp_path)
     return hooks_dir
 
 
@@ -91,6 +127,9 @@ def main() -> int:
         hooks_dir = install()
     except subprocess.CalledProcessError as exc:
         sys.stderr.write(f"Failed to locate git hooks directory: {exc}\n")
+        return 1
+    except OSError as exc:
+        sys.stderr.write(f"Failed to install Iris pre-commit hooks: {exc}\n")
         return 1
     sys.stdout.write(f"Installed Iris pre-commit hooks into {hooks_dir}\n")
     return 0

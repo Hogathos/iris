@@ -7,8 +7,9 @@ and rejects any path matching the repository ban rules from AGENTS.md:
   - dist/, build/, .pytest_cache/ directories
   - *.db and demo_*.db SQLite databases
   - *.spec PyInstaller specs (except the tracked ``iris.spec`` at repo root)
-  - common secret filenames (.env, .env.*, *_secret*, *_key*, *.pem, *.p12,
-    *.pfx, *.key, id_rsa, id_ed25519)
+  - common secret filenames (.env, .env.*, secret.txt, secrets.json,
+    credentials.json, token.txt, *.pem, *.p12, *.pfx, *.key, id_rsa, id_ed25519)
+  - .env.example is an allowed example filename outside banned directories
 
 Exits 0 if all staged files are clean, or 1 with offending paths on stderr.
 """
@@ -29,8 +30,10 @@ BANNED_EXTENSIONS = {".exe", ".db", ".spec", ".pem", ".p12", ".pfx", ".key"}
 SECRET_NAME_PATTERNS = (
     ".env",
     ".env.*",
-    "*_secret*",
-    "*_key*",
+    "secret.txt",
+    "secrets.json",
+    "credentials.json",
+    "token.txt",
     "id_rsa",
     "id_rsa.*",
     "id_ed25519",
@@ -65,13 +68,15 @@ def check_banned_path(rel_path: str) -> str | None:
     lower_name = basename.lower()
 
     for segment in dir_parts:
-        if segment in BANNED_DIRS:
+        if segment.lower() in BANNED_DIRS:
             return f"banned directory '{segment}/'"
 
     _, ext = posixpath.splitext(lower_name)
     if ext in BANNED_EXTENSIONS:
         return f"banned extension '{ext}'"
 
+    if lower_name == ".env.example":
+        return None
     for pattern in SECRET_NAME_PATTERNS:
         if fnmatch.fnmatch(lower_name, pattern):
             return "banned secret-file pattern"

@@ -40,11 +40,15 @@ Verification points pinned here (see report for how they were sourced):
 
 import json
 import os
+import runpy
+import shlex
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -57,6 +61,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 HOOK_BANNED = os.path.join(REPO_ROOT, "hooks", "iris-check-banned-files.py")
 HOOK_LINT = os.path.join(REPO_ROOT, "hooks", "iris-check-lint.py")
 HOOK_PLAN = os.path.join(REPO_ROOT, "hooks", "iris-check-plan.py")
+INSTALLER = os.path.join(REPO_ROOT, "hooks", "install.py")
 
 # The plan file name the unplanned-files hook reads.
 PLAN_FILE = "approved-plan.txt"
@@ -224,6 +229,26 @@ class TestBannedFilesHook(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestFileNames(unittest.TestCase):
+    def setUp(self):
+        self.repo, cleanup = _make_temp_repo()
+        self.addCleanup(cleanup)
+
+    def test_allows_source_and_example_names(self):
+        for path in ("tests/test_api_key_parser.py", "tests/test_secrets.py", "src/api_key_utils.py", ".env.example"):
+            _stage_file(self.repo, path)
+        self.assertEqual(_run_hook(HOOK_BANNED, self.repo), (0, "", ""))
+
+    def test_blocks_credentials_and_mixed_case_directories(self):
+        paths = ("secrets.json", "secret.txt", "credentials.json", "token.txt", "BUILD/x.py", "Dist/a.txt")
+        for path in paths:
+            _stage_file(self.repo, path)
+        rc, _, err = _run_hook(HOOK_BANNED, self.repo)
+        self.assertEqual(rc, 1)
+        for path in paths:
+            self.assertIn(path, err)
+
+
 class TestLintHook(unittest.TestCase):
     """Hook 2: iris-check-lint.py
 
@@ -320,6 +345,19 @@ class TestLintHook(unittest.TestCase):
         rc, _out, err = _run_hook(HOOK_LINT, self.repo)
         self.assertEqual(rc, 0, f"Hook should pass clean Python. stderr: {err!r}")
 
+    def test_checks_index_even_when_working_file_differs(self):
+        _stage_file(self.repo, "draft.py", "x = 'wrong'\n")
+        Path(self.repo, "draft.py").write_text('x = "clean"\n', encoding="utf-8")
+        rc, _, err = _run_hook(HOOK_LINT, self.repo)
+        self.assertEqual(rc, 1)
+        self.assertIn("ruff format --check failed", err)
+        self.assertEqual(Path(self.repo, "draft.py").read_text(encoding="utf-8"), 'x = "clean"\n')
+
+    def test_ruff_honors_staged_excludes(self):
+        _stage_file(self.repo, "ruff.toml", 'extend-exclude = ["scratch.py"]\n')
+        _stage_file(self.repo, "scratch.py", "x=1\n")
+        self.assertEqual(_run_hook(HOOK_LINT, self.repo), (0, "", ""))
+
 
 # ---------------------------------------------------------------------------
 # Hook 3: unplanned files
@@ -383,6 +421,69 @@ class TestUnplannedFilesHook(unittest.TestCase):
         _stage_file(self.repo, PLAN_FILE, updated_plan)
         rc, _out, err = _run_hook(HOOK_PLAN, self.repo)
         self.assertEqual(rc, 0, f"Hook should pass when the plan file is staged. stderr: {err!r}")
+
+    def test_checks_deleted_files_against_plan(self):
+        _stage_file(self.repo, "src/unplanned.py", "# tracked\n")
+        self._write_plan(["README.md"])
+        _git(["rm", "src/unplanned.py"], self.repo)
+        rc, _, err = _run_hook(HOOK_PLAN, self.repo)
+        self.assertEqual(rc, 1)
+        self.assertIn("src/unplanned.py", err)
+
+    def test_blocks_staged_plan_deletion(self):
+        self._write_plan(["README.md"])
+        _git(["rm", PLAN_FILE], self.repo)
+        rc, _, err = _run_hook(HOOK_PLAN, self.repo)
+        self.assertEqual(rc, 1)
+        self.assertIn(PLAN_FILE, err)
+
+
+class TestHookInstaller(unittest.TestCase):
+    def setUp(self):
+        self.repo, cleanup = _make_temp_repo()
+        self.addCleanup(cleanup)
+        self.installer = runpy.run_path(INSTALLER)
+        self.install = self.installer["install"]
+
+    def test_backs_up_existing_hook_once(self):
+        original = Path(self.repo, ".git", "hooks", "pre-commit")
+        original.write_bytes(b"#!/bin/sh\nexit 0\n")
+        self.install(self.repo)
+        self.install(self.repo)
+        self.assertEqual(original.with_name("pre-commit.iris-backup").read_bytes(), b"#!/bin/sh\nexit 0\n")
+
+    def test_installs_in_configured_hooks_path(self):
+        _git(["config", "core.hooksPath", "local hooks"], self.repo)
+        self.assertEqual(Path(self.install(self.repo)), Path(self.repo, "local hooks").resolve())
+        _stage_file(self.repo, "attempts.db")
+        commit = _git(["commit", "-m", "check hook"], self.repo, check=False)
+        self.assertNotEqual(commit.returncode, 0)
+        self.assertIn("iris-check-banned-files", commit.stderr)
+
+    def test_installs_in_common_hooks_path_from_linked_worktree(self):
+        _git(["commit", "--allow-empty", "-m", "initial"], self.repo)
+        linked_tree = Path(self.repo, "linked")
+        _git(["worktree", "add", "-b", "linked", str(linked_tree)], self.repo)
+        self.assertEqual(Path(self.install(str(linked_tree))), Path(self.repo, ".git", "hooks").resolve())
+
+    def test_installer_reports_write_errors(self):
+        main = self.installer["main"]
+        with patch.dict(main.__globals__, {"install": lambda: self._raise_permission_error()}):
+            with patch("sys.stderr") as stderr:
+                self.assertEqual(main(), 1)
+                self.assertIn("locked test hook", stderr.write.call_args.args[0])
+
+    @staticmethod
+    def _raise_permission_error():
+        raise PermissionError("locked test hook")
+
+    def test_wrapper_preserves_literal_interpreter_path(self):
+        python = "C:/Test Area/Codex's Interpreter/python.exe"
+        hooks_dir = Path(self.install(self.repo, python))
+        wrapper = (hooks_dir / "pre-commit").read_text(encoding="utf-8")
+        assignment = next(line for line in wrapper.splitlines() if line.startswith("PYTHON_EXE="))
+        self.assertEqual(shlex.split(assignment), [f"PYTHON_EXE={python}"])
+        self.assertTrue(assignment.startswith("PYTHON_EXE='"))
 
 
 # ---------------------------------------------------------------------------

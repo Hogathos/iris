@@ -8,13 +8,14 @@ into hooks that run whether the agent agrees or not. Four hooks:
    `demo_*.db`, `.pytest_cache/`, `*.spec`, secrets by filename pattern).
    One exception: the already-tracked `iris.spec` at repo root.
 2. Fast lint + types (pre-commit). Runs `ruff check`, `ruff format --check`,
-   and `pyright` on the staged Python files only. Blocks the commit on failure.
+   and `pyright` on the staged Python files and uses the staged file contents.
+   Ruff honors the staged exclude configuration. A failed check blocks the commit.
 3. Unplanned files (pre-commit). Compares staged files against the
    approved plan's file list. The approved plan is a file named
    `approved-plan.txt` at the repo root, one approved file path per line,
    relative to repo root. Blocks the commit if a staged file is not
-   in the plan, UNLESS the plan file itself is staged (updating the plan
-   covers the new files).
+   in the plan. Deletions count as staged changes. A human can stage an
+   updated plan with newly approved files. A staged plan deletion blocks the commit.
 4. Muse Code PreToolUse hook. Runs before every tool call in Muse Code
    sessions. A script (`.muse/hooks/iris-pre-tool-use.py`, stdlib-only
    Python) wired to the PreToolUse event in `.muse/hooks.json` reads the
@@ -22,9 +23,12 @@ into hooks that run whether the agent agrees or not. Four hooks:
    the rules: shell commands matching the ban patterns (`rm -rf`,
    `git add -A`, `git commit -a`, `git push --force`, `git reset --hard`);
    writes or edits to banned files (same ban list as hook 1); writes or
-   edits to files not in the approved plan (`approved-plan.txt`, same rule
-   as hook 3, at write time). The hook is a plain command, not a service —
-   no Arcjet, no network call, no new dependency.
+   edits to files outside the approved plan. File mutations require a readable
+   plan at the repository root. Muse denies changes to the plan itself.
+   The hook runs locally without a network call or new dependency.
+
+The installer uses Git's active hooks directory. It saves a copy of a custom
+pre-commit hook before replacing it.
 
 ## Acceptance criteria
 - A commit staging a banned file is blocked, and the block names the file.
@@ -37,9 +41,15 @@ into hooks that run whether the agent agrees or not. Four hooks:
 - A Muse Code write to a banned file is denied before it runs.
 - A Muse Code write to a file not in the approved plan is denied before
   it runs.
+- A missing or unreadable plan causes Muse to deny file mutations.
+- A shell denial names the rule and omits the submitted command.
 - A clean Muse Code tool call passes the hook.
 - The full pytest suite passes, and CI is green.
 - The hooks are verified on Windows (the Dell), where commits happen.
+
+The installer check uses a temporary Git repository with a configured hooks
+path. Git itself invokes the installed hook and blocks a commit with a banned
+file.
 
 ## Non-goals
 - The `pre-commit` framework itself (steal #8, separate).
