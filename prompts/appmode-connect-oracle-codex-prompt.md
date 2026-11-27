@@ -2,7 +2,7 @@
 
 ## Setup first
 
-Work on branch `main`. Verify you are on main's head (`fe98613`, the PR #68 merge) with `git log -1 --oneline` before you start. Report the base commit you ran on.
+Work on branch `main`. Record the head with `git log -1 --oneline` and report it as the base commit you ran on. Do NOT require an exact commit: filing this prompt advances main (the prompt commit itself is the newest commit), so the head will be `0da3cdf` or later, not `fe98613` — that mismatch is expected and is not a stop condition. Proceed as long as you are on `main` and `appmode/connect.py` and `proxy.py` are present. Only stop if you are not on `main`, or if either of those files is missing.
 
 Challenge the frame before you start: if a simpler or sturdier way to verify the connect path end to end exists, say so once, up front, in your report, then do the oracle as written. Do not nag the point. Silence means you checked and this is the best path.
 
