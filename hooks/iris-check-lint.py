@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Pre-commit hook 2: run fast lint and type checks before committing.
 
-Runs three checks at the repository root:
-  1. ``ruff check .``
-  2. ``ruff format --check .``
-  3. ``pyright``
+Runs three checks on staged Python paths in a temporary copy of the index:
+  1. ruff check
+  2. ruff format --check
+  3. pyright
 
 Blocks the commit (non-zero exit) if any tool exits non-zero, naming the
 failing tool on stderr and forwarding its output. The full pytest suite
@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 def _resolve_repo_root() -> str:
@@ -82,6 +83,31 @@ def _get_staged_python_files(repo_root: str) -> list[str]:
     return [entry for entry in raw.split("\0") if entry.endswith(".py")]
 
 
+def _check_snapshot(repo_root: str, checks: list[tuple[str, list[str]]]) -> int:
+    """Check a copy of the index with its configuration and imports."""
+    with tempfile.TemporaryDirectory(prefix="iris-index-") as snapshot:
+        result = subprocess.run(
+            ["git", "checkout-index", "--all", "--ignore-skip-worktree-bits", f"--prefix={snapshot.replace(os.sep, '/')}/"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            sys.stderr.write("Commit blocked by iris-check-lint (could not read staged files):\n")
+            sys.stderr.write(result.stderr)
+            return 1
+
+        for label, cmd in checks:
+            ok, output = _run_gate(label, cmd, snapshot)
+            if not ok:
+                sys.stderr.write(f"Commit blocked by iris-check-lint ({label} failed):\n")
+                if output:
+                    sys.stderr.write(output + "\n")
+                return 1
+    return 0
+
+
 def main() -> int:
     """Run ruff check, ruff format --check, and pyright on staged .py files."""
     repo_root = _resolve_repo_root()
@@ -108,20 +134,16 @@ def main() -> int:
     # Pass --pythonpath so pyright resolves packages from the active venv even
     # when VIRTUAL_ENV is not exported in the hook's shell environment.
     checks: list[tuple[str, list[str]]] = [
-        ("ruff check", ruff_cmd + ["check"] + staged_py),
-        ("ruff format --check", ruff_cmd + ["format", "--check"] + staged_py),
-        ("pyright", pyright_cmd + ["--pythonpath", sys.executable] + staged_py),
+        ("ruff check", ruff_cmd + ["check", "--force-exclude", "--"] + staged_py),
+        ("ruff format --check", ruff_cmd + ["format", "--check", "--force-exclude", "--"] + staged_py),
+        ("pyright", pyright_cmd + ["--pythonpath", sys.executable] + [f"./{path}" for path in staged_py]),
     ]
 
-    for label, cmd in checks:
-        ok, output = _run_gate(label, cmd, repo_root)
-        if not ok:
-            sys.stderr.write(f"Commit blocked by iris-check-lint ({label} failed):\n")
-            if output:
-                sys.stderr.write(output + "\n")
-            return 1
-
-    return 0
+    try:
+        return _check_snapshot(repo_root, checks)
+    except OSError as exc:
+        sys.stderr.write(f"Commit blocked by iris-check-lint: {exc}\n")
+        return 1
 
 
 if __name__ == "__main__":
