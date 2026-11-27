@@ -454,7 +454,7 @@ class TestHookInstaller(unittest.TestCase):
 
     def test_installs_in_configured_hooks_path(self):
         _git(["config", "core.hooksPath", "local hooks"], self.repo)
-        self.assertEqual(Path(self.install(self.repo)), Path(self.repo, "local hooks"))
+        self.assertEqual(Path(self.install(self.repo)), Path(self.repo, "local hooks").resolve())
         _stage_file(self.repo, "attempts.db")
         commit = _git(["commit", "-m", "check hook"], self.repo, check=False)
         self.assertNotEqual(commit.returncode, 0)
@@ -464,7 +464,7 @@ class TestHookInstaller(unittest.TestCase):
         _git(["commit", "--allow-empty", "-m", "initial"], self.repo)
         linked_tree = Path(self.repo, "linked")
         _git(["worktree", "add", "-b", "linked", str(linked_tree)], self.repo)
-        self.assertEqual(Path(self.install(str(linked_tree))), Path(self.repo, ".git", "hooks"))
+        self.assertEqual(Path(self.install(str(linked_tree))), Path(self.repo, ".git", "hooks").resolve())
 
     def test_installer_reports_write_errors(self):
         main = self.installer["main"]

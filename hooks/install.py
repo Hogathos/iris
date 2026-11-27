@@ -37,7 +37,7 @@ def _resolve_git_hooks_dir(repo_root: str) -> str:
         encoding="utf-8",
         check=True,
     )
-    return os.path.abspath(os.path.join(repo_root, result.stdout.rstrip("\r\n")))
+    return os.path.realpath(os.path.join(repo_root, result.stdout.rstrip("\r\n")))
 
 
 def _back_up_hook(path: str, replacement: bytes) -> None:

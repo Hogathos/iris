@@ -86,6 +86,8 @@ def _deny(reason: str) -> int:
 
 def _strip_win_unc_prefix(path: str) -> str:
     """Strip Windows extended-length UNC prefixes such as ``\\\\?\\``."""
+    if path[:8].upper() == "\\\\?\\UNC\\":
+        return "\\\\" + path[8:]
     if path.startswith("\\\\?\\"):
         return path[4:]
     return path
@@ -100,18 +102,25 @@ def _resolve_repo_root(cwd: str) -> str:
         check=False,
         encoding="utf-8",
     )
-    return result.stdout.rstrip("\r\n") if result.returncode == 0 else cwd
+    if result.returncode == 0:
+        return os.path.realpath(result.stdout.rstrip("\r\n"))
+    return cwd
 
 
-def _normalize_target_path(raw_path: str, cwd: str, repo_root: str) -> str:
-    """Convert raw_path into a clean POSIX-style path relative to repo_root when inside it."""
-    cleaned = _strip_win_unc_prefix(raw_path).replace("\\", "/")
-    target = os.path.abspath(os.path.join(cwd, cleaned))
+def _relative_path(target: str, repo_root: str) -> str:
+    """Express a filesystem path relative to the repository, using POSIX separators."""
     try:
         relative = os.path.relpath(target, repo_root)
     except ValueError:
-        relative = target
+        relative = os.path.abspath(target)
     return os.path.normcase(relative).replace("\\", "/")
+
+
+def _target_paths(raw_path: str, cwd: str, repo_root: str) -> tuple[str, str]:
+    """Return the supplied and resolved paths in repository-relative form."""
+    cleaned = _strip_win_unc_prefix(raw_path).replace("\\", "/")
+    target = os.path.join(cwd, cleaned)
+    return _relative_path(target, repo_root), _relative_path(os.path.realpath(target), repo_root)
 
 
 def _check_banned_path(norm_path: str) -> str | None:
@@ -192,9 +201,12 @@ def _check_remove_arguments(command: str, arguments: list[str], cwd: str) -> str
     if command in {"rm", "remove-item"} and {"-recurse", "-force"} <= options:
         return "Denied recursive forced removal."
 
+    cwd = os.path.realpath(cwd)
     root = _resolve_repo_root(cwd)
+    resolved_plan = _relative_path(os.path.realpath(os.path.join(root, PLAN_FILENAME)), root)
     for arg in arguments:
-        if _normalize_target_path(arg, cwd, root) == PLAN_FILENAME:
+        supplied, resolved = _target_paths(arg, cwd, root)
+        if supplied == PLAN_FILENAME or resolved == resolved_plan:
             return f"Denied removal of {PLAN_FILENAME}. A human must update the plan."
     return None
 
@@ -245,23 +257,27 @@ def _write_targets(tool_name: str, tool_input: dict) -> list[str]:
 
 def _check_file_mutation(raw_path: str, cwd: str, repo_root: str) -> str | None:
     """Return a deny reason if writing/editing raw_path violates ban or plan rules."""
-    norm_path = _normalize_target_path(raw_path, cwd, repo_root)
-    resolved_path = _normalize_target_path(
-        os.path.realpath(os.path.join(cwd, _strip_win_unc_prefix(raw_path))), cwd, os.path.realpath(repo_root)
-    )
-    if PLAN_FILENAME in {norm_path, resolved_path}:
+    supplied, resolved = _target_paths(raw_path, cwd, repo_root)
+    plan_path = os.path.join(repo_root, PLAN_FILENAME)
+    resolved_plan = _relative_path(os.path.realpath(plan_path), repo_root)
+    if supplied == PLAN_FILENAME or resolved == resolved_plan:
         return f"Denied change to {PLAN_FILENAME}. A human must update the plan."
 
-    ban_reason = _check_banned_path(norm_path)
-    if ban_reason is not None:
-        return f"Denied write to banned file '{norm_path}' ({ban_reason})."
+    # A spelling outside the root can be an alias for the entire repository.
+    # Apply filename rules to the resolved path and any supplied in-repo name.
+    ban_paths = [resolved]
+    if supplied != resolved and not (supplied.startswith("../") or os.path.isabs(supplied)):
+        ban_paths.append(supplied)
+    for path in ban_paths:
+        ban_reason = _check_banned_path(path)
+        if ban_reason is not None:
+            return f"Denied write to banned file '{path}' ({ban_reason})."
 
-    plan_path = os.path.join(repo_root, PLAN_FILENAME)
     if not os.path.isfile(plan_path):
         return f"Denied write because {PLAN_FILENAME} is missing."
     approved_files = _load_plan(plan_path)
-    if norm_path not in approved_files:
-        return f"Denied write to unplanned file '{norm_path}' (not listed in {PLAN_FILENAME})."
+    if resolved not in approved_files:
+        return f"Denied write to unplanned file '{resolved}' (not listed in {PLAN_FILENAME})."
 
     return None
 
@@ -284,6 +300,7 @@ def evaluate_payload(payload: dict, default_cwd: str) -> str | None:
         targets = _write_targets(tool_name, tool_input)
         if not targets:
             return "Denied write because the target path could not be determined."
+        cwd = os.path.realpath(cwd)
         repo_root = _resolve_repo_root(cwd)
         for target in targets:
             deny_reason = _check_file_mutation(target, cwd, repo_root)
