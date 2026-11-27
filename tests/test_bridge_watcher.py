@@ -2558,13 +2558,25 @@ def _run_status_round_trip(tmp_path, capfd, agent, exit_code):
             import time
             from pathlib import Path
 
+            def write_git(*args):
+                # The timed status commit can briefly hold the same index lock.
+                deadline = time.monotonic() + 5
+                while True:
+                    result = subprocess.run(["git", *args], stderr=subprocess.PIPE, text=True)
+                    index_busy = result.returncode == 128 and "index.lock" in result.stderr and "File exists" in result.stderr
+                    if not index_busy or time.monotonic() >= deadline:
+                        sys.stderr.write(result.stderr)
+                        result.check_returncode()
+                        return
+                    time.sleep(0.1)
+
             origin, branch, status, report, initial, exit_code = sys.argv[1:]
             status_path = Path(status)
             if not status_path.is_file():
                 sys.exit("The local status file was missing when the agent started.")
             Path(initial).write_text(status_path.read_text(encoding="utf-8"), encoding="utf-8")
             Path("unrelated.txt").write_text("staged by agent", encoding="utf-8")
-            subprocess.run(["git", "add", "--", "unrelated.txt"], check=True)
+            write_git("add", "--", "unrelated.txt")
             for line in range(1, 76):
                 print(f"output line {line:03d}", flush=True)
             print("last stderr line", file=sys.stderr, flush=True)
@@ -2583,8 +2595,8 @@ def _run_status_round_trip(tmp_path, capfd, agent, exit_code):
 
             print("last line before exit", flush=True)
             Path(report).write_text("Agent report\\n", encoding="utf-8")
-            subprocess.run(["git", "add", "--", report], check=True)
-            subprocess.run(["git", "commit", "--only", "-m", "Add agent report", "--", report], check=True)
+            write_git("add", "--", report)
+            write_git("commit", "--only", "-m", "Add agent report", "--", report)
             sys.exit(int(exit_code))
             """
         ),
@@ -2641,7 +2653,8 @@ def _run_status_round_trip(tmp_path, capfd, agent, exit_code):
         assert "last stderr line" in snapshot
         assert 1 <= len(re.findall(r"output line \d{3}", snapshot)) <= 50
     assert timestamp(live[-2], "Last updated") < timestamp(live[-1], "Last updated")
-    assert git(origin, "ls-tree", commits[-2], "--", report_path) == ""
+    # A timed status commit can inherit the report from its parent before the agent exits.
+    assert git(origin, "log", "--format=%s", branch, "--", report_path) == "Add agent report"
 
     final = git(origin, "show", f"{branch}:{status_path}")
     state_name = "done" if exit_code == 0 else "failed"
