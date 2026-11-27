@@ -19,6 +19,7 @@ implemented. The test now proves the behavior.
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -85,15 +86,11 @@ class SteerPauseOneRunTest(unittest.TestCase):
         cls.dest2 = f"127.0.0.1:{cls.echo2_port}"
         # One plain-HTTP upstream, so Pause is proven for HTTP too,
         # not only for CONNECT tunnels. Loopback only.
-        cls.http_upstream = ThreadingHTTPServer(
-            ("127.0.0.1", 0), server_module.Handler)
+        cls.http_upstream = ThreadingHTTPServer(("127.0.0.1", 0), server_module.Handler)
         cls.http_port = cls.http_upstream.server_address[1]
-        threading.Thread(
-            target=cls.http_upstream.serve_forever, daemon=True).start()
+        threading.Thread(target=cls.http_upstream.serve_forever, daemon=True).start()
         cls.http_base = f"http://127.0.0.1:{cls.http_port}"
-        cls.opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler(
-                {"http": f"http://127.0.0.1:{cls.proxy_port}"}))
+        cls.opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{cls.proxy_port}"}))
 
     @classmethod
     def tearDownClass(cls):
@@ -125,14 +122,7 @@ class SteerPauseOneRunTest(unittest.TestCase):
         """Open one raw CONNECT tunnel through the proxy. Loopback only."""
         sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -225,10 +215,7 @@ class SteerPauseOneRunTest(unittest.TestCase):
             # pause, verdict = Unverified (never Correct, never
             # Incorrect from a pause alone). Metadata only.
             self.assert_tunnel_dead(sock1)
-            pause_rows = [
-                r for r in self.rows_for(trace1)
-                if r["outcome"] == "paused"
-            ]
+            pause_rows = [r for r in self.rows_for(trace1) if r["outcome"] == "paused"]
             self.assertTrue(pause_rows, "no journal row with outcome=paused for Run 1")
             # The FIRST paused row is the control row pause_run journals
             # before it cuts. The cut tunnel's own close row also reads
@@ -244,9 +231,7 @@ class SteerPauseOneRunTest(unittest.TestCase):
             # Unverified, explicitly: a pause alone verifies nothing,
             # so the verdict must read Unknown, never Correct and never
             # Incorrect. Unknown is the explicit state, not a guess.
-            self.assertEqual(
-                pause_row["status"], "unknown",
-                "pause verdict must be Unverified, explicitly")
+            self.assertEqual(pause_row["status"], "unknown", "pause verdict must be Unverified, explicitly")
             # No bodies, no keys, no secrets in the row.
             row_text = " ".join(str(pause_row[k]) for k in pause_row.keys())
             self.assertNotIn("Authorization", row_text)
@@ -275,10 +260,7 @@ class SteerPauseOneRunTest(unittest.TestCase):
             allowed, why = self.proxy.state.retry_run(trace1)
             self.assertFalse(allowed, "retry without Verify must be blocked")
             self.assertIn("verify", why.lower())
-            blocked_rows = [
-                r for r in self.rows_for(trace1)
-                if "verify required before retry" in r["reason"]
-            ]
+            blocked_rows = [r for r in self.rows_for(trace1) if "verify required before retry" in r["reason"]]
             self.assertTrue(blocked_rows, "blocked retry must be journaled")
 
             # Step 7: after a fresh Verify, with a read that could have
@@ -300,15 +282,13 @@ class SteerPauseOneRunTest(unittest.TestCase):
             verified = self.proxy.state.verify_run(trace1, done_clause=done)
             self.assertTrue(verified, "fresh Verify with a failing-capable read must pass")
             self.assertTrue(
-                [r for r in self.rows_for(trace1)
-                 if r["reason"].startswith("verify ok")],
+                [r for r in self.rows_for(trace1) if r["reason"].startswith("verify ok")],
                 "fresh Verify must be journaled",
             )
             allowed, _ = self.proxy.state.retry_run(trace1)
             self.assertTrue(allowed, "retry after fresh Verify must be allowed")
             self.assertTrue(
-                [r for r in self.rows_for(trace1)
-                 if r["reason"] == "retry allowed after verify"],
+                [r for r in self.rows_for(trace1) if r["reason"] == "retry allowed after verify"],
                 "allowed retry must be journaled",
             )
         finally:

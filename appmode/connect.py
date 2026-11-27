@@ -14,6 +14,7 @@ touch a live config.
 
 Loopback only. Metadata only. No bodies, no keys. Plain words only.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,9 +54,7 @@ def _agent_name(agent_id: str) -> str:
     try:
         return AGENT_NAMES[agent_id]
     except KeyError:
-        raise Refused(
-            f"Unknown agent: {agent_id}. Iris knows "
-            f"{', '.join(sorted(AGENT_NAMES))}.") from None
+        raise Refused(f"Unknown agent: {agent_id}. Iris knows {', '.join(sorted(AGENT_NAMES))}.") from None
 
 
 def config_path(agent_id: str, home: str) -> str:
@@ -74,15 +73,10 @@ def config_path(agent_id: str, home: str) -> str:
     if agent_id == "muse-code":
         return os.path.join(home, ".config", "muse", "settings.json")
     if sys.platform == "win32":
-        return os.path.join(
-            home, "AppData", "Roaming", "Cursor", "User",
-            "settings.json")
+        return os.path.join(home, "AppData", "Roaming", "Cursor", "User", "settings.json")
     if sys.platform == "darwin":
-        return os.path.join(
-            home, "Library", "Application Support", "Cursor",
-            "User", "settings.json")
-    return os.path.join(
-        home, ".config", "Cursor", "User", "settings.json")
+        return os.path.join(home, "Library", "Application Support", "Cursor", "User", "settings.json")
+    return os.path.join(home, ".config", "Cursor", "User", "settings.json")
 
 
 def _parse_config(agent_id: str, text: str):
@@ -114,13 +108,12 @@ def _check_proxy_url(proxy_url: str) -> str:
     """
     cleaned = (proxy_url or "").strip()
     parts = urlsplit(cleaned)
-    if (parts.scheme not in ("http", "https")
-            or (parts.hostname or "").lower()
-            not in ("127.0.0.1", "localhost")):
+    if parts.scheme not in ("http", "https") or (parts.hostname or "").lower() not in ("127.0.0.1", "localhost"):
         raise Refused(
             f"Iris only routes to this machine: {proxy_url} is "
             f"not a loopback URL with scheme http or https. "
-            f"Iris changed nothing.")
+            f"Iris changed nothing."
+        )
     return cleaned
 
 
@@ -211,42 +204,32 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
     path = config_path(agent_id, home)
     backup_path = path + BACKUP_SUFFIX
     if not os.path.exists(path):
-        raise Refused(
-            f"{name} has no config file at {path}. "
-            f"Open {name} once so it writes one, then connect again.")
+        raise Refused(f"{name} has no config file at {path}. Open {name} once so it writes one, then connect again.")
     original = _read_bytes(path)
     config = _parse_config(agent_id, original.decode("utf-8"))
     if not isinstance(config, dict):
-        raise Refused(
-            f"{name} config at {path} is not a settings file "
-            f"Iris can read. Iris changed nothing.")
+        raise Refused(f"{name} config at {path} is not a settings file Iris can read. Iris changed nothing.")
     if agent_id == "continue":
         models = config.get("models")
         if not isinstance(models, list) or not models:
-            raise Refused(
-                f"{name} has no models in {path}. "
-                f"Iris changed nothing.")
+            raise Refused(f"{name} has no models in {path}. Iris changed nothing.")
     if agent_id == "muse-code":
         if config.get("schema_version") != 1:
-            raise Refused(
-                f"{name} config at {path} needs schema_version 1. "
-                f"Iris changed nothing.")
+            raise Refused(f"{name} config at {path} needs schema_version 1. Iris changed nothing.")
         transport = config.get("endpoint_transport")
         if transport is not None and not isinstance(transport, dict):
-            raise Refused(
-                f"{name} config at {path} has an endpoint_transport "
-                f"block Iris cannot read. Iris changed nothing.")
+            raise Refused(f"{name} config at {path} has an endpoint_transport block Iris cannot read. Iris changed nothing.")
     fresh = _read_bytes(path)
     if fresh != original:
         raise Refused(
-            f"{name} config at {path} changed while Iris was "
-            f"connecting. Iris kept the agent's change and "
-            f"wrote nothing.")
+            f"{name} config at {path} changed while Iris was connecting. Iris kept the agent's change and wrote nothing."
+        )
     if os.path.exists(backup_path):
         raise Refused(
             f"{name} is already connected: a backup is waiting "
             f"at {backup_path}. Disconnect first to restore it, "
-            f"or delete the backup, then connect again.")
+            f"or delete the backup, then connect again."
+        )
     if agent_id == "claude-code":
         existing = _claude_existing(config.get("env") or {})
     elif agent_id == "cursor":
@@ -257,9 +240,8 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
         existing = _continue_existing(config)
     if existing:
         raise Refused(
-            f"{name} already routes through {existing}. "
-            f"Iris changed nothing. Disconnect that proxy first, "
-            f"then connect again.")
+            f"{name} already routes through {existing}. Iris changed nothing. Disconnect that proxy first, then connect again."
+        )
     backup_path = _write_backup(path, original)
     note = ""
     if agent_id == "claude-code":
@@ -279,9 +261,11 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
             json.dump(config, handle, indent=2)
             handle.write("\n")
         change = f"http.proxy and http.proxySupport to {proxy_url}"
-        note = (" Note: override sends Cursor updates and "
-                "extension downloads through Iris too, and Iris "
-                "blocks destinations it does not allow.")
+        note = (
+            " Note: override sends Cursor updates and "
+            "extension downloads through Iris too, and Iris "
+            "blocks destinations it does not allow."
+        )
     elif agent_id == "muse-code":
         transport = config.get("endpoint_transport") or {}
         transport["proxy"] = proxy_url
@@ -306,16 +290,14 @@ def connect_agent(agent_id: str, proxy_url: str, home: str) -> str:
             model["requestOptions"] = options
         with open(path, "w", encoding="utf-8") as handle:
             yaml.safe_dump(config, handle, sort_keys=False)
-        count = sum(
-            1 for model in config["models"]
-            if isinstance(model, dict))
-        change = (f"requestOptions.proxy to {proxy_url} "
-                  f"on {count} model(s)")
+        count = sum(1 for model in config["models"] if isinstance(model, dict))
+        change = f"requestOptions.proxy to {proxy_url} on {count} model(s)"
     _read_back = read_config(agent_id, path)
     return (
         f"{name} now routes through {proxy_url}. Set {change} "
         f"in {path}. Backup at {backup_path}. Restart {name} "
-        f"so it picks up the change.{note}")
+        f"so it picks up the change.{note}"
+    )
 
 
 def disconnect_agent(agent_id: str, home: str) -> str:
@@ -331,13 +313,10 @@ def disconnect_agent(agent_id: str, home: str) -> str:
     path = config_path(agent_id, home)
     backup_path = path + BACKUP_SUFFIX
     if not os.path.exists(backup_path):
-        raise Refused(
-            f"{name} is not connected through Iris. "
-            f"There is no backup to restore, so Iris changed nothing.")
+        raise Refused(f"{name} is not connected through Iris. There is no backup to restore, so Iris changed nothing.")
     with open(backup_path, "rb") as handle:
         original = handle.read()
     with open(path, "wb") as handle:
         handle.write(original)
     os.remove(backup_path)
-    return (
-        f"{name} is disconnected. Restored {path} from the backup.")
+    return f"{name} is disconnected. Restored {path} from the backup."

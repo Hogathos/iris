@@ -9,12 +9,12 @@ States are Pause, Redirect, Red button, Verify, spend cap warn, spend
 cap block, Unverified, Correct, Incorrect: named states, plain words,
 no scores, no percentages.
 """
+
 from __future__ import annotations
 
 # Run states. FLOWING means traffic may move for this Run. VERIFY_OK
 # means checked clean and waiting on a human to let it go again.
-STATES = ("FLOWING", "PAUSED", "REDIRECTED", "STOPPED", "VERIFY_OK",
-          "WARNED", "BLOCKED")
+STATES = ("FLOWING", "PAUSED", "REDIRECTED", "STOPPED", "VERIFY_OK", "WARNED", "BLOCKED")
 
 # Verdicts. Unverified is the honest default: a claim without a
 # read back was never checked, so it is never Correct.
@@ -85,8 +85,7 @@ def _event_for(row) -> str | None:
     # cap lift, resumes the Run.
     if outcome == "" and reason.startswith("verify ok"):
         return "verify_ok"
-    if outcome == "" and reason in ("retry allowed after verify",
-                                    "cap lifted"):
+    if outcome == "" and reason in ("retry allowed after verify", "cap lifted"):
         return "resume"
     return None
 
@@ -157,8 +156,7 @@ def status_word(state: str, finished: bool = False) -> str:
     return "Running"
 
 
-def run_finished(rows, claims, now, live: bool = False,
-                 idle_seconds: float = 60.0) -> bool:
+def run_finished(rows, claims, now, live: bool = False, idle_seconds: float = 60.0) -> bool:
     """True when the agent is done, as far as Iris can tell.
 
     Iris never sees an agent finish: there is no done signal on the
@@ -170,14 +168,13 @@ def run_finished(rows, claims, now, live: bool = False,
     state = run_state(rows)
     if live or state not in ("FLOWING", "VERIFY_OK"):
         return False
-    checked = bool(claims) or any(
-        row.get("outcome") == "verified" for row in rows)
+    checked = bool(claims) or any(row.get("outcome") == "verified" for row in rows)
     if not checked or not rows:
         return False
     try:
         import datetime
-        last = max(datetime.datetime.fromisoformat(
-            str(row.get("created_at", ""))) for row in rows)
+
+        last = max(datetime.datetime.fromisoformat(str(row.get("created_at", ""))) for row in rows)
     except (ValueError, TypeError):
         return False
     if last.tzinfo is None:
@@ -200,11 +197,9 @@ def next_step(state: str, verdict: str) -> str:
     if state == "STOPPED":
         return "Run is stopped. It stays stopped until a human says otherwise."
     if state == "WARNED":
-        return ("Money spent at 80% of cap. Run continues. "
-                "Watch spend and prepare to pause if it reaches the cap.")
+        return "Money spent at 80% of cap. Run continues. Watch spend and prepare to pause if it reaches the cap."
     if state == "BLOCKED":
-        return ("Run blocked at 100% of cap. "
-                "Verify it, then a human must unblock it before it flows again.")
+        return "Run blocked at 100% of cap. Verify it, then a human must unblock it before it flows again."
     return "Run state unknown. Ask a human before it moves again."
 
 
@@ -216,9 +211,7 @@ def pause_button_live(state: str) -> tuple:
     if state == "WARNED":
         return True, "Money spent at 80% of cap, run continues"
     if state == "BLOCKED":
-        return (False,
-                "Blocked at 100% of cap, a human must check it again, "
-                "then unblock after Verify")
+        return (False, "Blocked at 100% of cap, a human must check it again, then unblock after Verify")
     if state == "VERIFY_OK":
         return False, "Run is checked clean, waiting for a human to let it go."
     if state in STATES:

@@ -42,12 +42,14 @@ Tests use a temp home dir, never the real one. Config paths
 come from the module, given a home dir, so the same test runs
 on all three OSes in CI.
 """
+
 import json
 import os
 import tempfile
 import unittest
 
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from appmode import connect as connect_module
@@ -103,15 +105,12 @@ class MuseCodeConnectTest(unittest.TestCase):
     def test_muse_code_connect_writes_proxy_and_backs_up(self):
         path = self._write(json.dumps(_muse_settings()))
         original = self._read(path)
-        result = connect_module.connect_agent(
-            "muse-code", PROXY_URL, self.home)
+        result = connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         # The settings now carry the Iris proxy.
         settings = json.loads(self._read(path))
-        self.assertEqual(
-            settings["endpoint_transport"]["proxy"], PROXY_URL)
+        self.assertEqual(settings["endpoint_transport"]["proxy"], PROXY_URL)
         # The backup holds the original content, byte for byte.
-        self.assertEqual(
-            self._read(path + ".iris-backup"), original)
+        self.assertEqual(self._read(path + ".iris-backup"), original)
         # The result is plain words: agent, file, change.
         self.assertIn("Muse Code", result)
         self.assertIn(path, result)
@@ -119,24 +118,18 @@ class MuseCodeConnectTest(unittest.TestCase):
 
     def test_muse_code_connect_preserves_other_keys(self):
         path = self._write(json.dumps(_muse_settings()))
-        connect_module.connect_agent(
-            "muse-code", PROXY_URL, self.home)
+        connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         settings = json.loads(self._read(path))
         self.assertEqual(settings["schema_version"], 1)
-        self.assertEqual(
-            settings["model"], "muse-spark-1.3-contributor")
+        self.assertEqual(settings["model"], "muse-spark-1.3-contributor")
         self.assertIn("example", settings["mcp_servers"])
-        self.assertEqual(
-            settings["mcp_servers"]["example"]["url"],
-            "https://example.com/mcp")
+        self.assertEqual(settings["mcp_servers"]["example"]["url"], "https://example.com/mcp")
 
     def test_muse_code_connect_refuses_when_proxy_already_set(self):
-        path = self._write(
-            json.dumps(_muse_settings(EXISTING_PROXY_URL)))
+        path = self._write(json.dumps(_muse_settings(EXISTING_PROXY_URL)))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "muse-code", PROXY_URL, self.home)
+            connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         # Plain words: the refusal names the existing proxy.
         self.assertIn(EXISTING_PROXY_URL, str(ctx.exception))
         # Nothing changed, and no backup was made.
@@ -145,16 +138,14 @@ class MuseCodeConnectTest(unittest.TestCase):
 
     def test_muse_code_connect_refuses_missing_config(self):
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "muse-code", PROXY_URL, self.home)
+            connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertIn("Muse Code", str(ctx.exception))
 
     def test_muse_code_connect_refuses_non_dict_config(self):
         path = self._write(json.dumps(["not", "a", "dict"]))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused):
-            connect_module.connect_agent(
-                "muse-code", PROXY_URL, self.home)
+            connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
@@ -164,19 +155,16 @@ class MuseCodeConnectTest(unittest.TestCase):
         path = self._write(json.dumps(settings))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "muse-code", PROXY_URL, self.home)
+            connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertIn("schema_version", str(ctx.exception))
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
     def test_muse_code_connect_refuses_wrong_schema_version(self):
-        path = self._write(
-            json.dumps(_muse_settings(schema_version=2)))
+        path = self._write(json.dumps(_muse_settings(schema_version=2)))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "muse-code", PROXY_URL, self.home)
+            connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertIn("schema_version", str(ctx.exception))
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
@@ -187,16 +175,14 @@ class MuseCodeConnectTest(unittest.TestCase):
         path = self._write(json.dumps(settings))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "muse-code", PROXY_URL, self.home)
+            connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertIn("endpoint_transport", str(ctx.exception))
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
     def test_muse_code_connect_refuses_when_backup_already_exists(self):
         path = self._write(json.dumps(_muse_settings()))
-        connect_module.connect_agent(
-            "muse-code", PROXY_URL, self.home)
+        connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         # The user removes the proxy by hand, so a second
         # connect would proceed, but the backup is still there.
         settings = json.loads(self._read(path))
@@ -204,20 +190,17 @@ class MuseCodeConnectTest(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as f:
             f.write(json.dumps(settings))
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.connect_agent(
-                "muse-code", PROXY_URL, self.home)
+            connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertIn("backup", str(ctx.exception).lower())
         # Nothing changed, and the original backup is intact.
         self.assertEqual(self._read(path), json.dumps(settings))
-        self.assertEqual(
-            self._read(path + ".iris-backup"),
-            json.dumps(_muse_settings()))
+        self.assertEqual(self._read(path + ".iris-backup"), json.dumps(_muse_settings()))
 
     def test_muse_code_connect_refuses_when_config_changes_mid_connect(self):
         from unittest import mock
+
         path = self._write(json.dumps(_muse_settings()))
-        changed = json.dumps(
-            {**_muse_settings(), "model": "other-model"})
+        changed = json.dumps({**_muse_settings(), "model": "other-model"})
         calls = []
         real_read_bytes = connect_module._read_bytes
 
@@ -230,12 +213,9 @@ class MuseCodeConnectTest(unittest.TestCase):
                     f.write(changed)
             return data
 
-        with mock.patch.object(
-                connect_module, "_read_bytes",
-                side_effect=_changing_read):
+        with mock.patch.object(connect_module, "_read_bytes", side_effect=_changing_read):
             with self.assertRaises(connect_module.Refused) as ctx:
-                connect_module.connect_agent(
-                    "muse-code", PROXY_URL, self.home)
+                connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertIn("changed", str(ctx.exception).lower())
         # The agent's change is intact, and no backup was made.
         self.assertEqual(self._read(path), changed)
@@ -245,20 +225,16 @@ class MuseCodeConnectTest(unittest.TestCase):
         path = self._write(json.dumps(_muse_settings()))
         original = self._read(path)
         with self.assertRaises(connect_module.Refused):
-            connect_module.connect_agent(
-                "muse-code", "http://proxy.example.com:8080",
-                self.home)
+            connect_module.connect_agent("muse-code", "http://proxy.example.com:8080", self.home)
         self.assertEqual(self._read(path), original)
         self.assertFalse(os.path.exists(path + ".iris-backup"))
 
     def test_muse_code_disconnect_restores_backup(self):
         path = self._write(json.dumps(_muse_settings()))
         original = self._read(path)
-        connect_module.connect_agent(
-            "muse-code", PROXY_URL, self.home)
+        connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertNotEqual(self._read(path), original)
-        result = connect_module.disconnect_agent(
-            "muse-code", self.home)
+        result = connect_module.disconnect_agent("muse-code", self.home)
         # The settings are back to the original content, byte
         # for byte.
         self.assertEqual(self._read(path), original)
@@ -269,19 +245,14 @@ class MuseCodeConnectTest(unittest.TestCase):
     def test_muse_code_disconnect_refuses_when_not_connected(self):
         path = self._write(json.dumps(_muse_settings()))
         with self.assertRaises(connect_module.Refused) as ctx:
-            connect_module.disconnect_agent(
-                "muse-code", self.home)
+            connect_module.disconnect_agent("muse-code", self.home)
         self.assertIn("Muse Code", str(ctx.exception))
         # The settings are untouched.
-        self.assertEqual(
-            self._read(path), json.dumps(_muse_settings()))
+        self.assertEqual(self._read(path), json.dumps(_muse_settings()))
 
     def test_muse_code_config_path_is_under_home(self):
         path = connect_module.config_path("muse-code", self.home)
-        self.assertTrue(
-            os.path.abspath(path).startswith(
-                os.path.abspath(self.home)),
-            f"muse-code path escapes home: {path}")
+        self.assertTrue(os.path.abspath(path).startswith(os.path.abspath(self.home)), f"muse-code path escapes home: {path}")
         self.assertTrue(path.endswith("settings.json"))
 
     def test_muse_code_connect_result_does_not_leak_secrets(self):
@@ -289,8 +260,7 @@ class MuseCodeConnectTest(unittest.TestCase):
         # header. The result must not carry it: the read-back
         # names the proxy only, never the whole config.
         path = self._write(json.dumps(_muse_settings()))
-        result = connect_module.connect_agent(
-            "muse-code", PROXY_URL, self.home)
+        result = connect_module.connect_agent("muse-code", PROXY_URL, self.home)
         self.assertNotIn("sk-test-only", result)
         self.assertNotIn("Bearer", result)
         self.assertIn(PROXY_URL, result)
@@ -308,8 +278,7 @@ class MuseCodeConnectTest(unittest.TestCase):
         # The Connect dialog lists every agent in AGENT_NAMES, so
         # Muse Code shows up there with no UI change.
         self.assertIn("muse-code", connect_module.AGENT_NAMES)
-        self.assertEqual(
-            connect_module.AGENT_NAMES["muse-code"], "Muse Code")
+        self.assertEqual(connect_module.AGENT_NAMES["muse-code"], "Muse Code")
 
 
 if __name__ == "__main__":

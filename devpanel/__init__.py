@@ -9,6 +9,7 @@ Every action reuses the proxy's existing machinery and reason
 vocabulary. A new finger on the same human-only hand: no new gate,
 no new outcome, no new verdict.
 """
+
 from __future__ import annotations
 
 

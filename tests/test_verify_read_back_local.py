@@ -30,6 +30,7 @@ Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames. No scores, no percentages,
 no "probably correct".
 """
+
 import os
 import socket
 import socketserver
@@ -86,8 +87,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
         """Start one loopback echo destination and one proxy on temp db."""
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _CountingEchoHandler)
+        cls.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
         cls.echo.count = 0
         threading.Thread(target=cls.echo.serve_forever, daemon=True).start()
         cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path)
@@ -121,14 +121,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
         sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -139,8 +132,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
 
     def check_card(self, card, verdict):
         """Plain-words card shape: claim, read, source, time, verdict, why, next."""
-        for key in ("claim", "what_read", "source", "as_of",
-                    "verdict", "why", "next"):
+        for key in ("claim", "what_read", "source", "as_of", "verdict", "why", "next"):
             self.assertIn(key, card, f"card missing {key}")
             self.assertTrue(card[key], f"card {key} must not be empty")
         self.assertEqual(card["verdict"], verdict)
@@ -190,8 +182,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
             "expected_text": "Alice",
             "idempotency_key": "verify-ok-file-1",
         }
-        verdict, card = self.proxy.state.verify_read_back(
-            trace_ok, file_claim, done_clause=DONE_FILE)
+        verdict, card = self.proxy.state.verify_read_back(trace_ok, file_claim, done_clause=DONE_FILE)
         self.assertEqual(verdict, "Correct")
         self.check_card(card, "Correct")
         db_claim = {
@@ -202,8 +193,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
             "expected_rows": [["Alice"]],
             "idempotency_key": "verify-ok-sqlite-1",
         }
-        verdict, card = self.proxy.state.verify_read_back(
-            trace_ok, db_claim, done_clause=DONE_SQLITE)
+        verdict, card = self.proxy.state.verify_read_back(trace_ok, db_claim, done_clause=DONE_SQLITE)
         self.assertEqual(verdict, "Correct")
         self.check_card(card, "Correct")
 
@@ -211,10 +201,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
         # effect, all passed: verdict Correct, journaled, with a
         # plain-words card (claim, what was read, from where, as of when,
         # verdict Correct, one-line why, next step).
-        call_rows = [
-            r for r in self.rows_for(trace_ok)
-            if r["outcome"] == "verified"
-        ]
+        call_rows = [r for r in self.rows_for(trace_ok) if r["outcome"] == "verified"]
         self.assertTrue(call_rows, "Verify call must be journaled")
         verdict_rows = [r for r in call_rows if r["status"] == "success"]
         self.assertTrue(verdict_rows, "Correct verdict must be journaled")
@@ -236,18 +223,13 @@ class VerifyReadBackLocalTest(unittest.TestCase):
             "expected_rows": [["Nobody"]],
             "idempotency_key": "verify-bad-sqlite-1",
         }
-        verdict, card = self.proxy.state.verify_read_back(
-            trace_bad, missing_claim, done_clause=DONE_SQLITE)
+        verdict, card = self.proxy.state.verify_read_back(trace_bad, missing_claim, done_clause=DONE_SQLITE)
         self.assertEqual(verdict, "Incorrect")
         self.check_card(card, "Incorrect")
-        bad_verdict = [
-            r for r in self.rows_for(trace_bad)
-            if r["outcome"] == "verified" and r["status"] == "failure"
-        ]
+        bad_verdict = [r for r in self.rows_for(trace_bad) if r["outcome"] == "verified" and r["status"] == "failure"]
         self.assertTrue(bad_verdict, "Incorrect verdict must be journaled")
         # Thus the agent was stopped: no new tunnel for that Run.
-        self.assertTrue(self.proxy.state.is_paused(trace_bad),
-                        "Incorrect verdict must stop the Run")
+        self.assertTrue(self.proxy.state.is_paused(trace_bad), "Incorrect verdict must stop the Run")
         sock, status = self.open_tunnel(self.destA, trace_bad)
         sock.close()
         self.assertEqual(status, 503, "stopped Run moves no bytes")
@@ -259,8 +241,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
         # "probably correct". Remote stays Unverified unless something
         # local proves it; V1 has public read plus human confirm only.
         no_done_claim = dict(file_claim, idempotency_key="verify-unknown-1")
-        verdict, card = self.proxy.state.verify_read_back(
-            trace_unknown, no_done_claim, done_clause=None)
+        verdict, card = self.proxy.state.verify_read_back(trace_unknown, no_done_claim, done_clause=None)
         self.assertEqual(verdict, "Unverified")
         self.check_card(card, "Unverified")
         remote_claim = {
@@ -269,14 +250,10 @@ class VerifyReadBackLocalTest(unittest.TestCase):
             "reference": "pi_test_123",
             "idempotency_key": "verify-unknown-2",
         }
-        verdict, card = self.proxy.state.verify_read_back(
-            trace_unknown, remote_claim, done_clause=DONE_FILE)
+        verdict, card = self.proxy.state.verify_read_back(trace_unknown, remote_claim, done_clause=DONE_FILE)
         self.assertEqual(verdict, "Unverified", "remote with no local proof stays Unverified")
         self.check_card(card, "Unverified")
-        unknown_rows = [
-            r for r in self.rows_for(trace_unknown)
-            if r["outcome"] == "verified" and r["status"] == "unknown"
-        ]
+        unknown_rows = [r for r in self.rows_for(trace_unknown) if r["outcome"] == "verified" and r["status"] == "unknown"]
         self.assertTrue(unknown_rows, "Unverified verdict must be journaled")
 
         # Step 6: journal before call. The call row is committed before
@@ -284,21 +261,16 @@ class VerifyReadBackLocalTest(unittest.TestCase):
         # and Retry-allowed are separate: a Correct verdict alone does
         # not allow a retry; without a fresh Verify the retry is blocked
         # and journaled.
-        keyed = [r for r in self.rows_for(trace_ok)
-                 if "verify-ok-file-1" in (r["reason"] or "")]
+        keyed = [r for r in self.rows_for(trace_ok) if "verify-ok-file-1" in (r["reason"] or "")]
         self.assertTrue(keyed, "call row must carry the idempotency key")
         call_row = keyed[0]
-        later_verdict = [r for r in self.rows_for(trace_ok)
-                         if r["outcome"] == "verified"
-                         and r["status"] == "success"]
+        later_verdict = [r for r in self.rows_for(trace_ok) if r["outcome"] == "verified" and r["status"] == "success"]
         self.assertTrue(later_verdict, "verdict row must exist")
-        self.assertLess(call_row["id"], later_verdict[0]["id"],
-                        "call row first, verdict after")
+        self.assertLess(call_row["id"], later_verdict[0]["id"], "call row first, verdict after")
         allowed, _ = self.proxy.state.retry_run(trace_bad)
         self.assertFalse(allowed, "retry without Verify must be blocked")
         self.assertTrue(
-            [r for r in self.rows_for(trace_bad)
-             if r["reason"] == "verify required before retry"],
+            [r for r in self.rows_for(trace_bad) if r["reason"] == "verify required before retry"],
             "blocked retry must be journaled",
         )
 
@@ -312,8 +284,7 @@ class VerifyReadBackLocalTest(unittest.TestCase):
         allowed, _ = self.proxy.state.retry_run(trace_bad)
         self.assertTrue(allowed, "retry after fresh Verify must be allowed")
         self.assertTrue(
-            [r for r in self.rows_for(trace_bad)
-             if r["reason"] == "retry allowed after verify"],
+            [r for r in self.rows_for(trace_bad) if r["reason"] == "retry allowed after verify"],
             "allowed retry must be journaled",
         )
 

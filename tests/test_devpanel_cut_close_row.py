@@ -52,6 +52,7 @@ the close row, because that is the contract fix A wrote.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -81,22 +82,31 @@ PAYLOAD = b"hello"
 
 def control_row(outcome, reason):
     """A control row as pause_run, redirect_run journal it. Status unknown."""
-    return {"outcome": outcome, "reason": reason, "status": "unknown",
-            "close_reason": outcome, "method": "", "bytes_tx": 0}
+    return {"outcome": outcome, "reason": reason, "status": "unknown", "close_reason": outcome, "method": "", "bytes_tx": 0}
 
 
 def resume_row(kind):
     """The resume row retry_run journals: outcome empty, reason fixed."""
-    return {"outcome": "", "reason": "retry allowed after verify",
-            "status": "unknown", "close_reason": kind, "method": "RETRY",
-            "bytes_tx": 0}
+    return {
+        "outcome": "",
+        "reason": "retry allowed after verify",
+        "status": "unknown",
+        "close_reason": kind,
+        "method": "RETRY",
+        "bytes_tx": 0,
+    }
 
 
 def close_row(outcome, kind):
     """A cut tunnel's own close row, as fix A journals it."""
-    return {"outcome": outcome, "reason": f"tunnel cut by {kind}",
-            "status": "unknown", "close_reason": outcome,
-            "method": "CONNECT", "bytes_tx": 5}
+    return {
+        "outcome": outcome,
+        "reason": f"tunnel cut by {kind}",
+        "status": "unknown",
+        "close_reason": outcome,
+        "method": "CONNECT",
+        "bytes_tx": 5,
+    }
 
 
 class _EchoHandler(socketserver.BaseRequestHandler):
@@ -125,13 +135,14 @@ class CutCloseRowIsNotAnEventTest(unittest.TestCase):
             with self.subTest(kind=kind):
                 rows = [control_row(outcome, why), resume_row(outcome)]
                 self.assertEqual(
-                    states_module.run_state(rows), "FLOWING",
-                    "harness: the resume must return the Run to FLOWING")
+                    states_module.run_state(rows), "FLOWING", "harness: the resume must return the Run to FLOWING"
+                )
                 rows.append(close_row(outcome, kind))
                 self.assertEqual(
-                    states_module.run_state(rows), "FLOWING",
-                    f"a cut tunnel's close row landed after the human "
-                    f"resume and put the Run back to {held_state}")
+                    states_module.run_state(rows),
+                    "FLOWING",
+                    f"a cut tunnel's close row landed after the human resume and put the Run back to {held_state}",
+                )
 
     def test_real_close_row_after_resume_does_not_flip_the_run(self):
         """Check 2: the same, with the close row from a real proxy run."""
@@ -146,24 +157,19 @@ class CutCloseRowIsNotAnEventTest(unittest.TestCase):
         dest = f"127.0.0.1:{echo.server_address[1]}"
         sock = None
         try:
-            sock = socket.create_connection(
-                ("127.0.0.1", proxy.server_address[1]), timeout=HOLD_TIMEOUT)
+            sock = socket.create_connection(("127.0.0.1", proxy.server_address[1]), timeout=HOLD_TIMEOUT)
             sock.settimeout(HOLD_TIMEOUT)
-            sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\n"
-                          f"X-Trace-Id: {trace}\r\n\r\n").encode())
+            sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
             raw = b""
             while b"\r\n\r\n" not in raw:
                 chunk = sock.recv(65536)
                 if not chunk:
                     break
                 raw += chunk
-            self.assertIn(b" 200 ", raw.split(b"\r\n", 1)[0],
-                          "harness: the tunnel did not open")
+            self.assertIn(b" 200 ", raw.split(b"\r\n", 1)[0], "harness: the tunnel did not open")
             sock.sendall(PAYLOAD)
-            self.assertEqual(sock.recv(65536), PAYLOAD,
-                             "harness: the tunnel did not echo")
-            self.assertTrue(proxy.state.pause_run(trace),
-                            "pause_run refused the Run")
+            self.assertEqual(sock.recv(65536), PAYLOAD, "harness: the tunnel did not echo")
+            self.assertTrue(proxy.state.pause_run(trace), "pause_run refused the Run")
             # The close row is the Run's row that carries the payload.
             rows = self.wait_for_rows(db_path, trace)
         finally:
@@ -175,36 +181,34 @@ class CutCloseRowIsNotAnEventTest(unittest.TestCase):
             echo.server_close()
             proxy.state.conn.close()
             tmp.cleanup()
-        control = [r for r in rows if r["bytes_tx"] == 0
-                   and r["outcome"] == "paused"][0]
+        control = [r for r in rows if r["bytes_tx"] == 0 and r["outcome"] == "paused"][0]
         real_close = [r for r in rows if r["bytes_tx"] == len(PAYLOAD)][0]
         # The two real rows, with the resume placed between them: the
         # order a slow handler thread could produce.
         late = [control, resume_row("paused"), real_close]
         self.assertEqual(
-            states_module.run_state(late), "FLOWING",
-            "the real close row of a cut tunnel put the Run back to "
-            "paused after the human resume")
+            states_module.run_state(late),
+            "FLOWING",
+            "the real close row of a cut tunnel put the Run back to paused after the human resume",
+        )
 
     def test_second_human_pause_after_resume_still_pauses(self):
         """Check 3, the control: do not make the panel ignore paused rows."""
         for kind, outcome, why, held_state in self.CASES:
             with self.subTest(kind=kind):
-                rows = [control_row(outcome, why), resume_row(outcome),
-                        control_row(outcome, why)]
+                rows = [control_row(outcome, why), resume_row(outcome), control_row(outcome, why)]
                 self.assertEqual(
-                    states_module.run_state(rows), held_state,
-                    "a second human control row after a resume must "
-                    "still move the Run")
+                    states_module.run_state(rows),
+                    held_state,
+                    "a second human control row after a resume must still move the Run",
+                )
 
     def test_close_row_before_resume_folds_as_before(self):
         """Check 4, the control: the order the journal really has."""
         for kind, outcome, why, held_state in self.CASES:
             with self.subTest(kind=kind):
                 rows = [control_row(outcome, why), close_row(outcome, kind)]
-                self.assertEqual(
-                    states_module.run_state(rows), held_state,
-                    "the Run stays held until the human resume")
+                self.assertEqual(states_module.run_state(rows), held_state, "the Run stays held until the human resume")
                 rows.append(resume_row(outcome))
                 self.assertEqual(states_module.run_state(rows), "FLOWING")
 
@@ -221,19 +225,15 @@ class CutCloseRowIsNotAnEventTest(unittest.TestCase):
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
             try:
-                rows = [dict(r) for r in conn.execute(
-                    "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                    (trace,))]
+                rows = [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace,))]
             finally:
                 conn.close()
-            has_control = any(r["bytes_tx"] == 0 and r["outcome"] == "paused"
-                              for r in rows)
+            has_control = any(r["bytes_tx"] == 0 and r["outcome"] == "paused" for r in rows)
             has_close = any(r["bytes_tx"] == len(PAYLOAD) for r in rows)
             if has_control and has_close:
                 return rows
             time.sleep(0.02)
-        self.fail("the control row or the tunnel's close row never reached "
-                  "the journal")
+        self.fail("the control row or the tunnel's close row never reached the journal")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ rows with cost_dollars, the documented nonzero-cost-wins path; the
 enforcement under test is real. No bodies, no keys, no Authorization
 headers, no real hostnames. No guessed costs, ever.
 """
+
 import os
 import socket
 import socketserver
@@ -71,19 +72,15 @@ class SteerSpendCapTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, two loopback destinations."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        self.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         threading.Thread(target=self.echoA.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoB.serve_forever, daemon=True).start()
         # Gap: rate limiting has its own tests; this proxy serves a high
         # limit so a 429 never masks the 503 cut refusal checked below.
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         # addCleanup runs LIFO: shutdowns first, then closes, then DB,
         # then temp. Closing a listening socket while serve_forever
         # still selects on it crashes Windows; shutdown first, always.
@@ -104,9 +101,7 @@ class SteerSpendCapTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,)).fetchall()
+            return conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,)).fetchall()
         finally:
             conn.close()
 
@@ -121,17 +116,9 @@ class SteerSpendCapTest(unittest.TestCase):
 
     def open_tunnel(self, dest, trace_id):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -174,10 +161,18 @@ class SteerSpendCapTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             db_module.log_attempt(
-                conn, trace_id=trace_id, task_number=1, attempt=1,
-                status="success", dest_host=dest, endpoint=dest,
-                method="CONNECT", http_status=200, outcome="allowed",
-                cost_dollars=dollars)
+                conn,
+                trace_id=trace_id,
+                task_number=1,
+                attempt=1,
+                status="success",
+                dest_host=dest,
+                endpoint=dest,
+                method="CONNECT",
+                http_status=200,
+                outcome="allowed",
+                cost_dollars=dollars,
+            )
         finally:
             conn.close()
 
@@ -187,10 +182,18 @@ class SteerSpendCapTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             db_module.log_attempt(
-                conn, trace_id=trace_id, task_number=1, attempt=1,
-                status="success", dest_host=dest, endpoint=dest,
-                method="CONNECT", http_status=200, outcome="allowed",
-                cost_dollars=0.0)
+                conn,
+                trace_id=trace_id,
+                task_number=1,
+                attempt=1,
+                status="success",
+                dest_host=dest,
+                endpoint=dest,
+                method="CONNECT",
+                http_status=200,
+                outcome="allowed",
+                cost_dollars=0.0,
+            )
         finally:
             conn.close()
 
@@ -215,12 +218,8 @@ class SteerSpendCapTest(unittest.TestCase):
             self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"),
             "set_cap refused net A",
         )
-        set_rows = [
-            r for r in self.rows_for(traceA)
-            if r["reason"] == "cap set $1.00"
-        ] + [
-            r for r in self.rows_all()
-            if r["reason"] == "cap set $1.00"
+        set_rows = [r for r in self.rows_for(traceA) if r["reason"] == "cap set $1.00"] + [
+            r for r in self.rows_all() if r["reason"] == "cap set $1.00"
         ]
         self.assertTrue(set_rows, "cap set must be journaled")
 
@@ -238,10 +237,7 @@ class SteerSpendCapTest(unittest.TestCase):
             probe, probe_status = self.open_tunnel(self.destA, traceA)
             probe.close()
             self.assertEqual(probe_status, 200, "warn must not stop the run")
-            warn_rows = [
-                r for r in self.rows_for(traceA)
-                if r["outcome"] == "warned"
-            ]
+            warn_rows = [r for r in self.rows_for(traceA) if r["outcome"] == "warned"]
             self.assertTrue(warn_rows, "80% must journal a warn row")
             self.assertEqual(warn_rows[-1]["reason"], "cap warn 80%")
             self.assertEqual(api_module.attempt_cost(warn_rows[-1]), 0.0)
@@ -261,10 +257,7 @@ class SteerSpendCapTest(unittest.TestCase):
             sockA2.close()
             self.assertEqual(statusA2, 503, "capped network stays cut")
             self.assert_tunnel_dead(sockA)
-            blocked_rows = [
-                r for r in self.rows_for(traceA)
-                if r["outcome"] == "blocked"
-            ]
+            blocked_rows = [r for r in self.rows_for(traceA) if r["outcome"] == "blocked"]
             self.assertTrue(blocked_rows, "100% must journal a block row")
             self.assertEqual(blocked_rows[-1]["reason"], "cap block 100%")
             self.assertEqual(api_module.attempt_cost(blocked_rows[-1]), 0.0)
@@ -272,8 +265,7 @@ class SteerSpendCapTest(unittest.TestCase):
             self.assertFalse(allowed, "retry without Verify must be blocked")
             self.assertIn("verify", why.lower())
             self.assertTrue(
-                [r for r in self.rows_for(traceA)
-                 if r["reason"] == "verify required before retry"],
+                [r for r in self.rows_for(traceA) if r["reason"] == "verify required before retry"],
                 "blocked retry must be journaled",
             )
 
@@ -289,16 +281,19 @@ class SteerSpendCapTest(unittest.TestCase):
                 self.assertEqual(proof.read(), "row exists after close/fsync")
             verdict, _ = self.proxy.state.verify_read_back(
                 traceA,
-                {"kind": "local-file", "path": proof_path,
-                 "expected_text": "row exists after close/fsync",
-                 "idempotency_key": "spend-verify-1"},
-                done_clause=done)
+                {
+                    "kind": "local-file",
+                    "path": proof_path,
+                    "expected_text": "row exists after close/fsync",
+                    "idempotency_key": "spend-verify-1",
+                },
+                done_clause=done,
+            )
             self.assertEqual(verdict, "Correct")
             allowed, _ = self.proxy.state.retry_run(traceA)
             self.assertFalse(allowed, "Correct alone never unblocks a retry")
             self.assertTrue(
-                [r for r in self.rows_for(traceA)
-                 if r["reason"] == "verify required before retry"],
+                [r for r in self.rows_for(traceA) if r["reason"] == "verify required before retry"],
                 "still-blocked retry must be journaled",
             )
 
@@ -312,10 +307,7 @@ class SteerSpendCapTest(unittest.TestCase):
                 self.proxy.state.unblock_cap(self.destA, reason="human unblock"),
                 "human unblock must be accepted",
             )
-            unblock_rows = [
-                r for r in self.rows_all()
-                if r["reason"] == "cap lifted"
-            ]
+            unblock_rows = [r for r in self.rows_all() if r["reason"] == "cap lifted"]
             self.assertTrue(unblock_rows, "unblock must be journaled")
             allowed, _ = self.proxy.state.retry_run(traceA)
             self.assertTrue(allowed, "retry after unblock must be allowed")
@@ -330,25 +322,20 @@ class SteerSpendCapTest(unittest.TestCase):
             # nothing is guessed in its place.
             for row in self.rows_all():
                 cost = api_module.attempt_cost(row)
-                if row["outcome"] in ("blocked", "rate_limited", "paused",
-                                      "redirected", "stopped", "verified",
-                                      "warned"):
+                if row["outcome"] in ("blocked", "rate_limited", "paused", "redirected", "stopped", "verified", "warned"):
                     self.assertEqual(cost, 0.0)
                 elif row["cost_dollars"]:
                     self.assertEqual(cost, row["cost_dollars"])
             self.record_unpriced(traceB, "pay.example.com:443")
-            self.assertEqual(
-                self.proxy.state.capped_total("pay.example.com:443"), 0)
+            self.assertEqual(self.proxy.state.capped_total("pay.example.com:443"), 0)
             # Zero-cost activity triggers nothing: cap B at $1.00 with
             # only $0.00 rows, and no warn or block row may appear.
-            self.assertTrue(
-                self.proxy.state.set_cap(self.destB, 1.00, reason="human cap"))
+            self.assertTrue(self.proxy.state.set_cap(self.destB, 1.00, reason="human cap"))
             probeB, statusB = self.open_tunnel(self.destB, traceB)
             probeB.close()
             self.assertEqual(statusB, 200)
             self.assertEqual(
-                [r for r in self.rows_for(traceB)
-                 if r["outcome"] in ("warned", "blocked")],
+                [r for r in self.rows_for(traceB) if r["outcome"] in ("warned", "blocked")],
                 [],
                 "no cost, no warn, no block: never guessed",
             )
@@ -361,8 +348,7 @@ class SteerSpendCapTest(unittest.TestCase):
                 b"run-B-unaffected",
             )
             self.assertEqual(
-                [r for r in self.rows_for(traceB)
-                 if r["outcome"] in ("warned", "blocked")],
+                [r for r in self.rows_for(traceB) if r["outcome"] in ("warned", "blocked")],
                 [],
                 "cap on A must not touch B",
             )
@@ -378,17 +364,21 @@ class SteerSpendCapTest(unittest.TestCase):
                 conn.row_factory = sqlite3.Row
                 conn.execute("BEGIN")
                 counts = db_module.fetch_outcome_counts(conn)
-                all_rows = conn.execute(
-                    "SELECT * FROM attempts ORDER BY id").fetchall()
+                all_rows = conn.execute("SELECT * FROM attempts ORDER BY id").fetchall()
             finally:
                 conn.close()
             self.assertEqual(
-                counts["allowed"] + counts["blocked"]
-                + counts["rate_limited"] + counts["paused"]
-                + counts["redirected"] + counts["stopped"]
-                + counts["verified"] + counts["warned"]
+                counts["allowed"]
+                + counts["blocked"]
+                + counts["rate_limited"]
+                + counts["paused"]
+                + counts["redirected"]
+                + counts["stopped"]
+                + counts["verified"]
+                + counts["warned"]
                 + counts["other"],
-                len(all_rows))
+                len(all_rows),
+            )
         finally:
             sockA.close()
             sockB.close()
@@ -402,9 +392,7 @@ class SteerSpendCapTest(unittest.TestCase):
         on plain HTTP.
         """
         trace = "cap-float-connect"
-        self.assertTrue(
-            self.proxy.state.set_cap(self.destA, 0.05, reason="human cap"),
-            "harness: the cap did not land")
+        self.assertTrue(self.proxy.state.set_cap(self.destA, 0.05, reason="human cap"), "harness: the cap did not land")
         for _ in range(4):
             self.record_cost(trace, self.destA, 0.01)
         sock, status = self.open_tunnel(self.destA, trace)

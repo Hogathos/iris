@@ -40,6 +40,7 @@ What the test proves, in order:
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -83,8 +84,7 @@ class _CountingEchoHandler(socketserver.BaseRequestHandler):
 
 
 def _start_counting_echo():
-    server = socketserver.ThreadingTCPServer(
-        ("127.0.0.1", 0), _CountingEchoHandler)
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _CountingEchoHandler)
     server.bytes_in = 0
     server.count_lock = threading.Lock()
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -98,14 +98,13 @@ class RedirectDuringSetupWindowTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.old_dest = _start_counting_echo()   # A: where the Run was
-        cls.new_dest = _start_counting_echo()   # C: where the human sends it
+        cls.old_dest = _start_counting_echo()  # A: where the Run was
+        cls.new_dest = _start_counting_echo()  # C: where the human sends it
         cls.old_port = cls.old_dest.server_address[1]
         cls.new_port = cls.new_dest.server_address[1]
         # High rate limit: rate limiting has its own tests, and a 429
         # here would mask the 503 or the live tunnel this test checks.
-        cls.proxy = proxy_module.serve(
-            "127.0.0.1", 0, cls.db_path, rate_limit=10000)
+        cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path, rate_limit=10000)
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
 
@@ -127,13 +126,9 @@ class RedirectDuringSetupWindowTest(unittest.TestCase):
         proxy's call, and that is what this test checks.
         """
         dest = f"127.0.0.1:{self.old_port}"
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {dest} HTTP/1.1\r\n"
-             f"Host: {dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -165,15 +160,17 @@ class RedirectDuringSetupWindowTest(unittest.TestCase):
         except OSError:
             return
         self.assertEqual(
-            data, b"",
+            data,
+            b"",
             "Redirect landed while the tunnel was still connecting to the "
             "old destination, and the tunnel carries bytes anyway: "
-            "nothing cut it")
+            "nothing cut it",
+        )
 
     def test_redirect_during_setup_window_leaves_old_route_dead(self):
         trace = "bench-setup-window-redirect-1"
-        in_window = threading.Event()   # proxy is inside the upstream connect
-        release = threading.Event()     # test lets the connect finish
+        in_window = threading.Event()  # proxy is inside the upstream connect
+        release = threading.Event()  # test lets the connect finish
         real_create_connection = socket.create_connection
         old_port = self.old_port
 
@@ -196,19 +193,17 @@ class RedirectDuringSetupWindowTest(unittest.TestCase):
             except Exception as exc:  # reported by the assertions below
                 result["error"] = repr(exc)
 
-        with mock.patch.object(
-                socket, "create_connection", held_create_connection):
+        with mock.patch.object(socket, "create_connection", held_create_connection):
             worker = threading.Thread(target=client, daemon=True)
             worker.start()
             try:
                 self.assertTrue(
                     in_window.wait(timeout=STEP_TIMEOUT),
-                    "harness: proxy never reached the upstream connect, "
-                    "so the setup window was never entered")
+                    "harness: proxy never reached the upstream connect, so the setup window was never entered",
+                )
                 self.assertTrue(
-                    self.proxy.state.redirect_run(
-                        trace, f"127.0.0.1:{self.new_port}"),
-                    "redirect_run refused the Run")
+                    self.proxy.state.redirect_run(trace, f"127.0.0.1:{self.new_port}"), "redirect_run refused the Run"
+                )
             finally:
                 release.set()
             worker.join(timeout=HOLD_TIMEOUT + STEP_TIMEOUT)
@@ -225,42 +220,33 @@ class RedirectDuringSetupWindowTest(unittest.TestCase):
                 self.assert_tunnel_dead(window_sock)
             else:
                 # Refused instead: must be the 503 refusal.
-                self.assertEqual(
-                    result["status"], 503,
-                    "a tunnel refused after Redirect must be 503")
+                self.assertEqual(result["status"], 503, "a tunnel refused after Redirect must be 503")
         finally:
             window_sock.close()
         with self.old_dest.count_lock:
             old_bytes = self.old_dest.bytes_in
         self.assertEqual(
-            old_bytes, 0,
-            "the old destination received bytes from a Run that was "
-            "already redirected away from it")
+            old_bytes, 0, "the old destination received bytes from a Run that was already redirected away from it"
+        )
 
         # Step 3: the Run is steered, not stuck. A retry asks for A
         # again and must land on C, with A still untouched.
         retry_sock, retry_status = self.open_tunnel(trace)
         try:
-            self.assertEqual(
-                retry_status, 200,
-                "a retry on a redirected Run must open, not stay refused")
+            self.assertEqual(retry_status, 200, "a retry on a redirected Run must open, not stay refused")
             retry_sock.settimeout(STEP_TIMEOUT)
             retry_sock.sendall(b"ping-on-new-route")
             self.assertEqual(
-                retry_sock.recv(65536), b"ping-on-new-route",
-                "the retry tunnel did not echo from the new destination")
+                retry_sock.recv(65536), b"ping-on-new-route", "the retry tunnel did not echo from the new destination"
+            )
         finally:
             retry_sock.close()
         with self.new_dest.count_lock:
             new_bytes = self.new_dest.bytes_in
         with self.old_dest.count_lock:
             old_bytes_after = self.old_dest.bytes_in
-        self.assertEqual(
-            new_bytes, len(b"ping-on-new-route"),
-            "the retry did not reach the new destination")
-        self.assertEqual(
-            old_bytes_after, 0,
-            "the retry leaked bytes to the old destination")
+        self.assertEqual(new_bytes, len(b"ping-on-new-route"), "the retry did not reach the new destination")
+        self.assertEqual(old_bytes_after, 0, "the retry leaked bytes to the old destination")
 
 
 if __name__ == "__main__":

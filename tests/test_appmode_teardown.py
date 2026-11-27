@@ -17,6 +17,7 @@ owns one in-process QApplication with its own module teardown. A
 subprocess test touches no in-process Qt state, so it keeps that
 teardown undisturbed.
 """
+
 import os
 import subprocess
 import sys
@@ -105,14 +106,9 @@ class TeardownTest(unittest.TestCase):
         env["QT_QPA_PLATFORM"] = "offscreen"
         env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
         env["IRIS_ROOT"] = ROOT
-        proc = subprocess.run(
-            [sys.executable, "-c", CHILD],
-            env=env, cwd=ROOT,
-            capture_output=True, text=True, timeout=180)
+        proc = subprocess.run([sys.executable, "-c", CHILD], env=env, cwd=ROOT, capture_output=True, text=True, timeout=180)
         tail = (proc.stdout + proc.stderr)[-2000:]
-        self.assertEqual(
-            proc.returncode, 0,
-            msg=f"teardown child exited {proc.returncode}, out: {tail}")
+        self.assertEqual(proc.returncode, 0, msg=f"teardown child exited {proc.returncode}, out: {tail}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Concurrent log_attempt calls on one shared connection must not fail."""
+
 import os
 import sys
 import tempfile
@@ -9,7 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # urllib honors NO_PROXY and would bypass the loopback test proxy;
 # drop it so the suite never depends on ambient proxy config (N7).
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 import db
 
@@ -44,10 +46,10 @@ class ConcurrentLogAttemptTest(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertEqual(count, 8 * 25)
 
-
     def test_concurrent_stamps_stay_inside_lock_and_ordered_with_id(self):
         import datetime as datetime_module
         import types
+
         real_datetime_module = db.datetime
         real_lock = db._write_lock
         real_datetime = datetime_module.datetime
@@ -77,8 +79,7 @@ class ConcurrentLogAttemptTest(unittest.TestCase):
                 record("now")
                 return real_datetime.now(tz)
 
-        db.datetime = types.SimpleNamespace(
-            datetime=RecordingDateTime, timezone=datetime_module.timezone)
+        db.datetime = types.SimpleNamespace(datetime=RecordingDateTime, timezone=datetime_module.timezone)
         db._write_lock = RecordingLock()
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -91,15 +92,11 @@ class ConcurrentLogAttemptTest(unittest.TestCase):
                         try:
                             barrier.wait()
                             for i in range(10):
-                                db.log_attempt(
-                                    conn, trace_id="trace-race",
-                                    task_number=worker_id, attempt=1,
-                                    status="success")
+                                db.log_attempt(conn, trace_id="trace-race", task_number=worker_id, attempt=1, status="success")
                         except Exception as exc:
                             errors.append(exc)
 
-                    threads = [threading.Thread(target=worker, args=(n,))
-                               for n in (1, 2)]
+                    threads = [threading.Thread(target=worker, args=(n,)) for n in (1, 2)]
                     for thread in threads:
                         thread.start()
                     for thread in threads:
@@ -117,13 +114,9 @@ class ConcurrentLogAttemptTest(unittest.TestCase):
                             elif kind == "released":
                                 holding = False
                             elif kind == "now":
-                                self.assertTrue(
-                                    holding,
-                                    "created_at stamped outside _write_lock")
+                                self.assertTrue(holding, "created_at stamped outside _write_lock")
 
-                    rows = conn.execute(
-                        "SELECT id, created_at FROM attempts ORDER BY id"
-                    ).fetchall()
+                    rows = conn.execute("SELECT id, created_at FROM attempts ORDER BY id").fetchall()
                 finally:
                     conn.close()
             stamps = [row[1] for row in rows]
@@ -137,8 +130,7 @@ class FetchHelpersDoNotMutateConnectionTest(unittest.TestCase):
     def test_row_factory_restored_after_fetch(self):
         with tempfile.TemporaryDirectory() as tmp:
             conn = db.init_db(os.path.join(tmp, "attempts.db"))
-            db.log_attempt(conn, trace_id="t", task_number=1,
-                           attempt=1, status="success")
+            db.log_attempt(conn, trace_id="t", task_number=1, attempt=1, status="success")
             self.assertIsNone(conn.row_factory)
             totals = db.fetch_totals(conn)
             self.assertIsNone(conn.row_factory)

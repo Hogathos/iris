@@ -56,6 +56,7 @@ restart on their own. A fresh approval plus Verify lets a new Run
 through; old Runs stay stopped. The journal is only added to, never
 deleted. Stop rows are metadata only and always cost $0.00.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,7 +81,7 @@ import db as db_module
 
 # M4 policy defaults (configurable via serve()/CLI).
 DEFAULT_ALLOWLIST = ("127.0.0.1", "localhost", "::1")
-RATE_LIMIT = 100            # max forwarded requests per destination ...
+RATE_LIMIT = 100  # max forwarded requests per destination ...
 RATE_WINDOW_SECONDS = 10.0  # ... inside this sliding window
 RELAY_IDLE_TIMEOUT_SECONDS = 30.0  # tunnel silence before relay gives up
 
@@ -89,15 +90,24 @@ def _timeout_words(seconds) -> str:
     """Plain words for a tunnel the cutoff closed, with the seconds."""
     return f"closed after {float(seconds):g}s silent"
 
+
 MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024  # bigger request bodies get a plain-words 413, never silent truncation
 MAX_REQUEST_LINE_BYTES = 8192  # longer request lines get a plain-words 400
 MAX_HEADER_BYTES = 65536  # more header bytes total get a plain-words 400
 RELAY_CHUNK_BYTES = 65536  # stream step both ways: headers first, then body in chunks
-MAX_BUFFERED_RESPONSE_BYTES = 1024 * 1024  # up to this many body bytes are read whole (row logged first); past it, or with no length, the body streams and its row lands when the stream ends
+MAX_BUFFERED_RESPONSE_BYTES = (
+    1024 * 1024
+)  # up to this many body bytes are read whole (row logged first); past it, or with no length, the body streams and its row lands when the stream ends
 
 HOP_BY_HOP = {
-    "connection", "keep-alive", "proxy-connection", "proxy-authorization",
-    "te", "trailer", "transfer-encoding", "upgrade",
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
 }
 
 
@@ -110,14 +120,11 @@ def _parse_port(text: str, authority: str) -> int:
 
 
 @overload
-def _split_authority(authority: str, default_port: int) -> tuple[str, int]:
-    ...
+def _split_authority(authority: str, default_port: int) -> tuple[str, int]: ...
 
 
 @overload
-def _split_authority(authority: str,
-                     default_port: None) -> tuple[str, int | None]:
-    ...
+def _split_authority(authority: str, default_port: None) -> tuple[str, int | None]: ...
 
 
 def _split_authority(authority: str, default_port: int | None) -> tuple[str, int | None]:
@@ -132,7 +139,7 @@ def _split_authority(authority: str, default_port: int | None) -> tuple[str, int
         if end == -1:
             raise ValueError(f"bad authority {authority!r}")
         host = text[1:end]
-        rest = text[end + 1:]
+        rest = text[end + 1 :]
         if not rest:
             return host, default_port
         if not rest.startswith(":"):
@@ -175,7 +182,7 @@ def _dotted_numbers_value(text: str) -> int | None:
     if any(n > 255 for n in nums[:-1]) or nums[-1] >= (1 << width):
         return None
     value = 0
-    for num, shift in zip(nums, (24, 16, 8)[:len(nums) - 1] + (0,)):
+    for num, shift in zip(nums, (24, 16, 8)[: len(nums) - 1] + (0,)):
         value |= num << shift
     return value
 
@@ -288,17 +295,21 @@ def _retry_reason(attempt: int) -> str:
 
 
 class ProxyState:
-    def __init__(self, db_path: str, retry_window: float = 10.0,
-                 allowlist=None, rate_limit: int = RATE_LIMIT,
-                 rate_window: float = RATE_WINDOW_SECONDS,
-                 relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
-                 rate_clock=time.time):
+    def __init__(
+        self,
+        db_path: str,
+        retry_window: float = 10.0,
+        allowlist=None,
+        rate_limit: int = RATE_LIMIT,
+        rate_window: float = RATE_WINDOW_SECONDS,
+        relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
+        rate_clock=time.time,
+    ):
         self.conn = db_module.init_db(db_path)
         self.retry_window = retry_window
         self.allowlist = tuple(
-            entry.strip().lower() for entry in
-            (allowlist if allowlist is not None else DEFAULT_ALLOWLIST)
-            if entry.strip())
+            entry.strip().lower() for entry in (allowlist if allowlist is not None else DEFAULT_ALLOWLIST) if entry.strip()
+        )
         # Parsed once up front: (normalized host, port or None for any).
         # An entry that does not parse gets a port that matches nothing,
         # so a typo fails closed instead of opening the proxy.
@@ -334,20 +345,17 @@ class ProxyState:
         self._connecting: dict[str, dict] = {}
         # Steer Redirect one Run: human-chosen destination per trace_id
         # (survives restart, never silently undone).
-        self._redirects: dict[str, dict] = db_module.load_redirected(
-            self.conn)
+        self._redirects: dict[str, dict] = db_module.load_redirected(self.conn)
         # Steer Red button: global stop (survives restart, never
         # auto-lifted), the stopped trace set (old Runs never restart
         # alone), plus fresh human approvals for new Runs.
         self._stopped: dict | None = db_module.load_red_button(self.conn)
-        self._stopped_traces: set = db_module.load_red_button_traces(
-            self.conn)
+        self._stopped_traces: set = db_module.load_red_button_traces(self.conn)
         self._approved: dict[str, str] = {}
         # Steer per-network override: rule per destination, human-only,
         # journal first, fail-closed. Survives restart, never silently
         # lifted, same as every other Steer control.
-        self._overrides: dict[str, dict] = db_module.load_overrides(
-            self.conn)
+        self._overrides: dict[str, dict] = db_module.load_overrides(self.conn)
         # Steer spend caps: per-network dollar caps, human-only, journal
         # first. Survives restart, never silently lifted. Warned flags
         # and pause-by-cap traces live here; the rules live in SQLite.
@@ -369,8 +377,7 @@ class ProxyState:
         # When a limit is set, Iris blocks calls whose cost it cannot
         # work out, unless the human allowed that place.
         self.daily_limit = self._load_daily_limit()
-        self._allowed_places: dict = db_module.load_allowed_places(
-            self.conn)
+        self._allowed_places: dict = db_module.load_allowed_places(self.conn)
 
     def _load_daily_limit(self):
         """The saved daily limit in dollars, or None for no limit."""
@@ -394,6 +401,7 @@ class ProxyState:
         other value is refused and changes nothing.
         """
         import datetime
+
         if dollars is None:
             db_module.clear_setting(self.conn, "daily_limit")
             self.daily_limit = None
@@ -438,8 +446,7 @@ class ProxyState:
             return None
         return _format_label(host.lower(), port_number)
 
-    def allow_place(self, dest_label: str,
-                    reason: str = "human allow") -> bool:
+    def allow_place(self, dest_label: str, reason: str = "human allow") -> bool:
         """Allow one place despite its Unverified cost. Human-only.
 
         One call, no typing beyond the name, no confirmation. The next
@@ -453,18 +460,15 @@ class ProxyState:
         if not label:
             return False
         import datetime
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         db_module.save_allowed_place(self.conn, label, reason, now)
-        self._allowed_places[label] = {"reason": reason,
-                                       "created_at": now}
+        self._allowed_places[label] = {"reason": reason, "created_at": now}
         return True
 
-    def unallow_place(self, dest_label: str,
-                      reason: str = "human unallow") -> bool:
+    def unallow_place(self, dest_label: str, reason: str = "human unallow") -> bool:
         """Stop allowing one place. Human-only (Undo included)."""
-        if reason not in ("human unallow", "human allow", "Steer allow",
-                          "Steer unallow"):
+        if reason not in ("human unallow", "human allow", "Steer allow", "Steer unallow"):
             return False
         label = self._place_label(dest_label)
         if not label or label not in self._allowed_places:
@@ -512,19 +516,17 @@ class ProxyState:
             return None
         if label in self._allowed_places:
             return None
-        return ("unpriceable with daily limit set: Iris could not "
-                "work out what the call costs")
+        return "unpriceable with daily limit set: Iris could not work out what the call costs"
 
-    def note_blocked_call(self, trace_id: str, dest_label: str,
-                          reason: str) -> None:
+    def note_blocked_call(self, trace_id: str, dest_label: str, reason: str) -> None:
         """Journal one blocked call. Metadata only, costs $0.00."""
         last = db_module.last_attempt(self.conn, trace_id)
         method = last["method"] if last else ""
         dest = last["dest_host"] if last else dest_label
         endpoint = last["endpoint"] if last else dest_label
-        self._control_row(trace_id, method, dest or dest_label,
-                          endpoint or dest_label, "unknown", "blocked",
-                          reason, "unpriceable")
+        self._control_row(
+            trace_id, method, dest or dest_label, endpoint or dest_label, "unknown", "blocked", reason, "unpriceable"
+        )
 
     def recently_blocked(self, limit: int = 20) -> list:
         """Destinations blocked lately for an Unverified cost.
@@ -536,7 +538,8 @@ class ProxyState:
         rows = self.conn.execute(
             "SELECT dest_host FROM attempts WHERE outcome = 'blocked'"
             " AND reason LIKE 'unpriceable%' ORDER BY id DESC"
-            f" LIMIT {int(limit) * 5}").fetchall()
+            f" LIMIT {int(limit) * 5}"
+        ).fetchall()
         found = []
         for row in rows:
             dest = row[0] or ""
@@ -550,8 +553,7 @@ class ProxyState:
                 break
         return found
 
-    def stop_run(self, trace_id: str,
-                 reason: str = "human stop") -> bool:
+    def stop_run(self, trace_id: str, reason: str = "human stop") -> bool:
         """Stop one Run. Journal first, then cut its tunnels.
 
         Human-only: a plain method on the local proxy state, never an
@@ -560,15 +562,13 @@ class ProxyState:
         existing gate. Incorrect claims stop the Run they belong to
         through this method, not through the global red button.
         """
-        if reason not in ("human stop", "Steer stop",
-                          "incorrect claim"):
+        if reason not in ("human stop", "Steer stop", "incorrect claim"):
             return False
         last = db_module.last_attempt(self.conn, trace_id)
         dest_host = last["dest_host"] if last else ""
         endpoint = last["endpoint"] if last else ""
         method = last["method"] if last else ""
-        self._control_row(trace_id, method, dest_host, endpoint,
-                          "unknown", "stopped", reason, "stopped")
+        self._control_row(trace_id, method, dest_host, endpoint, "unknown", "stopped", reason, "stopped")
         with self._lock:
             live = self._live.pop(trace_id, {})
             self._stopped_traces.add(trace_id)
@@ -636,8 +636,7 @@ class ProxyState:
         now = time.time()
         key = (trace_id, endpoint, method)
         with self._lock:
-            stamps = [t for t in self._attempts.get(key, [])
-                      if now - t <= self.retry_window]
+            stamps = [t for t in self._attempts.get(key, []) if now - t <= self.retry_window]
             stamps.append(now)
             self._attempts[key] = stamps
             return len(stamps)
@@ -649,8 +648,7 @@ class ProxyState:
         now = time.time()
         key = (trace_id, endpoint, method)
         with self._lock:
-            fresh = [t for t in self._attempts.get(key, [])
-                     if now - t <= self.retry_window]
+            fresh = [t for t in self._attempts.get(key, []) if now - t <= self.retry_window]
             return len(fresh) + 1
 
     # -- Steer Pause one Run. Human-only: these are plain methods on the
@@ -671,10 +669,7 @@ class ProxyState:
         db_module.clear_red_button(self.conn)
         with self._lock:
             self._stopped = None
-        self._control_row("", "APPROVE", "", "",
-                          "unknown", "",
-                          "emergency stop lifted, agents may work again",
-                          "allowed")
+        self._control_row("", "APPROVE", "", "", "unknown", "", "emergency stop lifted, agents may work again", "allowed")
         return True
 
     def is_paused(self, trace_id: str) -> bool:
@@ -758,8 +753,7 @@ class ProxyState:
         except OSError:
             pass
 
-    def redirect_run(self, trace_id: str, new_dest: str,
-                     reason: str = "human redirect") -> bool:
+    def redirect_run(self, trace_id: str, new_dest: str, reason: str = "human redirect") -> bool:
         """Move one Run to a new allowlisted destination. Journal first.
 
         Human-only: a plain method on the local proxy state, never an
@@ -780,30 +774,23 @@ class ProxyState:
             new_label = _format_label(new_host, new_port)
         except ValueError:
             new_host, new_port, new_label = None, None, ""
-        if (not new_label or new_host is None or new_port is None
-                or not self.is_allowed(new_host, new_port)):
+        if not new_label or new_host is None or new_port is None or not self.is_allowed(new_host, new_port):
             last = db_module.last_attempt(self.conn, trace_id)
             dest_host = last["dest_host"] if last else ""
             endpoint = last["endpoint"] if last else ""
             method = last["method"] if last else ""
-            self._control_row(trace_id, method, dest_host, endpoint,
-                              "unknown", "blocked",
-                              "redirect refused: not allowlisted",
-                              "redirected")
+            self._control_row(
+                trace_id, method, dest_host, endpoint, "unknown", "blocked", "redirect refused: not allowlisted", "redirected"
+            )
             return False
         last = db_module.last_attempt(self.conn, trace_id)
         method = last["method"] if last else ""
         endpoint = last["endpoint"] if last else ""
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
-        db_module.save_redirected(self.conn, trace_id, new_label,
-                                  reason, now)
-        self._control_row(trace_id, method, new_label, new_label,
-                          "unknown", "redirected", reason, "redirected")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        db_module.save_redirected(self.conn, trace_id, new_label, reason, now)
+        self._control_row(trace_id, method, new_label, new_label, "unknown", "redirected", reason, "redirected")
         with self._lock:
-            self._redirects[trace_id] = {"dest_host": new_label,
-                                         "reason": reason,
-                                         "created_at": now}
+            self._redirects[trace_id] = {"dest_host": new_label, "reason": reason, "created_at": now}
             self._verified.pop(trace_id, None)
             live = self._live.pop(trace_id, {})
         for sock in live:
@@ -827,15 +814,12 @@ class ProxyState:
         guessed) contribute nothing. Rounded to cents: this is money.
         """
         from api import attempt_cost
+
         total = 0.0
         for outcome, dest_host, cost in self.conn.execute(
-                "SELECT outcome, dest_host, cost_dollars FROM attempts"
-                " WHERE dest_host = ? AND outcome = 'allowed'",
-                (dest_label,)):
-            priced = attempt_cost({"outcome": outcome,
-                                   "dest_host": dest_host,
-                                   "cost_dollars": cost,
-                                   "status": "success"})
+            "SELECT outcome, dest_host, cost_dollars FROM attempts WHERE dest_host = ? AND outcome = 'allowed'", (dest_label,)
+        ):
+            priced = attempt_cost({"outcome": outcome, "dest_host": dest_host, "cost_dollars": cost, "status": "success"})
             if priced is not None:
                 total += priced
         return round(total, 2)
@@ -864,19 +848,15 @@ class ProxyState:
             return False
         if not amount > 0 or not self.is_allowed(host, port):
             return False
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         db_module.save_cap(self.conn, label, amount, reason, now)
         with self._lock:
-            self._caps[label] = {"cap": amount, "reason": reason,
-                                 "created_at": now}
+            self._caps[label] = {"cap": amount, "reason": reason, "created_at": now}
             self._cap_warned.discard(label)
-        self._control_row("", "CAP", label, label,
-                          "unknown", "", f"cap set ${amount:.2f}", "capped")
+        self._control_row("", "CAP", label, label, "unknown", "", f"cap set ${amount:.2f}", "capped")
         return True
 
-    def set_relay_timeout(self, seconds,
-                          reason: str = "human timeout") -> bool:
+    def set_relay_timeout(self, seconds, reason: str = "human timeout") -> bool:
         """Set the silent tunnel cutoff in seconds. Journal first.
 
         Human-only: a plain method on the local proxy state, never an
@@ -896,15 +876,12 @@ class ProxyState:
             return False
         if not 5.0 <= value <= 3600.0:
             return False
-        self._control_row("", "TIMEOUT", "", "",
-                          "unknown", "",
-                          f"silent cutoff set to {value:g}s", "timeout")
+        self._control_row("", "TIMEOUT", "", "", "unknown", "", f"silent cutoff set to {value:g}s", "timeout")
         with self._lock:
             self.relay_timeout = value
         return True
 
-    def unblock_cap(self, dest_label: str,
-                    reason: str = "human unblock") -> bool:
+    def unblock_cap(self, dest_label: str, reason: str = "human unblock") -> bool:
         """Lift a spend cap after Verify. Human-only, journaled.
 
         Human-only: a plain method on the local proxy state, never an
@@ -918,25 +895,21 @@ class ProxyState:
         with self._lock:
             if dest_label not in self._caps:
                 return False
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         db_module.clear_cap(self.conn, dest_label)
         with self._lock:
             self._caps.pop(dest_label, None)
             self._cap_warned.discard(dest_label)
-        self._control_row("", "CAP", dest_label, dest_label,
-                          "unknown", "", "cap lifted", "capped")
+        self._control_row("", "CAP", dest_label, dest_label, "unknown", "", "cap lifted", "capped")
         with self._lock:
-            stopped = [tid for tid, dest in self._cap_paused.items()
-                       if dest == dest_label]
+            stopped = [tid for tid, dest in self._cap_paused.items() if dest == dest_label]
         for trace_id in stopped:
             # The lift returns this Run to flowing, so the Run's own
             # journal needs the row: the panel folds one Run's rows,
             # and the destination-level row above carries no trace id,
             # so the panel never sees it. Without a per-Run row the
             # fold cannot reach FLOWING after an unblock.
-            self._control_row(trace_id, "CAP", dest_label, dest_label,
-                              "unknown", "", "cap lifted", "capped")
+            self._control_row(trace_id, "CAP", dest_label, dest_label, "unknown", "", "cap lifted", "capped")
             db_module.clear_paused(self.conn, trace_id)
             with self._lock:
                 self._paused.pop(trace_id, None)
@@ -952,27 +925,20 @@ class ProxyState:
         the sockets shut. Retries stay blocked until a fresh Verify,
         through the existing gate.
         """
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         with self._lock:
-            live = {tid: dict(socks) for tid, socks in self._live.items()
-                    if any(d == dest_label for d in socks.values())}
+            live = {tid: dict(socks) for tid, socks in self._live.items() if any(d == dest_label for d in socks.values())}
         for trace_id in live:
             last = db_module.last_attempt(self.conn, trace_id)
             method = last["method"] if last else ""
-            db_module.save_paused(self.conn, trace_id,
-                                  "cap block 100%", now)
-            self._control_row(trace_id, method, dest_label, dest_label,
-                              "unknown", "paused", "cap block 100%",
-                              "capped")
+            db_module.save_paused(self.conn, trace_id, "cap block 100%", now)
+            self._control_row(trace_id, method, dest_label, dest_label, "unknown", "paused", "cap block 100%", "capped")
             with self._lock:
-                self._paused[trace_id] = {"reason": "cap block 100%",
-                                          "created_at": now}
+                self._paused[trace_id] = {"reason": "cap block 100%", "created_at": now}
                 self._verified.pop(trace_id, None)
                 self._cap_paused[trace_id] = dest_label
         with self._lock:
-            socks = [sock for tid in live
-                     for sock in self._live.pop(tid, {}).keys()]
+            socks = [sock for tid in live for sock in self._live.pop(tid, {}).keys()]
         for sock in socks:
             self._cut_socket(sock, "pause")
 
@@ -985,8 +951,7 @@ class ProxyState:
         with self._lock:
             return self._overrides.get(dest_label)
 
-    def set_override(self, dest_label: str, action: str = "pause",
-                     reason: str = "human override", target: str = "") -> bool:
+    def set_override(self, dest_label: str, action: str = "pause", reason: str = "human override", target: str = "") -> bool:
         """Set a human override for one network. Journal first.
 
         Human-only: a plain method on the local proxy state, never an
@@ -1010,46 +975,36 @@ class ProxyState:
             label = _format_label(host, port)
         except ValueError:
             host, port, label = None, None, ""
-        if (not label or host is None or port is None
-                or not self.is_allowed(host, port)):
+        if not label or host is None or port is None or not self.is_allowed(host, port):
             # The refusal names a destination, not a Run: no Run existed,
             # none is invented. It journals under its own override-attempt
             # trace so the audit trail has exactly one row for it and no
             # Run's history is touched.
             attempt_trace = f"override::{dest_label}"
-            self._control_row(attempt_trace, "", dest_label, dest_label,
-                              "unknown", "blocked",
-                              "non-allowlisted override name",
-                              "overridden")
+            self._control_row(
+                attempt_trace, "", dest_label, dest_label, "unknown", "blocked", "non-allowlisted override name", "overridden"
+            )
             return False
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
-        db_module.save_override(self.conn, label, action, target,
-                                reason, now)
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        db_module.save_override(self.conn, label, action, target, reason, now)
         with self._lock:
-            self._overrides[label] = {"action": action, "target": target,
-                                      "reason": reason, "created_at": now}
-            live_traces = [tid for tid, socks in self._live.items()
-                           if any(d == label for d in socks.values())]
+            self._overrides[label] = {"action": action, "target": target, "reason": reason, "created_at": now}
+            live_traces = [tid for tid, socks in self._live.items() if any(d == label for d in socks.values())]
         for trace_id in live_traces:
             last = db_module.last_attempt(self.conn, trace_id)
             method = last["method"] if last else ""
             db_module.save_paused(self.conn, trace_id, reason, now)
-            self._control_row(trace_id, method, label, label,
-                              "unknown", "paused", reason, "paused")
+            self._control_row(trace_id, method, label, label, "unknown", "paused", reason, "paused")
             with self._lock:
-                self._paused[trace_id] = {"reason": reason,
-                                          "created_at": now}
+                self._paused[trace_id] = {"reason": reason, "created_at": now}
                 self._verified.pop(trace_id, None)
         with self._lock:
-            live = [sock for tid in live_traces
-                    for sock in self._live.pop(tid, {}).keys()]
+            live = [sock for tid in live_traces for sock in self._live.pop(tid, {}).keys()]
         for sock in live:
             self._cut_socket(sock, "pause")
         return True
 
-    def clear_override(self, dest_label: str,
-                       reason: str = "human unblock") -> bool:
+    def clear_override(self, dest_label: str, reason: str = "human unblock") -> bool:
         """Forget one per-network override rule. Human-only.
 
         Human-only: a plain method on the local proxy state, never an
@@ -1069,16 +1024,21 @@ class ProxyState:
                 return False
             self._overrides.pop(label, None)
         db_module.clear_override(self.conn, label)
-        self._control_row("", "OVERRIDE", label, label,
-                          "unknown", "",
-                          "override lifted, network flows again",
-                          "allowed")
+        self._control_row("", "OVERRIDE", label, label, "unknown", "", "override lifted, network flows again", "allowed")
         return True
 
-    def _control_row(self, trace_id: str, method: str, dest_host: str,
-                     endpoint: str, status: str, outcome: str,
-                     reason: str, close_reason: str,
-                     cost_dollars: float = 0.0) -> None:
+    def _control_row(
+        self,
+        trace_id: str,
+        method: str,
+        dest_host: str,
+        endpoint: str,
+        status: str,
+        outcome: str,
+        reason: str,
+        close_reason: str,
+        cost_dollars: float = 0.0,
+    ) -> None:
         """One journal row for a Steer control action. Metadata only.
 
         No bodies, no keys, no hostnames beyond the loopback destination
@@ -1086,25 +1046,32 @@ class ProxyState:
         spend-cap warn row, which carries the cumulative total that
         tripped it: saying what was spent is the warning.
         """
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         task_number = self.task_number(trace_id, None)
         attempt = self.peek_attempt(trace_id, endpoint, method)
         db_module.log_attempt(
-            self.conn, trace_id=trace_id,
-            task_number=task_number, attempt=attempt,
-            strategy="proxy", status=status,
+            self.conn,
+            trace_id=trace_id,
+            task_number=task_number,
+            attempt=attempt,
+            strategy="proxy",
+            status=status,
             latency_seconds=0.0,
             retry_reason=_retry_reason(attempt),
-            dest_host=dest_host, endpoint=endpoint,
-            method=method, bytes_in=0, bytes_out=0,
-            http_status=None, created_at=now,
-            outcome=outcome, reason=reason,
+            dest_host=dest_host,
+            endpoint=endpoint,
+            method=method,
+            bytes_in=0,
+            bytes_out=0,
+            http_status=None,
+            created_at=now,
+            outcome=outcome,
+            reason=reason,
             cost_dollars=cost_dollars,
-            close_reason=close_reason)
+            close_reason=close_reason,
+        )
 
-    def pause_run(self, trace_id: str,
-                  reason: str = "human pause") -> bool:
+    def pause_run(self, trace_id: str, reason: str = "human pause") -> bool:
         """Pause one Run by trace_id. Journal first, then cut.
 
         Writes the paused state and the pause row (outcome paused,
@@ -1121,9 +1088,7 @@ class ProxyState:
         with self._lock:
             live = self._live.pop(trace_id, {})
             live_dests = [dest for dest in live.values() if dest]
-            pending_dests = [dest for dest in
-                             self._connecting.get(trace_id, {}).values()
-                             if dest]
+            pending_dests = [dest for dest in self._connecting.get(trace_id, {}).values() if dest]
         last = db_module.last_attempt(self.conn, trace_id)
         if live_dests:
             # Live tunnel first: an open tunnel has no journal row yet,
@@ -1141,11 +1106,9 @@ class ProxyState:
         else:
             dest_host = endpoint = ""
         method = last["method"] if last else ""
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         db_module.save_paused(self.conn, trace_id, reason, now)
-        self._control_row(trace_id, method, dest_host, endpoint,
-                          "unknown", "paused", reason, "paused")
+        self._control_row(trace_id, method, dest_host, endpoint, "unknown", "paused", reason, "paused")
         with self._lock:
             self._paused[trace_id] = {"reason": reason, "created_at": now}
             self._verified.pop(trace_id, None)
@@ -1166,10 +1129,8 @@ class ProxyState:
         # the lock: _control_row takes the lock itself (task_number),
         # so calling it under the lock would deadlock on a plain Lock.
         if late:
-            for late_dest in (dict.fromkeys(
-                    d for d in late.values() if d) or [""]):
-                self._control_row(trace_id, "CONNECT", late_dest, late_dest,
-                                  "unknown", "paused", reason, "paused")
+            for late_dest in dict.fromkeys(d for d in late.values() if d) or [""]:
+                self._control_row(trace_id, "CONNECT", late_dest, late_dest, "unknown", "paused", reason, "paused")
         for sock in live:
             self._cut_socket(sock, "pause")
         return True
@@ -1189,15 +1150,13 @@ class ProxyState:
         """
         if reason not in ("human red button", "Steer red button"):
             return False
-        journaled = [row[0] for row in self.conn.execute(
-            "SELECT DISTINCT trace_id FROM attempts").fetchall()]
+        journaled = [row[0] for row in self.conn.execute("SELECT DISTINCT trace_id FROM attempts").fetchall()]
         with self._lock:
             # Open tunnels have no journal row yet: their rows land when
             # the tunnels end. They are known Runs too, and stop as well.
             live_only = [t for t in self._live if t not in journaled]
         traces = journaled + live_only
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         db_module.save_red_button(self.conn, reason, now)
         db_module.save_red_button_traces(self.conn, traces)
         with self._lock:
@@ -1218,8 +1177,7 @@ class ProxyState:
             else:
                 dest_host = endpoint = ""
             method = last["method"] if last else ""
-            self._control_row(trace_id, method, dest_host, endpoint,
-                              "unknown", "stopped", reason, "stopped")
+            self._control_row(trace_id, method, dest_host, endpoint, "unknown", "stopped", reason, "stopped")
         with self._lock:
             self._stopped = {"reason": reason, "created_at": now}
             self._verified.clear()
@@ -1240,18 +1198,13 @@ class ProxyState:
         own. Otherwise journals the approval and records it. Approval
         alone moves no bytes; a fresh Verify must still follow.
         """
-        if (not isinstance(done_clause, dict)
-                or done_clause.get("approved_by") != "human"
-                or not done_clause.get("read_back")):
+        if not isinstance(done_clause, dict) or done_clause.get("approved_by") != "human" or not done_clause.get("read_back"):
             return False
         with self._lock:
             if trace_id in self._stopped_traces:
                 return False
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
-        self._control_row(trace_id, "APPROVE", "", "",
-                          "unknown", "", "fresh approval recorded",
-                          "stopped")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        self._control_row(trace_id, "APPROVE", "", "", "unknown", "", "fresh approval recorded", "stopped")
         with self._lock:
             self._approved[trace_id] = now
         return True
@@ -1268,8 +1221,7 @@ class ProxyState:
                 return True
             approved_at = self._approved.get(trace_id)
             verified_at = self._verified.get(trace_id)
-            return bool(approved_at and verified_at
-                        and verified_at >= approved_at)
+            return bool(approved_at and verified_at and verified_at >= approved_at)
 
     def verify_run(self, trace_id: str, done_clause=None) -> bool:
         """Record a fresh human Verify for a paused, redirected, or
@@ -1283,26 +1235,30 @@ class ProxyState:
         unblocks a retry.
         """
         with self._lock:
-            gated = (trace_id in self._paused
-                     or trace_id in self._redirects
-                     or (self._stopped is not None
-                         and trace_id in self._approved))
+            gated = (
+                trace_id in self._paused
+                or trace_id in self._redirects
+                or (self._stopped is not None and trace_id in self._approved)
+            )
         if not gated:
             return False
-        if (not isinstance(done_clause, dict)
-                or done_clause.get("approved_by") != "human"
-                or not done_clause.get("read_back")):
+        if not isinstance(done_clause, dict) or done_clause.get("approved_by") != "human" or not done_clause.get("read_back"):
             return False
         last = db_module.last_attempt(self.conn, trace_id)
         if last is None:
             return False
-        self._control_row(trace_id, "VERIFY", last["dest_host"],
-                          last["endpoint"], "unknown", "", 
-                          f"verify ok: {done_clause['read_back']}",
-                          "paused")
+        self._control_row(
+            trace_id,
+            "VERIFY",
+            last["dest_host"],
+            last["endpoint"],
+            "unknown",
+            "",
+            f"verify ok: {done_clause['read_back']}",
+            "paused",
+        )
         with self._lock:
-            self._verified[trace_id] = datetime.datetime.now(
-                datetime.timezone.utc).isoformat(timespec="seconds")
+            self._verified[trace_id] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         return True
 
     def retry_run(self, trace_id: str) -> tuple:
@@ -1325,9 +1281,7 @@ class ProxyState:
         with self._lock:
             approved_at = self._approved.get(trace_id)
             verified_at = self._verified.get(trace_id)
-            if (self._stopped is not None
-                    and trace_id in self._stopped_traces
-                    and not approved_at):
+            if self._stopped is not None and trace_id in self._stopped_traces and not approved_at:
                 # A stopped Run is stopped first, even when it is still
                 # paused or redirected: it never retries as paused or
                 # redirected, and no Verify stamp brings it back.
@@ -1337,8 +1291,7 @@ class ProxyState:
             elif trace_id in self._redirects:
                 kind = "redirected"
                 since = self._redirects[trace_id]["created_at"]
-            elif self._stopped is not None and not (
-                    approved_at and verified_at and verified_at >= approved_at):
+            elif self._stopped is not None and not (approved_at and verified_at and verified_at >= approved_at):
                 kind, since = "stopped", self._stopped["created_at"]
             else:
                 if self._stopped is not None:
@@ -1356,16 +1309,12 @@ class ProxyState:
                 reason = "red button stopped"
             else:
                 reason = "verify required before retry"
-            self._control_row(trace_id, "RETRY", dest_host, endpoint,
-                              "unknown", "blocked", reason, kind)
+            self._control_row(trace_id, "RETRY", dest_host, endpoint, "unknown", "blocked", reason, kind)
             return False, reason
         if kind == "paused":
             db_module.clear_paused(self.conn, trace_id)
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
-        self._control_row(trace_id, "RETRY", dest_host, endpoint,
-                          "unknown", "", "retry allowed after verify",
-                          kind)
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        self._control_row(trace_id, "RETRY", dest_host, endpoint, "unknown", "", "retry allowed after verify", kind)
         with self._lock:
             if kind == "paused":
                 self._paused.pop(trace_id, None)
@@ -1374,8 +1323,7 @@ class ProxyState:
                 self._verified[trace_id] = now
         return True, "retry allowed after verify"
 
-    def verify_read_back(self, trace_id: str, claim,
-                           done_clause=None):
+    def verify_read_back(self, trace_id: str, claim, done_clause=None):
         """Verify a claim by independent local read-back. Journal first.
 
         Returns (verdict, card) with verdict one of Correct, Incorrect,
@@ -1390,10 +1338,8 @@ class ProxyState:
         before the call row is journaled, because the call row itself
         would count as a row.
         """
-        now = datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds")
-        key = (claim.get("idempotency_key", "-")
-               if isinstance(claim, dict) else "-")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        key = claim.get("idempotency_key", "-") if isinstance(claim, dict) else "-"
         # No trace: the journal holds no row for this Run that counts
         # as a trace, so there is no proxy row, no bytes, no effect to
         # read. Local kinds keep their own read: a file or a database
@@ -1410,24 +1356,30 @@ class ProxyState:
             and done_clause.get("approved_by") == "human"
             and done_clause.get("read_back")
         )
-        self._control_row(trace_id, "VERIFY", "", "", "unknown",
-                          "verified", f"verify call {key}", "verified")
+        self._control_row(trace_id, "VERIFY", "", "", "unknown", "verified", f"verify call {key}", "verified")
         if no_trace:
             verdict, what_read, source, why, nxt = (
-                "Unverified", "no read attempted",
+                "Unverified",
+                "no read attempted",
                 "journal: no trace for this Run",
-                "No trace", "human investigates")
+                "No trace",
+                "human investigates",
+            )
         else:
-            verdict, what_read, source, why, nxt = self._read_back(
-                claim, done_clause)
-        status = {"Correct": "success", "Incorrect": "failure",
-                  "Unverified": "unknown"}[verdict]
-        self._control_row(trace_id, "VERIFY", "", "", status,
-                          "verified", f"verify {verdict}", "verified")
+            verdict, what_read, source, why, nxt = self._read_back(claim, done_clause)
+        status = {"Correct": "success", "Incorrect": "failure", "Unverified": "unknown"}[verdict]
+        self._control_row(trace_id, "VERIFY", "", "", status, "verified", f"verify {verdict}", "verified")
         if verdict == "Incorrect":
             self.pause_run(trace_id, reason="Steer pause")
-        card = {"claim": claim, "what_read": what_read, "source": source,
-                "as_of": now, "verdict": verdict, "why": why, "next": nxt}
+        card = {
+            "claim": claim,
+            "what_read": what_read,
+            "source": source,
+            "as_of": now,
+            "verdict": verdict,
+            "why": why,
+            "next": nxt,
+        }
         return verdict, card
 
     def _read_back(self, claim, done_clause):
@@ -1438,27 +1390,34 @@ class ProxyState:
         proof is Unverified, never Incorrect: addressing and credential
         errors are excluded, not contradicted.
         """
-        if (not isinstance(done_clause, dict)
-                or done_clause.get("approved_by") != "human"
-                or not done_clause.get("read_back")):
-            return ("Unverified", "no read attempted",
-                    "journal: no approved done clause",
-                    "no approved done clause",
-                    "human approves the done clause, then Verify again")
+        if not isinstance(done_clause, dict) or done_clause.get("approved_by") != "human" or not done_clause.get("read_back"):
+            return (
+                "Unverified",
+                "no read attempted",
+                "journal: no approved done clause",
+                "no approved done clause",
+                "human approves the done clause, then Verify again",
+            )
         if not isinstance(claim, dict):
-            return ("Unverified", "no read attempted",
-                    "journal: claim is not a read profile",
-                    "no read profile for this claim",
-                    "human approves a read profile, then Verify again")
+            return (
+                "Unverified",
+                "no read attempted",
+                "journal: claim is not a read profile",
+                "no read profile for this claim",
+                "human approves a read profile, then Verify again",
+            )
         kind = claim.get("kind")
         if kind == "local-file":
             return self._read_back_file(claim)
         if kind == "sqlite":
             return self._read_back_sqlite(claim)
-        return ("Unverified", "no read attempted",
-                "journal: remote effect with no local proof",
-                "remote with no local proof",
-                "human confirms, or add a local proof, then Verify again")
+        return (
+            "Unverified",
+            "no read attempted",
+            "journal: remote effect with no local proof",
+            "remote with no local proof",
+            "human confirms, or add a local proof, then Verify again",
+        )
 
     def _read_back_file(self, claim):
         """Strong local file read: the bytes on disk, after fsync."""
@@ -1469,49 +1428,55 @@ class ProxyState:
             with open(path, "r") as handle:
                 actual = handle.read()
         except FileNotFoundError:
-            return ("Incorrect", what, "local filesystem",
-                    "file does not exist",
-                    "Run stopped, human reviews the claim")
+            return ("Incorrect", what, "local filesystem", "file does not exist", "Run stopped, human reviews the claim")
         except OSError:
-            return ("Unverified", what, "local filesystem",
-                    "file could not be read",
-                    "human checks the file, then Verify again")
+            return (
+                "Unverified",
+                what,
+                "local filesystem",
+                "file could not be read",
+                "human checks the file, then Verify again",
+            )
         if actual == expected:
-            return ("Correct", what, "local filesystem",
-                    "file text matched the claim",
-                    "done, keep the journal")
-        return ("Incorrect", what, "local filesystem",
-                "file text contradicted the claim",
-                "Run stopped, human reviews the claim")
+            return ("Correct", what, "local filesystem", "file text matched the claim", "done, keep the journal")
+        return (
+            "Incorrect",
+            what,
+            "local filesystem",
+            "file text contradicted the claim",
+            "Run stopped, human reviews the claim",
+        )
 
     def _read_back_sqlite(self, claim):
         """Strong SQLite read: SELECT in a fresh txn, after COMMIT."""
         path = claim.get("db", "")
         what = f"local SQLite {path}"
         if not path or not os.path.exists(path):
-            return ("Incorrect", what, "local SQLite",
-                    "database file does not exist",
-                    "Run stopped, human reviews the claim")
+            return ("Incorrect", what, "local SQLite", "database file does not exist", "Run stopped, human reviews the claim")
         try:
             conn = sqlite3.connect(path)
             try:
-                rows = conn.execute(
-                    claim.get("sql", ""),
-                    claim.get("params", []) or []).fetchall()
+                rows = conn.execute(claim.get("sql", ""), claim.get("params", []) or []).fetchall()
             finally:
                 conn.close()
         except sqlite3.Error:
-            return ("Unverified", what, "local SQLite",
-                    "read failed, not a contradiction",
-                    "human checks the database, then Verify again")
+            return (
+                "Unverified",
+                what,
+                "local SQLite",
+                "read failed, not a contradiction",
+                "human checks the database, then Verify again",
+            )
         actual = [list(row) for row in rows]
         if actual == (claim.get("expected_rows") or []):
-            return ("Correct", what, "local SQLite",
-                    "row matched the claim in a fresh transaction",
-                    "done, keep the journal")
-        return ("Incorrect", what, "local SQLite",
-                "row missing in a fresh transaction",
-                "Run stopped, human reviews the claim")
+            return ("Correct", what, "local SQLite", "row matched the claim in a fresh transaction", "done, keep the journal")
+        return (
+            "Incorrect",
+            what,
+            "local SQLite",
+            "row missing in a fresh transaction",
+            "Run stopped, human reviews the claim",
+        )
 
     def _register_live(self, trace_id: str, sock, dest_label: str = "") -> None:
         """Track one open tunnel socket under its Run, for Pause cuts.
@@ -1532,8 +1497,7 @@ class ProxyState:
                 if not live:
                     self._live.pop(trace_id, None)
 
-    def _register_connecting(self, trace_id: str, sock,
-                             dest_label: str) -> None:
+    def _register_connecting(self, trace_id: str, sock, dest_label: str) -> None:
         """Note a tunnel that is connecting upstream, before the connect.
 
         A Pause that lands before the tunnel is live has nothing to cut
@@ -1572,10 +1536,9 @@ class _RelayBroken(Exception):
         self.close_reason = close_reason
 
 
-def _relay(client: socket.socket, upstream: socket.socket,
-           timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
-           is_cut=None
-           ) -> tuple[int, int, str]:
+def _relay(
+    client: socket.socket, upstream: socket.socket, timeout: float = RELAY_IDLE_TIMEOUT_SECONDS, is_cut=None
+) -> tuple[int, int, str]:
     """Relay raw bytes both ways; return (bytes_in, bytes_out, close_reason).
 
     Bytes are counted, never inspected, stored, or logged. bytes_in is
@@ -1600,8 +1563,7 @@ def _relay(client: socket.socket, upstream: socket.socket,
         # cut can show up there instead of in the readable set.
         # Read it the same way. Its recv raises, so the relay ends
         # as broken and the close row lands at once.
-        readable, _, errored = select.select(
-            sockets, [], sockets, min(remaining, 0.5))
+        readable, _, errored = select.select(sockets, [], sockets, min(remaining, 0.5))
         if is_cut is not None and is_cut():
             raise _RelayBroken(bytes_in, bytes_out, "client_eof")
         if not readable and not errored:
@@ -1610,9 +1572,7 @@ def _relay(client: socket.socket, upstream: socket.socket,
             try:
                 data = sock.recv(65536)
             except OSError:
-                raise _RelayBroken(
-                    bytes_in, bytes_out,
-                    "client_eof" if sock is client else "upstream_reset")
+                raise _RelayBroken(bytes_in, bytes_out, "client_eof" if sock is client else "upstream_reset")
             if not data:
                 return bytes_in, bytes_out, "success"
             try:
@@ -1623,9 +1583,7 @@ def _relay(client: socket.socket, upstream: socket.socket,
                     client.sendall(data)
                     bytes_out += len(data)
             except OSError:
-                raise _RelayBroken(
-                    bytes_in, bytes_out,
-                    "upstream_reset" if sock is client else "client_eof")
+                raise _RelayBroken(bytes_in, bytes_out, "upstream_reset" if sock is client else "client_eof")
 
 
 def make_handler(state: ProxyState):
@@ -1641,8 +1599,7 @@ def make_handler(state: ProxyState):
             # A request header can carry a line break, which would
             # split the answer when Iris repeats it in X-Trace-Id.
             # Strip those at the door: real ids never hold one.
-            trace_id = (self.headers.get("X-Trace-Id")
-                        or str(uuid.uuid4()))
+            trace_id = self.headers.get("X-Trace-Id") or str(uuid.uuid4())
             trace_id = trace_id.replace("\r", "").replace("\n", "")
             try:
                 dest_host, dest_port = _split_authority(self.path, 443)
@@ -1651,35 +1608,41 @@ def make_handler(state: ProxyState):
                 # 403) rather than inventing a new refusal for it.
                 dest_host, dest_port = self.path, -1
             endpoint = _format_label(dest_host, dest_port)
-            task_number = state.task_number(
-                trace_id, self.headers.get("X-Task-Number"))
+            task_number = state.task_number(trace_id, self.headers.get("X-Task-Number"))
             strategy = self.headers.get("X-Strategy") or "proxy"
 
-            def log_connect(status, outcome, reason, http_status,
-                            bytes_in, bytes_out, close_reason,
-                            connect_ms=None):
+            def log_connect(status, outcome, reason, http_status, bytes_in, bytes_out, close_reason, connect_ms=None):
                 duration_ms = (time.perf_counter() - start) * 1000.0
                 db_module.log_attempt(
-                    state.conn, trace_id=trace_id,
-                    task_number=task_number, attempt=attempt,
-                    strategy=strategy, status=status,
+                    state.conn,
+                    trace_id=trace_id,
+                    task_number=task_number,
+                    attempt=attempt,
+                    strategy=strategy,
+                    status=status,
                     latency_seconds=duration_ms / 1000.0,
                     retry_reason=_retry_reason(attempt),
-                    dest_host=endpoint, endpoint=endpoint,
-                    method="CONNECT", bytes_in=bytes_in,
-                    bytes_out=bytes_out, http_status=http_status,
-                    outcome=outcome, reason=reason,
-                    bytes_tx=bytes_in, bytes_rx=bytes_out,
-                    close_reason=close_reason, connect_ms=connect_ms,
-                    duration_ms=duration_ms)
+                    dest_host=endpoint,
+                    endpoint=endpoint,
+                    method="CONNECT",
+                    bytes_in=bytes_in,
+                    bytes_out=bytes_out,
+                    http_status=http_status,
+                    outcome=outcome,
+                    reason=reason,
+                    bytes_tx=bytes_in,
+                    bytes_rx=bytes_out,
+                    close_reason=close_reason,
+                    connect_ms=connect_ms,
+                    duration_ms=duration_ms,
+                )
 
             if not state.watching:
                 # Watching is off: no new tunnel for anyone. Blocked,
                 # never paused, so turning watching back on needs no
                 # Verify. Unknown, never Correct. Nothing fails open.
                 attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
-                log_connect("blocked", "blocked", "watching is off",
-                            503, 0, 0, "watching")
+                log_connect("blocked", "blocked", "watching is off", 503, 0, 0, "watching")
                 self.send_response(503)
                 self.send_header("X-Trace-Id", trace_id)
                 self.send_header("Content-Length", "0")
@@ -1690,9 +1653,7 @@ def make_handler(state: ProxyState):
                 # approval plus Verify: no new tunnel. Unknown, never
                 # Correct. Nothing fails open.
                 attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
-                log_connect("unknown", "stopped",
-                            "approval required after red button",
-                            503, 0, 0, "stopped")
+                log_connect("unknown", "stopped", "approval required after red button", 503, 0, 0, "stopped")
                 self.send_response(503)
                 self.send_header("X-Trace-Id", trace_id)
                 self.send_header("Content-Length", "0")
@@ -1700,8 +1661,7 @@ def make_handler(state: ProxyState):
                 return
             if not state.is_allowed(dest_host, dest_port):
                 attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
-                log_connect("blocked", "blocked", "not_allowlisted", 403,
-                            0, 0, "blocked_allowlist")
+                log_connect("blocked", "blocked", "not_allowlisted", 403, 0, 0, "blocked_allowlist")
                 self.send_response(403)
                 self.send_header("X-Trace-Id", trace_id)
                 self.send_header("Content-Length", "0")
@@ -1721,8 +1681,7 @@ def make_handler(state: ProxyState):
                     endpoint = target
             if not state.check_rate(endpoint):
                 attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
-                log_connect("rate_limited", "rate_limited", "rate_limited",
-                            429, 0, 0, "rate_limited")
+                log_connect("rate_limited", "rate_limited", "rate_limited", 429, 0, 0, "rate_limited")
                 self.send_response(429)
                 self.send_header("X-Trace-Id", trace_id)
                 self.send_header("Content-Length", "0")
@@ -1731,9 +1690,7 @@ def make_handler(state: ProxyState):
             if state.is_paused(trace_id):
                 # Paused Run: no new tunnel. Unknown, never Correct.
                 attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
-                log_connect("unknown", "paused",
-                            state.pause_reason(trace_id),
-                            503, 0, 0, "paused")
+                log_connect("unknown", "paused", state.pause_reason(trace_id), 503, 0, 0, "paused")
                 self.send_response(503)
                 self.send_header("X-Trace-Id", trace_id)
                 self.send_header("Content-Length", "0")
@@ -1744,8 +1701,7 @@ def make_handler(state: ProxyState):
                 # Overridden network: no new tunnel. Unknown, never
                 # Correct. Journaled under paused, like a Run pause.
                 attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
-                log_connect("unknown", "paused", rule["reason"],
-                            503, 0, 0, "paused")
+                log_connect("unknown", "paused", rule["reason"], 503, 0, 0, "paused")
                 self.send_response(503)
                 self.send_header("X-Trace-Id", trace_id)
                 self.send_header("Content-Length", "0")
@@ -1759,8 +1715,7 @@ def make_handler(state: ProxyState):
                     # tunnels second, then refuse. Unknown, never
                     # Correct. Retries stay blocked until a fresh Verify.
                     attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
-                    log_connect("unknown", "blocked", "cap block 100%",
-                                503, 0, 0, "capped")
+                    log_connect("unknown", "blocked", "cap block 100%", 503, 0, 0, "capped")
                     state._cap_block(endpoint)
                     self.send_response(503)
                     self.send_header("X-Trace-Id", trace_id)
@@ -1774,10 +1729,8 @@ def make_handler(state: ProxyState):
                     # allow this place. The tunnel is never opened.
                     # Blocked, never guessed; the place stays blocked
                     # until the human allows it.
-                    attempt = state.peek_attempt(trace_id, endpoint,
-                                                 "CONNECT")
-                    log_connect("blocked", "blocked", unpriceable,
-                                403, 0, 0, "unpriceable")
+                    attempt = state.peek_attempt(trace_id, endpoint, "CONNECT")
+                    log_connect("blocked", "blocked", unpriceable, 403, 0, 0, "unpriceable")
                     self.send_response(403)
                     self.send_header("X-Trace-Id", trace_id)
                     self.send_header("Content-Length", "0")
@@ -1797,9 +1750,8 @@ def make_handler(state: ProxyState):
                         # call still flows. The row carries what was
                         # spent: saying it is the warning.
                         state._control_row(
-                            trace_id, "CONNECT", endpoint, endpoint,
-                            "unknown", "warned", "cap warn 80%", "warned",
-                            total)
+                            trace_id, "CONNECT", endpoint, endpoint, "unknown", "warned", "cap warn 80%", "warned", total
+                        )
 
             # Numbered only once the tunnel will actually be opened.
             attempt = state.next_attempt(trace_id, endpoint, "CONNECT")
@@ -1810,14 +1762,12 @@ def make_handler(state: ProxyState):
             state._register_connecting(trace_id, self.connection, endpoint)
             connect_start = time.perf_counter()
             try:
-                upstream = socket.create_connection(
-                    (dest_host, dest_port), timeout=10)
+                upstream = socket.create_connection((dest_host, dest_port), timeout=10)
                 connect_ms = (time.perf_counter() - connect_start) * 1000.0
             except Exception:
                 state._unregister_connecting(trace_id, self.connection)
                 connect_ms = (time.perf_counter() - connect_start) * 1000.0
-                log_connect("failure", "allowed", "", None, 0, 0,
-                            "upstream_reset", connect_ms)
+                log_connect("failure", "allowed", "", None, 0, 0, "upstream_reset", connect_ms)
                 self.send_response(502)
                 self.send_header("X-Trace-Id", trace_id)
                 self.send_header("Content-Length", "0")
@@ -1846,9 +1796,7 @@ def make_handler(state: ProxyState):
             if state.is_paused(trace_id):
                 state._unregister_live(trace_id, self.connection)
                 upstream.close()
-                log_connect("unknown", "paused",
-                            state.pause_reason(trace_id),
-                            503, 0, 0, "paused", connect_ms)
+                log_connect("unknown", "paused", state.pause_reason(trace_id), 503, 0, 0, "paused", connect_ms)
                 try:
                     self.send_response(503)
                     self.send_header("X-Trace-Id", trace_id)
@@ -1879,15 +1827,12 @@ def make_handler(state: ProxyState):
                 except ValueError:
                     pass  # validated at redirect time; keep the tunnel
                 else:
-                    route_changed = ((now_host.lower(), now_port)
-                                     != (dest_host.lower(), dest_port))
+                    route_changed = (now_host.lower(), now_port) != (dest_host.lower(), dest_port)
             if route_changed:
                 state._unregister_live(trace_id, self.connection)
                 upstream.close()
-                cut = state.steer_cut(trace_id) or (
-                    "redirected", "human redirect")
-                log_connect("unknown", cut[0], cut[1],
-                            503, 0, 0, cut[0], connect_ms)
+                cut = state.steer_cut(trace_id) or ("redirected", "human redirect")
+                log_connect("unknown", cut[0], cut[1], 503, 0, 0, cut[0], connect_ms)
                 try:
                     self.send_response(503)
                     self.send_header("X-Trace-Id", trace_id)
@@ -1907,8 +1852,8 @@ def make_handler(state: ProxyState):
             status, bytes_in, bytes_out, close_reason = "success", 0, 0, "success"
             try:
                 bytes_in, bytes_out, close_reason = _relay(
-                    self.connection, upstream, timeout=state.relay_timeout,
-                    is_cut=lambda: state.is_cut(self.connection))
+                    self.connection, upstream, timeout=state.relay_timeout, is_cut=lambda: state.is_cut(self.connection)
+                )
             except _RelayTimeout as exc:
                 # A silent tunnel tells us nothing about who is at fault,
                 # so the status stays unknown, never failed.
@@ -1934,9 +1879,7 @@ def make_handler(state: ProxyState):
                 # allowed. The kind is the verb ("pause"); the outcome
                 # is the past tense ("paused"), same as the control
                 # rows.
-                cut_outcome = {"pause": "paused",
-                               "redirect": "redirected",
-                               "stop": "stopped"}[tunnel_cut]
+                cut_outcome = {"pause": "paused", "redirect": "redirected", "stop": "stopped"}[tunnel_cut]
                 if tunnel_cut == "stop" and state._stopped is not None:
                     # The close row says what the stop row says: the
                     # reason of the press. A tunnel cut by the button
@@ -1944,20 +1887,16 @@ def make_handler(state: ProxyState):
                     cut_reason = state._stopped["reason"]
                 else:
                     cut_reason = f"tunnel cut by {tunnel_cut}"
-                log_connect("unknown", cut_outcome,
-                            cut_reason, None,
-                            bytes_in, bytes_out, cut_outcome, connect_ms)
+                log_connect("unknown", cut_outcome, cut_reason, None, bytes_in, bytes_out, cut_outcome, connect_ms)
             elif cut is not None and status != "success":
                 # Cut mid-flight by Pause or Redirect: the tunnel did not
                 # fail, it was steered, so the outcome is unknown, never
                 # failure. The reason stays the steer reason, for one
                 # plain story.
                 status = "unknown"
-                log_connect(status, cut[0], cut[1], None,
-                            bytes_in, bytes_out, close_reason, connect_ms)
+                log_connect(status, cut[0], cut[1], None, bytes_in, bytes_out, close_reason, connect_ms)
             else:
-                log_connect(status, "allowed", "", None, bytes_in, bytes_out,
-                            close_reason, connect_ms)
+                log_connect(status, "allowed", "", None, bytes_in, bytes_out, close_reason, connect_ms)
 
         def _target(self):
             """Return (host, port, endpoint), None if unsupported.
@@ -1994,17 +1933,16 @@ def make_handler(state: ProxyState):
                 headers = getattr(self, "headers", None) or {}
                 get = headers.get if hasattr(headers, "get") else (lambda k, d=None: d)
                 trace_id = get("X-Trace-Id") or str(uuid.uuid4())
-                body = (f"{self.command} is not supported by this proxy, "
-                        "request not forwarded by proxy\n").encode()
-                self._refused(501, "failure", "unimplemented_method",
-                              get("Host") or "", self.path or "", body,
-                              trace_id=trace_id)
+                body = (f"{self.command} is not supported by this proxy, request not forwarded by proxy\n").encode()
+                self._refused(
+                    501, "failure", "unimplemented_method", get("Host") or "", self.path or "", body, trace_id=trace_id
+                )
                 return
             super().send_error(code, message, explain)
 
-        def _refused(self, code, status, reason, dest_host, endpoint,
-                     body, trace_id=None, close_reason="unknown",
-                     outcome=None):
+        def _refused(
+            self, code, status, reason, dest_host, endpoint, body, trace_id=None, close_reason="unknown", outcome=None
+        ):
             """Refuse a request with a plain-words body plus an audit row.
 
             Outcome defaults to the status (blocked, rate_limited,
@@ -2013,29 +1951,33 @@ def make_handler(state: ProxyState):
             """
             if trace_id is None:
                 trace_id = self.headers.get("X-Trace-Id") or str(uuid.uuid4())
-            task_number = state.task_number(
-                trace_id, self.headers.get("X-Task-Number"))
-            attempt = state.peek_attempt(trace_id, endpoint, self.command
-                                         if hasattr(self, "command") else "")
+            task_number = state.task_number(trace_id, self.headers.get("X-Task-Number"))
+            attempt = state.peek_attempt(trace_id, endpoint, self.command if hasattr(self, "command") else "")
             strategy = self.headers.get("X-Strategy") or "proxy"
             duration_ms = None
             start = getattr(self, "_refused_start", None)
             if start is not None:
                 duration_ms = (time.perf_counter() - start) * 1000.0
             db_module.log_attempt(
-                state.conn, trace_id=trace_id,
-                task_number=task_number, attempt=attempt,
-                strategy=strategy, status=status,
-                latency_seconds=(duration_ms / 1000.0
-                                 if duration_ms is not None else 0.0),
+                state.conn,
+                trace_id=trace_id,
+                task_number=task_number,
+                attempt=attempt,
+                strategy=strategy,
+                status=status,
+                latency_seconds=(duration_ms / 1000.0 if duration_ms is not None else 0.0),
                 retry_reason=_retry_reason(attempt),
-                dest_host=dest_host, endpoint=endpoint,
+                dest_host=dest_host,
+                endpoint=endpoint,
                 method=getattr(self, "command", ""),
-                bytes_in=0, bytes_out=0,
+                bytes_in=0,
+                bytes_out=0,
                 http_status=code,
                 outcome=outcome if outcome is not None else status,
                 reason=reason,
-                close_reason=close_reason, duration_ms=duration_ms)
+                close_reason=close_reason,
+                duration_ms=duration_ms,
+            )
             self.send_response(code)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(body)))
@@ -2065,12 +2007,10 @@ def make_handler(state: ProxyState):
                     raise _BadFraming("negative chunk size")
                 if size == 0:
                     while True:  # trailers are read and ignored, never logged
-                        trailer = self.rfile.readline(
-                            MAX_REQUEST_LINE_BYTES + 1)
+                        trailer = self.rfile.readline(MAX_REQUEST_LINE_BYTES + 1)
                         if trailer in (b"\r\n", b"\n", b""):
                             return
-                        if (not trailer.endswith(b"\n")
-                                or len(trailer) > MAX_REQUEST_LINE_BYTES):
+                        if not trailer.endswith(b"\n") or len(trailer) > MAX_REQUEST_LINE_BYTES:
                             raise _BadFraming("trailer line too long")
                 total += size
                 if total > MAX_REQUEST_BODY_BYTES:
@@ -2108,22 +2048,28 @@ def make_handler(state: ProxyState):
 
         def _reject_malformed_header(self, state, trace_id, start):
             """400 plus an audit row for an unparseable destination."""
-            task_number = state.task_number(
-                trace_id, self.headers.get("X-Task-Number"))
+            task_number = state.task_number(trace_id, self.headers.get("X-Task-Number"))
             attempt = state.peek_attempt(trace_id, self.path, self.command)
             strategy = self.headers.get("X-Strategy") or "proxy"
             body = b"failure: request not forwarded by proxy\n"
             db_module.log_attempt(
-                state.conn, trace_id=trace_id,
-                task_number=task_number, attempt=attempt,
-                strategy=strategy, status="failure",
+                state.conn,
+                trace_id=trace_id,
+                task_number=task_number,
+                attempt=attempt,
+                strategy=strategy,
+                status="failure",
                 latency_seconds=time.perf_counter() - start,
                 retry_reason=_retry_reason(attempt),
                 dest_host=self.headers.get("Host") or "",
                 endpoint=self.path,
-                method=self.command, bytes_in=0, bytes_out=0,
-                http_status=400, outcome="failure",
-                reason="malformed_header")
+                method=self.command,
+                bytes_in=0,
+                bytes_out=0,
+                http_status=400,
+                outcome="failure",
+                reason="malformed_header",
+            )
             self.send_response(400)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(body)))
@@ -2137,17 +2083,26 @@ def make_handler(state: ProxyState):
             self._refused_start = start
             trace_id = self.headers.get("X-Trace-Id") or str(uuid.uuid4())
             if len(self.requestline) > MAX_REQUEST_LINE_BYTES:
-                self._refused(400, "failure", "malformed_header", "",
-                              self.path,
-                              b"request line too long, request not forwarded by proxy\n",
-                              trace_id=trace_id)
+                self._refused(
+                    400,
+                    "failure",
+                    "malformed_header",
+                    "",
+                    self.path,
+                    b"request line too long, request not forwarded by proxy\n",
+                    trace_id=trace_id,
+                )
                 return
-            if sum(len(k) + len(v)
-                   for k, v in self.headers.items()) > MAX_HEADER_BYTES:
-                self._refused(400, "failure", "malformed_header", "",
-                              self.path,
-                              b"headers too big, request not forwarded by proxy\n",
-                              trace_id=trace_id)
+            if sum(len(k) + len(v) for k, v in self.headers.items()) > MAX_HEADER_BYTES:
+                self._refused(
+                    400,
+                    "failure",
+                    "malformed_header",
+                    "",
+                    self.path,
+                    b"headers too big, request not forwarded by proxy\n",
+                    trace_id=trace_id,
+                )
                 return
             try:
                 target = self._target()
@@ -2168,51 +2123,58 @@ def make_handler(state: ProxyState):
             # The blocked row shows this exact host:port, so the dashboard
             # can name what the allowlist stopped.
             dest_label = _format_label(dest_host, dest_port)
-            task_number = state.task_number(
-                trace_id, self.headers.get("X-Task-Number"))
+            task_number = state.task_number(trace_id, self.headers.get("X-Task-Number"))
             strategy = self.headers.get("X-Strategy") or "proxy"
 
             def reject(code, status, reason, close_reason="unknown"):
                 body = f"{status}: request not forwarded by proxy\n".encode()
-                self._refused(code, status, reason, dest_label, endpoint,
-                              body, trace_id=trace_id,
-                              close_reason=close_reason)
+                self._refused(code, status, reason, dest_label, endpoint, body, trace_id=trace_id, close_reason=close_reason)
 
             if "upgrade" in self.headers:
                 self._refused(
-                    501, "failure", "upgrade_needs_connect",
-                    dest_label, endpoint,
-                    b"WebSocket needs CONNECT: send a CONNECT tunnel, "
-                    b"not Upgrade on plain HTTP\n",
-                    trace_id=trace_id)
+                    501,
+                    "failure",
+                    "upgrade_needs_connect",
+                    dest_label,
+                    endpoint,
+                    b"WebSocket needs CONNECT: send a CONNECT tunnel, not Upgrade on plain HTTP\n",
+                    trace_id=trace_id,
+                )
                 return
             if not state.watching:
                 # Watching is off: nothing forwards for anyone.
                 # Blocked, never paused, so turning watching back on
                 # needs no Verify. Unknown, never Correct.
                 self._refused(
-                    503, "blocked", "watching is off",
-                    dest_label, endpoint,
-                    b"blocked: Watching is off. Turn watching on, "
-                    b"then try again\n",
-                    trace_id=trace_id, close_reason="watching",
-                    outcome="blocked")
+                    503,
+                    "blocked",
+                    "watching is off",
+                    dest_label,
+                    endpoint,
+                    b"blocked: Watching is off. Turn watching on, then try again\n",
+                    trace_id=trace_id,
+                    close_reason="watching",
+                    outcome="blocked",
+                )
                 return
             if not state.red_gate(trace_id):
                 # Red button is on and this trace has no fresh human
                 # approval plus Verify: nothing forwards. Unknown, never
                 # Correct. Nothing fails open.
                 self._refused(
-                    503, "unknown", "approval required after red button",
-                    dest_label, endpoint,
-                    b"stopped: Red button is on, "
-                    b"a fresh approval plus Verify is needed\n",
-                    trace_id=trace_id, close_reason="stopped",
-                    outcome="stopped")
+                    503,
+                    "unknown",
+                    "approval required after red button",
+                    dest_label,
+                    endpoint,
+                    b"stopped: Red button is on, a fresh approval plus Verify is needed\n",
+                    trace_id=trace_id,
+                    close_reason="stopped",
+                    outcome="stopped",
+                )
                 return
             if not state.is_allowed(dest_host, dest_port):
-                reject(403, "blocked", "not_allowlisted",
-                       close_reason="blocked_allowlist")
+                reject(403, "blocked", "not_allowlisted", close_reason="blocked_allowlist")
                 return
             target = state.redirect_target(trace_id)
             if target is not None:
@@ -2227,31 +2189,38 @@ def make_handler(state: ProxyState):
                     dest_host, dest_port = new_host, new_port
                     dest_label = target
             if not state.check_rate(dest_label):
-                reject(429, "rate_limited", "rate_limited",
-                       close_reason="rate_limited")
+                reject(429, "rate_limited", "rate_limited", close_reason="rate_limited")
                 return
             if state.is_paused(trace_id):
                 # Paused Run: nothing forwards for it. Unknown, never
                 # Correct, and reconciled under paused, not failure.
                 self._refused(
-                    503, "unknown", state.pause_reason(trace_id),
-                    dest_label, endpoint,
-                    b"paused: this Run is paused, "
-                    b"retry needs a fresh Verify\n",
-                    trace_id=trace_id, close_reason="paused",
-                    outcome="paused")
+                    503,
+                    "unknown",
+                    state.pause_reason(trace_id),
+                    dest_label,
+                    endpoint,
+                    b"paused: this Run is paused, retry needs a fresh Verify\n",
+                    trace_id=trace_id,
+                    close_reason="paused",
+                    outcome="paused",
+                )
                 return
             rule = state.override_rule(dest_label)
             if rule is not None and rule["action"] == "pause":
                 # Overridden network: nothing forwards for it. Unknown,
                 # never Correct, and reconciled under paused, not failure.
                 self._refused(
-                    503, "unknown", rule["reason"],
-                    dest_label, endpoint,
-                    b"paused: this network is paused by human override, "
-                    b"retry needs a fresh Verify\n",
-                    trace_id=trace_id, close_reason="paused",
-                    outcome="paused")
+                    503,
+                    "unknown",
+                    rule["reason"],
+                    dest_label,
+                    endpoint,
+                    b"paused: this network is paused by human override, retry needs a fresh Verify\n",
+                    trace_id=trace_id,
+                    close_reason="paused",
+                    outcome="paused",
+                )
                 return
             cap = state.cap_rule(dest_label)
             if cap is not None:
@@ -2262,12 +2231,16 @@ def make_handler(state: ProxyState):
                     # Correct. This run stops unless a human verifies
                     # everything is fine.
                     self._refused(
-                        503, "unknown", "cap block 100%",
-                        dest_label, endpoint,
-                        b"blocked: spend cap reached. This run stops unless "
-                        b"a human verifies everything is fine.\n",
-                        trace_id=trace_id, close_reason="capped",
-                        outcome="blocked")
+                        503,
+                        "unknown",
+                        "cap block 100%",
+                        dest_label,
+                        endpoint,
+                        b"blocked: spend cap reached. This run stops unless a human verifies everything is fine.\n",
+                        trace_id=trace_id,
+                        close_reason="capped",
+                        outcome="blocked",
+                    )
                     state._cap_block(dest_label)
                     return
                 unpriceable = state.unpriceable_blocked(dest_label)
@@ -2278,12 +2251,16 @@ def make_handler(state: ProxyState):
                     # never guessed; the place stays blocked until
                     # the human allows it.
                     self._refused(
-                        403, "blocked", unpriceable,
-                        dest_label, endpoint,
-                        b"blocked: Iris could not work out what the "
-                        b"call costs, and you have a daily limit set\n",
-                        trace_id=trace_id, close_reason="unpriceable",
-                        outcome="blocked")
+                        403,
+                        "blocked",
+                        unpriceable,
+                        dest_label,
+                        endpoint,
+                        b"blocked: Iris could not work out what the call costs, and you have a daily limit set\n",
+                        trace_id=trace_id,
+                        close_reason="unpriceable",
+                        outcome="blocked",
+                    )
                     return
                 # Money is counted in cents, so the 80% threshold is
                 # rounded to cents: 0.8 times 5 cents is a hair above
@@ -2296,25 +2273,20 @@ def make_handler(state: ProxyState):
                             state._cap_warned.add(dest_label)
                     if fresh:
                         state._control_row(
-                            trace_id, self.command, dest_label, endpoint,
-                            "unknown", "warned", "cap warn 80%", "warned",
-                            total)
+                            trace_id, self.command, dest_label, endpoint, "unknown", "warned", "cap warn 80%", "warned", total
+                        )
 
             # Request smuggling hygiene: one length, one framing, never both.
-            lengths = [v.strip() for v in
-                       (self.headers.get_all("Content-Length") or [])]
+            lengths = [v.strip() for v in (self.headers.get_all("Content-Length") or [])]
             # Any repeat is refused, even two identical ones: dedupe
             # here and a smuggled length slips past the single read below.
             if len(lengths) > 1:
                 reject(400, "failure", "duplicate_content_length")
                 return
-            coding = [t.strip() for t in
-                      self.headers.get("Transfer-Encoding", "").lower().split(",")
-                      if t.strip()]
+            coding = [t.strip() for t in self.headers.get("Transfer-Encoding", "").lower().split(",") if t.strip()]
             chunked = "chunked" in coding
             if lengths and chunked:
-                reject(400, "failure",
-                       "content_length_with_transfer_encoding")
+                reject(400, "failure", "content_length_with_transfer_encoding")
                 return
             if coding and not chunked:
                 reject(501, "failure", "unsupported_transfer_coding")
@@ -2328,11 +2300,16 @@ def make_handler(state: ProxyState):
                 return
             if length > MAX_REQUEST_BODY_BYTES:
                 self._refused(
-                    413, "failure", "body_too_big", dest_label, endpoint,
+                    413,
+                    "failure",
+                    "body_too_big",
+                    dest_label,
+                    endpoint,
                     f"request body too big: {length} bytes, "
                     f"limit {MAX_REQUEST_BODY_BYTES}, "
                     "request not forwarded by proxy\n".encode(),
-                    trace_id=trace_id)
+                    trace_id=trace_id,
+                )
                 return
             # Numbered only once the request will actually be forwarded.
             attempt = state.next_attempt(trace_id, endpoint, self.command)
@@ -2359,14 +2336,12 @@ def make_handler(state: ProxyState):
             resp_headers: dict = {}
             try:
                 # One-shot upstream: a fresh connection per request, no pool — threads share nothing.
-                upstream = http.client.HTTPConnection(
-                    dest_host, dest_port, timeout=10)
+                upstream = http.client.HTTPConnection(dest_host, dest_port, timeout=10)
                 connect_start = time.perf_counter()
                 try:
                     upstream.connect()
                 finally:
-                    connect_ms = ((time.perf_counter() - connect_start)
-                                  * 1000.0)
+                    connect_ms = (time.perf_counter() - connect_start) * 1000.0
                 upstream.putrequest(self.command, endpoint, skip_host=True)
                 for key, value in headers.items():
                     upstream.putheader(key, value)
@@ -2374,7 +2349,7 @@ def make_handler(state: ProxyState):
                 bytes_tx = self._forward_body(upstream, chunked, length)
                 resp = upstream.getresponse()
                 http_status = resp.status
-                status = ("success" if 200 <= http_status < 400 else "failure")
+                status = "success" if 200 <= http_status < 400 else "failure"
                 close_reason = "success"
                 resp_headers = dict(resp.getheaders())
             except (_BadFraming, _BodyTooBig) as framing_error:
@@ -2382,21 +2357,30 @@ def make_handler(state: ProxyState):
                 over_cap = isinstance(framing_error, _BodyTooBig)
                 code = 413 if over_cap else 400
                 reason = "body_too_big" if over_cap else "malformed_header"
-                body = (f"request body past the {MAX_REQUEST_BODY_BYTES} "
-                        "byte cap, request not forwarded by proxy\n".encode()
-                        if over_cap else
-                        b"request body ended early, request not forwarded by proxy\n")
+                body = (
+                    f"request body past the {MAX_REQUEST_BODY_BYTES} byte cap, request not forwarded by proxy\n".encode()
+                    if over_cap
+                    else b"request body ended early, request not forwarded by proxy\n"
+                )
                 db_module.log_attempt(
-                    state.conn, trace_id=trace_id, task_number=task_number,
-                    attempt=attempt, strategy=strategy, status="failure",
+                    state.conn,
+                    trace_id=trace_id,
+                    task_number=task_number,
+                    attempt=attempt,
+                    strategy=strategy,
+                    status="failure",
                     latency_seconds=time.perf_counter() - start,
                     retry_reason=_retry_reason(attempt),
-                    dest_host=dest_label, endpoint=endpoint,
-                    method=self.command, http_status=code,
-                    outcome="failure", reason=reason,
+                    dest_host=dest_label,
+                    endpoint=endpoint,
+                    method=self.command,
+                    http_status=code,
+                    outcome="failure",
+                    reason=reason,
                     close_reason="unknown",
                     connect_ms=connect_ms,
-                    duration_ms=(time.perf_counter() - start) * 1000.0)
+                    duration_ms=(time.perf_counter() - start) * 1000.0,
+                )
                 self.send_response(code)
                 self.send_header("Content-Type", "text/plain")
                 self.send_header("Content-Length", str(len(body)))
@@ -2410,16 +2394,28 @@ def make_handler(state: ProxyState):
                 # this row is already known, so no reader has to wait.
                 duration_ms = (time.perf_counter() - start) * 1000.0
                 db_module.log_attempt(
-                    state.conn, trace_id=trace_id, task_number=task_number,
-                    attempt=attempt, strategy=strategy, status="error",
+                    state.conn,
+                    trace_id=trace_id,
+                    task_number=task_number,
+                    attempt=attempt,
+                    strategy=strategy,
+                    status="error",
                     latency_seconds=duration_ms / 1000.0,
                     retry_reason=_retry_reason(attempt),
-                    dest_host=dest_label, endpoint=endpoint,
-                    method=self.command, bytes_in=bytes_tx, bytes_out=0,
-                    http_status=502, outcome="allowed", reason="",
-                    bytes_tx=bytes_tx, bytes_rx=0,
-                    close_reason="upstream_reset", connect_ms=connect_ms,
-                    duration_ms=duration_ms)
+                    dest_host=dest_label,
+                    endpoint=endpoint,
+                    method=self.command,
+                    bytes_in=bytes_tx,
+                    bytes_out=0,
+                    http_status=502,
+                    outcome="allowed",
+                    reason="",
+                    bytes_tx=bytes_tx,
+                    bytes_rx=0,
+                    close_reason="upstream_reset",
+                    connect_ms=connect_ms,
+                    duration_ms=duration_ms,
+                )
                 response_body = b"Bad Gateway\n"
                 self.send_response(502)
                 self.send_header("Content-Type", "text/plain")
@@ -2432,40 +2428,48 @@ def make_handler(state: ProxyState):
 
             upstream_length = resp_headers.get("Content-Length")
             try:
-                upstream_length = (int(upstream_length)
-                                   if upstream_length is not None else None)
+                upstream_length = int(upstream_length) if upstream_length is not None else None
             except ValueError:
                 upstream_length = None
             # Small bodies stay buffered: the row (usage included) is
             # logged before the client sees the response, as before. Big
             # or length-unknown bodies stream in chunks instead, and their
             # row lands once the stream ends — readers must allow for that.
-            buffered = (upstream_length is not None
-                        and upstream_length <= MAX_BUFFERED_RESPONSE_BYTES)
+            buffered = upstream_length is not None and upstream_length <= MAX_BUFFERED_RESPONSE_BYTES
             if buffered:
                 response_body = resp.read()
                 upstream.close()
                 bytes_rx = len(response_body)
                 duration_ms = (time.perf_counter() - start) * 1000.0
-                input_tokens = _usage_input_tokens(
-                    response_body, resp_headers.get("Content-Type", ""))
+                input_tokens = _usage_input_tokens(response_body, resp_headers.get("Content-Type", ""))
                 db_module.log_attempt(
-                    state.conn, trace_id=trace_id, task_number=task_number,
-                    attempt=attempt, strategy=strategy, status=status,
+                    state.conn,
+                    trace_id=trace_id,
+                    task_number=task_number,
+                    attempt=attempt,
+                    strategy=strategy,
+                    status=status,
                     latency_seconds=duration_ms / 1000.0,
-                    input_tokens=input_tokens, cost_dollars=0.0,
+                    input_tokens=input_tokens,
+                    cost_dollars=0.0,
                     retry_reason=_retry_reason(attempt),
-                    dest_host=dest_label, endpoint=endpoint,
-                    method=self.command, bytes_in=bytes_tx,
-                    bytes_out=bytes_rx, http_status=http_status,
-                    outcome="allowed", reason="",
-                    bytes_tx=bytes_tx, bytes_rx=bytes_rx,
-                    close_reason=close_reason, connect_ms=connect_ms,
-                    duration_ms=duration_ms)
+                    dest_host=dest_label,
+                    endpoint=endpoint,
+                    method=self.command,
+                    bytes_in=bytes_tx,
+                    bytes_out=bytes_rx,
+                    http_status=http_status,
+                    outcome="allowed",
+                    reason="",
+                    bytes_tx=bytes_tx,
+                    bytes_rx=bytes_rx,
+                    close_reason=close_reason,
+                    connect_ms=connect_ms,
+                    duration_ms=duration_ms,
+                )
                 self.send_response(http_status)
                 for key, value in resp_headers.items():
-                    if (key.lower() in HOP_BY_HOP
-                            or key.lower() == "content-length"):
+                    if key.lower() in HOP_BY_HOP or key.lower() == "content-length":
                         continue
                     self.send_header(key, value)
                 self.send_header("Content-Length", str(bytes_rx))
@@ -2572,17 +2576,24 @@ class ProxyServer(ThreadingHTTPServer):
     request_queue_size = 128
 
 
-def serve(host: str = "127.0.0.1", port: int = 8888,
-          db_path: str = "attempts.db", allowlist=None,
-          rate_limit: int = RATE_LIMIT,
-          rate_window: float = RATE_WINDOW_SECONDS,
-          relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
-          rate_clock=time.time
-          ) -> ProxyServer:
-    state = ProxyState(db_path, allowlist=allowlist,
-                       rate_limit=rate_limit, rate_window=rate_window,
-                       relay_timeout=relay_timeout,
-                       rate_clock=rate_clock)
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8888,
+    db_path: str = "attempts.db",
+    allowlist=None,
+    rate_limit: int = RATE_LIMIT,
+    rate_window: float = RATE_WINDOW_SECONDS,
+    relay_timeout: float = RELAY_IDLE_TIMEOUT_SECONDS,
+    rate_clock=time.time,
+) -> ProxyServer:
+    state = ProxyState(
+        db_path,
+        allowlist=allowlist,
+        rate_limit=rate_limit,
+        rate_window=rate_window,
+        relay_timeout=relay_timeout,
+        rate_clock=rate_clock,
+    )
     server = ProxyServer((host, port), make_handler(state))
     server.state = state
     return server
@@ -2605,6 +2616,7 @@ def _default_db_path() -> str:
         exe = sys.executable
         if _is_windows_drive_path(exe):
             from pathlib import PureWindowsPath
+
             exe_path = PureWindowsPath(exe)
             exe_dir = exe_path.parent
             if exe_dir.name.lower() == "dist":
@@ -2626,24 +2638,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8888)
     parser.add_argument("--db", default=_default_db_path())
-    parser.add_argument("--allowlist", default=",".join(DEFAULT_ALLOWLIST),
-                        help="comma-separated allowed hosts (or host:port)")
+    parser.add_argument(
+        "--allowlist", default=",".join(DEFAULT_ALLOWLIST), help="comma-separated allowed hosts (or host:port)"
+    )
     parser.add_argument("--rate-limit", type=int, default=RATE_LIMIT)
-    parser.add_argument("--rate-window", type=float,
-                        default=RATE_WINDOW_SECONDS)
-    parser.add_argument("--relay-timeout", type=float,
-                        default=RELAY_IDLE_TIMEOUT_SECONDS,
-                        help="seconds of CONNECT tunnel silence before "
-                             "the relay gives up (default 30)")
+    parser.add_argument("--rate-window", type=float, default=RATE_WINDOW_SECONDS)
+    parser.add_argument(
+        "--relay-timeout",
+        type=float,
+        default=RELAY_IDLE_TIMEOUT_SECONDS,
+        help="seconds of CONNECT tunnel silence before the relay gives up (default 30)",
+    )
     return parser
 
 
 def main():
     args = build_parser().parse_args()
-    server = serve(args.host, args.port, args.db,
-                   allowlist=args.allowlist.split(","),
-                   rate_limit=args.rate_limit, rate_window=args.rate_window,
-                   relay_timeout=args.relay_timeout)
+    server = serve(
+        args.host,
+        args.port,
+        args.db,
+        allowlist=args.allowlist.split(","),
+        rate_limit=args.rate_limit,
+        rate_window=args.rate_window,
+        relay_timeout=args.relay_timeout,
+    )
     print(f"proxy listening on {args.host}:{args.port} db={args.db}")
     try:
         server.serve_forever()

@@ -16,6 +16,7 @@ Loopback only. Metadata only. No bodies, no keys. Plain words only.
 The shell never sets QT_QPA_PLATFORM: a real window needs a real
 display. Tests set offscreen themselves, before importing Qt.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,10 +38,24 @@ from devpanel import verify_run as seam_verify_run
 from PySide6.QtCore import QUrl
 from PySide6.QtWebView import QtWebView, QWebView
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenuBar, QMessageBox,
-    QProgressBar, QPushButton, QSizePolicy, QStatusBar,
-    QVBoxLayout, QWidget)
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMenuBar,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSizePolicy,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 # Default ports: the panel beside the proxy, both loopback only.
 DEFAULT_PANEL_PORT = 8000
@@ -107,9 +122,7 @@ def _default_db_path() -> str:
     first run without the installer still works.
     """
     if getattr(sys, "frozen", False):
-        data_dir = os.path.join(
-            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-            "Iris Guardian")
+        data_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Iris Guardian")
         os.makedirs(data_dir, exist_ok=True)
         return os.path.join(data_dir, "attempts.db")
     return api_module.DB_PATH
@@ -117,9 +130,7 @@ def _default_db_path() -> str:
 
 def _safe_name(text: str) -> str:
     """Instance name safe for a file name: letters stay, rest is _."""
-    return "".join(
-        ch if ch.isalnum() or ch in ("-", "_", ".") else "_"
-        for ch in text)
+    return "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in text)
 
 
 def _lock_path(db_path: str, instance_name: str) -> str:
@@ -129,15 +140,14 @@ def _lock_path(db_path: str, instance_name: str) -> str:
     writable by definition. No new folder, no new permission.
     """
     return os.path.join(
-        os.path.dirname(os.path.abspath(db_path)),
-        f"{os.path.basename(db_path)}.iris-{_safe_name(instance_name)}.lock")
+        os.path.dirname(os.path.abspath(db_path)), f"{os.path.basename(db_path)}.iris-{_safe_name(instance_name)}.lock"
+    )
 
 
 def _ping_beacon(port: int) -> bool:
     """True when a beacon answers on this loopback port right now."""
     try:
-        sock = socket.create_connection(
-            ("127.0.0.1", port), timeout=BEACON_PING_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", port), timeout=BEACON_PING_TIMEOUT)
     except OSError:
         return False
     try:
@@ -186,16 +196,17 @@ class AppController:
     flag on the panel server; stopping clears both.
     """
 
-    def __init__(self, db_path: str | None = None,
-                 panel_port: int | None = None,
-                 proxy_port: int | None = None,
-                 instance_name: str = "iris-app-mode"):
+    def __init__(
+        self,
+        db_path: str | None = None,
+        panel_port: int | None = None,
+        proxy_port: int | None = None,
+        instance_name: str = "iris-app-mode",
+    ):
         self.db_path = db_path or _default_db_path()
         # Port 0 is a real port: only None means the default.
-        self.panel_port: int | None = (
-            panel_port if panel_port is not None else DEFAULT_PANEL_PORT)
-        self.proxy_port = (
-            proxy_port if proxy_port is not None else DEFAULT_PROXY_PORT)
+        self.panel_port: int | None = panel_port if panel_port is not None else DEFAULT_PANEL_PORT
+        self.proxy_port = proxy_port if proxy_port is not None else DEFAULT_PROXY_PORT
         self.instance_name = instance_name
         self.already_running = False
         self.start_error = ""
@@ -215,9 +226,7 @@ class AppController:
     def panel_url(self, tier: str = "simple") -> str:
         """The view URL for this controller, at one tier."""
         if self.panel_port is None:
-            raise RuntimeError(
-                "Iris is already running on this machine: "
-                "this controller started nothing.")
+            raise RuntimeError("Iris is already running on this machine: this controller started nothing.")
         return panel_url(self.panel_port, tier)
 
     def start(self) -> bool:
@@ -241,46 +250,40 @@ class AppController:
         try:
             self._open_beacon()
         except FileExistsError:
-            self._fail(
-                f"Iris is already running on this machine "
-                f"({self.instance_name}).",
-                already_running=True)
+            self._fail(f"Iris is already running on this machine ({self.instance_name}).", already_running=True)
             return False
         except (FileNotFoundError, PermissionError):
-            folder = os.path.dirname(
-                os.path.abspath(self.db_path)) or "."
+            folder = os.path.dirname(os.path.abspath(self.db_path)) or "."
             self._fail(
                 f"Iris could not start: the folder {folder} is not "
                 f"writable, so Iris cannot claim this machine. Make "
-                f"the folder writable, then start Iris again.")
+                f"the folder writable, then start Iris again."
+            )
             return False
         except OSError as exc:
-            self._fail(
-                f"Iris could not start: {exc}.")
+            self._fail(f"Iris could not start: {exc}.")
             return False
         if not _port_free(panel_port):
             self._fail(
                 f"Iris could not start: the panel port {panel_port} "
                 f"is already in use. Stop the other program on it, "
-                f"then start Iris again.")
+                f"then start Iris again."
+            )
             return False
         try:
-            self._proxy = proxy_module.serve(
-                "127.0.0.1", self.proxy_port, self.db_path)
+            self._proxy = proxy_module.serve("127.0.0.1", self.proxy_port, self.db_path)
         except OSError as exc:
             self._fail(
                 f"Iris could not start: the proxy port {self.proxy_port} "
                 f"is already in use. Stop the other program on it, "
-                f"then start Iris again.")
+                f"then start Iris again."
+            )
             return False
         except Exception as exc:
-            self._fail(
-                f"Iris could not start the proxy: {exc}.")
+            self._fail(f"Iris could not start the proxy: {exc}.")
             return False
         self.proxy_state = self._proxy.state
-        self._proxy_thread = threading.Thread(
-            target=self._proxy.serve_forever, daemon=True,
-            name="iris-proxy")
+        self._proxy_thread = threading.Thread(target=self._proxy.serve_forever, daemon=True, name="iris-proxy")
         self._proxy_thread.start()
         api_module.DB_PATH = self.db_path
         panel_module.app.state.proxy_state = self._proxy.state
@@ -289,14 +292,10 @@ class AppController:
         try:
             self._start_panel(panel_port)
         except Exception as exc:
-            self._fail(
-                f"Iris could not start the panel on port "
-                f"{panel_port}: {exc}.")
+            self._fail(f"Iris could not start the panel on port {panel_port}: {exc}.")
             return False
         if not _wait_for_port(panel_port, PANEL_READY_TIMEOUT):
-            self._fail(
-                f"Iris could not start: the panel on port "
-                f"{panel_port} did not answer in time.")
+            self._fail(f"Iris could not start: the panel on port {panel_port} did not answer in time.")
             return False
         return True
 
@@ -319,8 +318,7 @@ class AppController:
                 self._proxy.server_close()
             except Exception:
                 pass
-        for thread in (self._panel_thread, self._proxy_thread,
-                       self._beacon_thread):
+        for thread in (self._panel_thread, self._proxy_thread, self._beacon_thread):
             if thread is not None:
                 thread.join(timeout=STOP_JOIN_TIMEOUT)
         # The state holds the journal open: serving threads are joined,
@@ -356,10 +354,7 @@ class AppController:
         except (OSError, ValueError, TypeError, AttributeError):
             return False
         if port and _ping_beacon(port):
-            self._fail(
-                f"Iris is already running on this machine "
-                f"({self.instance_name}).",
-                already_running=True)
+            self._fail(f"Iris is already running on this machine ({self.instance_name}).", already_running=True)
             return True
         try:
             os.remove(self._lock_path)
@@ -381,9 +376,7 @@ class AppController:
         with open(self._lock_path, "x", encoding="utf-8") as handle:
             json.dump({"port": port}, handle)
         self._owns_lock = True
-        self._beacon_thread = threading.Thread(
-            target=self._watch_beacon, daemon=True,
-            name="iris-beacon")
+        self._beacon_thread = threading.Thread(target=self._watch_beacon, daemon=True, name="iris-beacon")
         self._beacon_thread.start()
 
     def _watch_beacon(self) -> None:
@@ -408,13 +401,9 @@ class AppController:
         """Run the panel server on its worker thread."""
         import uvicorn
 
-        config = uvicorn.Config(
-            panel_module.app, host="127.0.0.1", port=panel_port,
-            log_level="warning")
+        config = uvicorn.Config(panel_module.app, host="127.0.0.1", port=panel_port, log_level="warning")
         self._panel_server = uvicorn.Server(config)
-        self._panel_thread = threading.Thread(
-            target=self._panel_server.run, daemon=True,
-            name="iris-panel")
+        self._panel_thread = threading.Thread(target=self._panel_server.run, daemon=True, name="iris-panel")
         self._panel_thread.start()
 
     def _fail(self, words: str, already_running: bool = False) -> bool:
@@ -502,10 +491,8 @@ class _LiveSeams:
         state = self._state_getter()
         if state is None:
             return None
-        folder = os.path.dirname(os.path.abspath(
-            self._journal_path()))
-        return demo_module.run_demo(
-            state, os.path.join(folder, "demo-notebook.json"))
+        folder = os.path.dirname(os.path.abspath(self._journal_path()))
+        return demo_module.run_demo(state, os.path.join(folder, "demo-notebook.json"))
 
     def _journal_path(self):
         import api as api_module
@@ -526,8 +513,7 @@ def _with_tier(url: str, tier: str) -> str:
     """The same view path at another tier."""
     split = urlsplit(url)
     path = split.path or "/"
-    return urlunsplit(
-        (split.scheme, split.netloc, path, f"tier={tier}", ""))
+    return urlunsplit((split.scheme, split.netloc, path, f"tier={tier}", ""))
 
 
 class _DemoWorker:
@@ -541,9 +527,7 @@ class _DemoWorker:
         """Run func on a daemon thread. One run at a time."""
         self.stop()
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._guarded, args=(func,), daemon=True,
-            name="iris-demo")
+        self._thread = threading.Thread(target=self._guarded, args=(func,), daemon=True, name="iris-demo")
         self._thread.start()
 
     def _guarded(self, func):
@@ -607,10 +591,19 @@ class IrisWindow(QWidget):
     the controller and the demo worker: no orphan watcher.
     """
 
-    def __init__(self, controller, seams=None, ask_words=None,
-                 ask_confirm=None, pick_agent=None, show_message=None,
-                 ask_restart=None, connect_fn=None, restart_fn=None,
-                 parent=None):
+    def __init__(
+        self,
+        controller,
+        seams=None,
+        ask_words=None,
+        ask_confirm=None,
+        pick_agent=None,
+        show_message=None,
+        ask_restart=None,
+        connect_fn=None,
+        restart_fn=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._controller = controller
         if seams is None:
@@ -622,9 +615,7 @@ class IrisWindow(QWidget):
         self._show_message = show_message or self._show_message_dialog
         self._ask_restart = ask_restart or self._ask_restart_dialog
         self._connect_fn = connect_fn or connect_module.connect_agent
-        self._restart_fn = (restart_fn
-                            or (lambda agent_id:
-                                restart_module.restart_agent(agent_id)))
+        self._restart_fn = restart_fn or (lambda agent_id: restart_module.restart_agent(agent_id))
         self.setWindowTitle("Iris")
         self.resize(1100, 720)
         self.setMinimumSize(860, 560)
@@ -654,8 +645,7 @@ class IrisWindow(QWidget):
         self.connect_button = QPushButton("Connect")
         self.stop_button = QPushButton("Emergency stop")
         self.stop_button.setToolTip(EMERGENCY_TOOLTIP)
-        self.stop_button.setStyleSheet(
-            "background-color: red; color: white;")
+        self.stop_button.setStyleSheet("background-color: red; color: white;")
         top = QHBoxLayout()
         top.addWidget(self.watching_check)
         top.addWidget(self.verify_button)
@@ -679,13 +669,11 @@ class IrisWindow(QWidget):
         # The hosted window brings no size of its own: without an
         # expanding policy the layout collapses it to zero height and
         # the window shows only the button bar.
-        self.view_host.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.view_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.view_host.setMinimumSize(640, 480)
         self._web_page = self.view_host
         self._loading_page = self._build_loading_page()
-        self._first_run_page, self._demo_button, self._skip_link = \
-            self._build_first_run_page()
+        self._first_run_page, self._demo_button, self._skip_link = self._build_first_run_page()
         self._status_bar = QStatusBar()
         self._status_text = QLabel("")
         self._status_cost = QLabel("")
@@ -711,12 +699,13 @@ class IrisWindow(QWidget):
         self.watching_check.toggled.connect(self._on_watching)
         self.view.urlChanged.connect(lambda _url: self._refresh_all())
         from PySide6.QtGui import QShortcut, QKeySequence
-        self._estop_shortcut = QShortcut(
-            QKeySequence("Ctrl+Shift+E"), self)
+
+        self._estop_shortcut = QShortcut(QKeySequence("Ctrl+Shift+E"), self)
         self._estop_shortcut.activated.connect(self._on_stop)
         self._poll = None
         try:
             from PySide6.QtCore import QTimer
+
             self._poll = QTimer(self)
             self._poll.setInterval(1000)
             self._poll.timeout.connect(self._refresh_all)
@@ -763,8 +752,7 @@ class IrisWindow(QWidget):
 
     def _iris_menu_names(self, advanced=False):
         """The Iris menu action texts, with or without More detail."""
-        names = ["Run the demo", "Copy the address for your agent",
-                 "Save a copy of the journal…", "Limits…", "Settings…"]
+        names = ["Run the demo", "Copy the address for your agent", "Save a copy of the journal…", "Limits…", "Settings…"]
         if advanced:
             names.append("Developer page")
         names.append("Close Iris")
@@ -785,8 +773,8 @@ class IrisWindow(QWidget):
         layout.addWidget(retry)
         layout.addStretch(2)
         retry.clicked.connect(
-            lambda: self.view.setUrl(QUrl(self._controller.panel_url(
-                "advanced" if self._advanced else "simple"))))
+            lambda: self.view.setUrl(QUrl(self._controller.panel_url("advanced" if self._advanced else "simple")))
+        )
         page._label = label
         page._bar = bar
         page._retry = retry
@@ -802,10 +790,12 @@ class IrisWindow(QWidget):
         inner = QVBoxLayout()
         inner.setSpacing(24)
         labels = []
-        for words in (panel_module.FIRST_RUN_ONE,
-                      panel_module.FIRST_RUN_TWO,
-                      panel_module.FIRST_RUN_THREE,
-                      panel_module.FIRST_RUN_FOUR):
+        for words in (
+            panel_module.FIRST_RUN_ONE,
+            panel_module.FIRST_RUN_TWO,
+            panel_module.FIRST_RUN_THREE,
+            panel_module.FIRST_RUN_FOUR,
+        ):
             label = QLabel(words)
             label.setWordWrap(True)
             inner.addWidget(label)
@@ -819,8 +809,7 @@ class IrisWindow(QWidget):
         inner.addLayout(row)
         skip_link = QPushButton(panel_module.FIRST_RUN_SKIP)
         skip_link.setFlat(True)
-        skip_link.setStyleSheet("text-align: left; color: palette(link);"
-                                " text-decoration: underline;")
+        skip_link.setStyleSheet("text-align: left; color: palette(link); text-decoration: underline;")
         inner.addWidget(skip_link, alignment=Qt.AlignmentFlag.AlignLeft)
         inner.addStretch(1)
         wrap = QHBoxLayout()
@@ -859,8 +848,7 @@ class IrisWindow(QWidget):
                 return True
             conn = sqlite3.connect(db_path)
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM attempts").fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
             finally:
                 conn.close()
             return count == 0
@@ -885,15 +873,14 @@ class IrisWindow(QWidget):
         self._loading_page.setVisible(True)
         try:
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(int(LOADING_SLOW_SECONDS * 1000),
-                              self._on_loading_slow)
+
+            QTimer.singleShot(int(LOADING_SLOW_SECONDS * 1000), self._on_loading_slow)
         except Exception:
             pass
 
     def _on_loading_slow(self):
         """After 10 seconds still loading: offer Try again."""
-        if (self._loading_page.isVisible()
-                and not self._port_error):
+        if self._loading_page.isVisible() and not self._port_error:
             self._loading_page._label.setText(panel_module.LOADING_SLOW)
             self._loading_page._retry.setVisible(True)
 
@@ -986,16 +973,17 @@ class IrisWindow(QWidget):
         if self._current_run() is not None:
             return
         try:
-            running = [run for run in self._runs_now()
-                       if run["state"] in ("FLOWING", "WARNED",
-                                           "REDIRECTED")]
+            running = [run for run in self._runs_now() if run["state"] in ("FLOWING", "WARNED", "REDIRECTED")]
         except Exception:
             return
         if len(running) == 1:
-            self.view.setUrl(QUrl(
-                self._controller.panel_url(
-                    "advanced" if self._advanced else "simple"
-                ).replace("/?", f"/runs/{running[0]['trace_id']}?")))
+            self.view.setUrl(
+                QUrl(
+                    self._controller.panel_url("advanced" if self._advanced else "simple").replace(
+                        "/?", f"/runs/{running[0]['trace_id']}?"
+                    )
+                )
+            )
 
     def _refresh_all(self):
         """One poll: selection, buttons, strip, and status."""
@@ -1012,12 +1000,10 @@ class IrisWindow(QWidget):
         trace_id = self._current_run()
         if trace_id is None:
             self.verify_button.setEnabled(False)
-            self.verify_button.setToolTip(
-                panel_module.PICK_FIRST_APP_TOOLTIP)
+            self.verify_button.setToolTip(panel_module.PICK_FIRST_APP_TOOLTIP)
             self.pause_button.setEnabled(False)
             self.pause_button.setText("Pause")
-            self.pause_button.setToolTip(
-                panel_module.PICK_FIRST_APP_TOOLTIP)
+            self.pause_button.setToolTip(panel_module.PICK_FIRST_APP_TOOLTIP)
             self.send_button.setVisible(self._advanced)
             self.send_button.setEnabled(False)
             return
@@ -1045,10 +1031,8 @@ class IrisWindow(QWidget):
             except Exception:
                 watching = True
         self.watching_check.setChecked(watching)
-        self.watching_check.setText(
-            f"Watching: {'On' if watching else 'Off'}")
-        self.stop_button.setEnabled(
-            not self._emergency_on())
+        self.watching_check.setText(f"Watching: {'On' if watching else 'Off'}")
+        self.stop_button.setEnabled(not self._emergency_on())
 
     def _emergency_on(self):
         """True when Emergency stop holds every call right now."""
@@ -1078,23 +1062,18 @@ class IrisWindow(QWidget):
             except Exception:
                 watching = True
         if not watching:
-            return ("Watching is off. Agents that use Iris can't reach "
-                    "anything.")
+            return "Watching is off. Agents that use Iris can't reach anything."
         if self._last_result is not None:
             prefix, verdict, when = self._last_result
             if time.time() - when < RESULT_HOLD_SECONDS:
                 if verdict == "Incorrect":
-                    return (f"Run {prefix} stopped. See what Iris "
-                            "found below.")
-                return (f"Run {prefix}: {verdict}. See what Iris "
-                        "found below.")
+                    return f"Run {prefix} stopped. See what Iris found below."
+                return f"Run {prefix}: {verdict}. See what Iris found below."
         try:
             runs = self._runs_now()
         except Exception:
             runs = []
-        count = sum(1 for run in runs
-                    if run["state"] in ("FLOWING", "WARNED",
-                                        "REDIRECTED"))
+        count = sum(1 for run in runs if run["state"] in ("FLOWING", "WARNED", "REDIRECTED"))
         if count == 1:
             return "Watching. 1 Run is running."
         if count > 1:
@@ -1116,8 +1095,7 @@ class IrisWindow(QWidget):
         except Exception:
             pass
 
-    def _strip_for(self, emergency=None, blocked_place=None,
-                   waiting=None, port=None):
+    def _strip_for(self, emergency=None, blocked_place=None, waiting=None, port=None):
         """The notice strip: one strip at a time, words and buttons.
 
         Returns (kind, words, buttons). Kind is one of emergency,
@@ -1126,25 +1104,15 @@ class IrisWindow(QWidget):
         the human already allowed it.
         """
         if emergency:
-            return ("emergency", panel_module.STRIP_ESTOP,
-                    ["Turn off Emergency stop…"])
+            return ("emergency", panel_module.STRIP_ESTOP, ["Turn off Emergency stop…"])
         if waiting:
-            return ("waiting",
-                    panel_module.STRIP_WAITING.format(prefix=waiting),
-                    ["Let it go on", "Keep it stopped"])
+            return ("waiting", panel_module.STRIP_WAITING.format(prefix=waiting), ["Let it go on", "Keep it stopped"])
         if blocked_place is not None:
             if self._place_allowed(blocked_place):
-                return ("allowed",
-                        panel_module.STRIP_ALLOWED.format(
-                            place=blocked_place),
-                        ["Undo"])
-            return ("blocked",
-                    panel_module.STRIP_BLOCKED.format(
-                        place=blocked_place),
-                    [f"Allow {blocked_place}", "Dismiss"])
+                return ("allowed", panel_module.STRIP_ALLOWED.format(place=blocked_place), ["Undo"])
+            return ("blocked", panel_module.STRIP_BLOCKED.format(place=blocked_place), [f"Allow {blocked_place}", "Dismiss"])
         if port:
-            return ("port", panel_module.STRIP_PORT,
-                    ["Try another spot", "Close Iris"])
+            return ("port", panel_module.STRIP_PORT, ["Try another spot", "Close Iris"])
         return ("none", "", [])
 
     def _place_allowed(self, place):
@@ -1176,22 +1144,17 @@ class IrisWindow(QWidget):
             runs = self._runs_now()
         except Exception:
             runs = []
-        waiting = [run for run in runs
-                   if run["state"] in ("PAUSED", "REDIRECTED")]
+        waiting = [run for run in runs if run["state"] in ("PAUSED", "REDIRECTED")]
         if waiting:
-            return self._strip_for(
-                waiting=waiting[0]["trace_id"][:8])
+            return self._strip_for(waiting=waiting[0]["trace_id"][:8])
         proxy_state = self._controller.proxy_state
         if proxy_state is not None:
             try:
                 limited = proxy_state.daily_limit is not None
-                blocked = (proxy_state.recently_blocked(limit=20)
-                           if limited else [])
+                blocked = proxy_state.recently_blocked(limit=20) if limited else []
             except Exception:
                 blocked = []
-            blocked = [place for place in blocked
-                       if place not in self._dismissed
-                       and not self._place_allowed(place)]
+            blocked = [place for place in blocked if place not in self._dismissed and not self._place_allowed(place)]
             if blocked:
                 self._strip_place = blocked[0]
                 return self._strip_for(blocked_place=blocked[0])
@@ -1211,9 +1174,7 @@ class IrisWindow(QWidget):
         self._strip_label.setText(words)
         for text in buttons:
             button = QPushButton(text)
-            button.clicked.connect(
-                lambda _checked=False, action=text, kind=kind:
-                self._on_strip(action, kind))
+            button.clicked.connect(lambda _checked=False, action=text, kind=kind: self._on_strip(action, kind))
             self._strip_layout.addWidget(button)
         self._strip.setVisible(True)
 
@@ -1232,7 +1193,7 @@ class IrisWindow(QWidget):
             elif text == "Undo":
                 self._undo_allowed()
             else:
-                self._allow_place(text[len("Allow "):])
+                self._allow_place(text[len("Allow ") :])
         elif kind == "port":
             if text == "Close Iris":
                 self.close()
@@ -1243,14 +1204,16 @@ class IrisWindow(QWidget):
     def _show_run_for_waiting(self):
         """Let it go on: open the waiting Run for its Verify."""
         runs = self._runs_now()
-        waiting = [run for run in runs
-                   if run["state"] in ("PAUSED", "REDIRECTED")]
+        waiting = [run for run in runs if run["state"] in ("PAUSED", "REDIRECTED")]
         if not waiting:
             return
-        self.view.setUrl(QUrl(
-            self._controller.panel_url(
-                "advanced" if self._advanced else "simple"
-            ).replace("/?", f"/runs/{waiting[0]['trace_id']}?")))
+        self.view.setUrl(
+            QUrl(
+                self._controller.panel_url("advanced" if self._advanced else "simple").replace(
+                    "/?", f"/runs/{waiting[0]['trace_id']}?"
+                )
+            )
+        )
 
     def _dismiss_blocked(self):
         """Dismiss hides the strip. The place stays blocked."""
@@ -1271,9 +1234,7 @@ class IrisWindow(QWidget):
             blocked = proxy_state.recently_blocked(limit=20)
         except Exception:
             return None
-        blocked = [place for place in blocked
-                   if place not in self._dismissed
-                   and not self._place_allowed(place)]
+        blocked = [place for place in blocked if place not in self._dismissed and not self._place_allowed(place)]
         return blocked[0] if blocked else None
 
     def _undo_allowed(self):
@@ -1371,9 +1332,7 @@ class IrisWindow(QWidget):
     def _on_watching(self, on):
         """Watching off stops new calls; on lets them through again."""
         self.watching_check.setText(f"Watching: {'On' if on else 'Off'}")
-        self.watching_check.setToolTip(
-            panel_module.WATCHING_ON_TOOLTIP if on
-            else panel_module.WATCHING_OFF_TOOLTIP)
+        self.watching_check.setToolTip(panel_module.WATCHING_ON_TOOLTIP if on else panel_module.WATCHING_OFF_TOOLTIP)
         func = getattr(self._seams, "set_watching", None)
         if func is not None:
             func(bool(on))
@@ -1396,20 +1355,17 @@ class IrisWindow(QWidget):
         if state in ("STOPPED", "BLOCKED"):
             return
         dest, ok = QInputDialog.getText(
-            self, "Send this Run somewhere else",
-            "Pick where this Run's next calls should go.\nSend them to:")
+            self, "Send this Run somewhere else", "Pick where this Run's next calls should go.\nSend them to:"
+        )
         if not ok or not (dest or "").strip():
             return
         dest = dest.strip()
         prefix = trace_id[:8]
         box = QMessageBox(self)
         box.setWindowTitle("Send this Run somewhere else")
-        box.setText(f"From now on, Run {prefix}'s calls go to {dest} "
-                    f"instead. Do this?")
-        cancel = box.addButton(
-            "Cancel", QMessageBox.ButtonRole.RejectRole)
-        send = box.addButton(
-            "Send them there", QMessageBox.ButtonRole.AcceptRole)
+        box.setText(f"From now on, Run {prefix}'s calls go to {dest} instead. Do this?")
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        send = box.addButton("Send them there", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(cancel)
         box.exec()
         if box.clickedButton() != send:
@@ -1437,18 +1393,14 @@ class IrisWindow(QWidget):
         agent_id = self._pick_agent()
         if agent_id is None:
             return
-        proxy_url = (f"http://127.0.0.1:"
-                     f"{self._controller.proxy_port}")
+        proxy_url = f"http://127.0.0.1:{self._controller.proxy_port}"
         try:
-            result = self._connect_fn(
-                agent_id, proxy_url, os.path.expanduser("~"))
+            result = self._connect_fn(agent_id, proxy_url, os.path.expanduser("~"))
         except connect_module.Refused as exc:
             self._show_message(str(exc))
             return
         except Exception as exc:
-            self._show_message(
-                f"Connect did not run: {exc}. "
-                f"The agent is not connected.")
+            self._show_message(f"Connect did not run: {exc}. The agent is not connected.")
             return
         self._show_message(result)
         name = connect_module.AGENT_NAMES.get(agent_id, agent_id)
@@ -1457,23 +1409,18 @@ class IrisWindow(QWidget):
             try:
                 restart_result = self._restart_fn(agent_id)
             except Exception as exc:
-                self._show_message(
-                    f"Restart did not run: {exc}. The agent is "
-                    f"still connected. Restart {name} by hand.")
+                self._show_message(f"Restart did not run: {exc}. The agent is still connected. Restart {name} by hand.")
             else:
                 self._show_message(restart_result)
         elif choice == "save":
-            self._show_message(
-                f"Save your work in {name} first, then restart "
-                f"{name} when ready. Iris cannot save it for you.")
+            self._show_message(f"Save your work in {name} first, then restart {name} when ready. Iris cannot save it for you.")
 
     def _on_tier(self, advanced):
         """Flip the view to the other tier, same page."""
         self._advanced = bool(advanced)
         self._build_menus()
         tier = "advanced" if self._advanced else "simple"
-        self.view.setUrl(
-            QUrl(_with_tier(self.view.url().toString(), tier)))
+        self.view.setUrl(QUrl(_with_tier(self.view.url().toString(), tier)))
         self._refresh_all()
 
     def _verify_dialog(self):
@@ -1484,14 +1431,10 @@ class IrisWindow(QWidget):
         layout.addWidget(QLabel("What was checked, in plain words:"))
         field = QLineEdit()
         layout.addWidget(field)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Cancel
-            | QDialogButtonBox.StandardButton.Apply)
-        cancel = buttons.button(
-            QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Apply)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         cancel.setText("Cancel")
-        apply_button = buttons.button(
-            QDialogButtonBox.StandardButton.Apply)
+        apply_button = buttons.button(QDialogButtonBox.StandardButton.Apply)
         apply_button.setText("Verify")
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -1515,12 +1458,9 @@ class IrisWindow(QWidget):
         # windowTitle() holds on every platform. Same words, same
         # look: elsewhere the shadow only forwards to this call.
         QDialog.setWindowTitle(box, "Let agents work again?")
-        box.setText("Agents that use Iris will be able to make calls "
-                    "again. Runs that were stopped stay stopped.")
-        keep = box.addButton(
-            "Keep it on", QMessageBox.ButtonRole.RejectRole)
-        again = box.addButton(
-            "Let agents work again", QMessageBox.ButtonRole.AcceptRole)
+        box.setText("Agents that use Iris will be able to make calls again. Runs that were stopped stay stopped.")
+        keep = box.addButton("Keep it on", QMessageBox.ButtonRole.RejectRole)
+        again = box.addButton("Let agents work again", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(keep)
         return box
 
@@ -1546,19 +1486,17 @@ class IrisWindow(QWidget):
 
     def _ask_confirm_dialog(self):
         """Ask before stopping everything, in a native dialog."""
-        return QMessageBox.question(
-            self, "Emergency stop",
-            "Stop every Run at once?") == QMessageBox.StandardButton.Yes
+        return QMessageBox.question(self, "Emergency stop", "Stop every Run at once?") == QMessageBox.StandardButton.Yes
 
     def _on_copy_address(self):
         """Copy the address for the agent: this computer, proxy spot."""
         from PySide6.QtWidgets import QApplication
 
-        QApplication.clipboard().setText(
-            f"http://127.0.0.1:{self._controller.proxy_port}")
+        QApplication.clipboard().setText(f"http://127.0.0.1:{self._controller.proxy_port}")
         self._status_text.setText("Copied.")
         try:
             from PySide6.QtCore import QTimer
+
             QTimer.singleShot(2000, self._refresh_status)
         except Exception:
             pass
@@ -1577,14 +1515,12 @@ class IrisWindow(QWidget):
 
         folder = self._journal_folder()
         if folder is None:
-            self._show_message("Iris could not save the journal: no "
-                               "journal folder.")
+            self._show_message("Iris could not save the journal: no journal folder.")
             return
-        day = datetime.datetime.now(
-            datetime.timezone.utc).date().isoformat()
+        day = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         path, _selected = QFileDialog.getSaveFileName(
-            self, "Save a copy of the journal",
-            os.path.join(folder, self.default_journal_name(day)))
+            self, "Save a copy of the journal", os.path.join(folder, self.default_journal_name(day))
+        )
         if not path:
             return
         try:
@@ -1599,26 +1535,30 @@ class IrisWindow(QWidget):
         """The journal as data: runs, claims, costs. No bodies, no keys."""
         import datetime
 
-        day = datetime.datetime.now(
-            datetime.timezone.utc).date().isoformat()
+        day = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         runs = []
         for run in self._runs_now():
             if panel_module._is_sample(run["rows"]):
                 continue
-            runs.append({
-                "run": run["label"],
-                "trace_id": run["trace_id"],
-                "started": run["started"],
-                "status": run["state_word"],
-                "verdict": run["verdict"],
-                "cost": run["cost"],
-                "claims": [
-                    {"claim": claim.get("claim", ""),
-                     "verdict": claim.get("verdict", ""),
-                     "looked_at": claim.get("looked_at", ""),
-                     "found": claim.get("found", "")}
-                    for claim in run["claims"]],
-            })
+            runs.append(
+                {
+                    "run": run["label"],
+                    "trace_id": run["trace_id"],
+                    "started": run["started"],
+                    "status": run["state_word"],
+                    "verdict": run["verdict"],
+                    "cost": run["cost"],
+                    "claims": [
+                        {
+                            "claim": claim.get("claim", ""),
+                            "verdict": claim.get("verdict", ""),
+                            "looked_at": claim.get("looked_at", ""),
+                            "found": claim.get("found", ""),
+                        }
+                        for claim in run["claims"]
+                    ],
+                }
+            )
         return {"journal": runs, "as_of": day}
 
     def _on_limits(self):
@@ -1641,12 +1581,14 @@ class IrisWindow(QWidget):
 
     def _verdict_help_text(self):
         """The verdict words, exactly as on screen."""
-        return ("Correct. Iris looked, and what it found matches what "
-                "the agent said.\n\n"
-                "Incorrect. Iris looked, and what it found does not "
-                "match what the agent said.\n\n"
-                "Unverified. Iris could not look, or could not tell. "
-                "Iris never guesses.")
+        return (
+            "Correct. Iris looked, and what it found matches what "
+            "the agent said.\n\n"
+            "Incorrect. Iris looked, and what it found does not "
+            "match what the agent said.\n\n"
+            "Unverified. Iris could not look, or could not tell. "
+            "Iris never guesses."
+        )
 
     def _on_updates(self):
         """Check for updates opens the downloads page. Never itself."""
@@ -1665,8 +1607,7 @@ class IrisWindow(QWidget):
         """Open the devpanel in the browser. More detail only."""
         from PySide6.QtGui import QDesktopServices
 
-        QDesktopServices.openUrl(QUrl(
-            f"http://127.0.0.1:{self._controller.panel_port}/"))
+        QDesktopServices.openUrl(QUrl(f"http://127.0.0.1:{self._controller.panel_port}/"))
 
     def _limits_dialog(self):
         """The Limits dialog: spending, allowed, blocked, save."""
@@ -1706,10 +1647,8 @@ class IrisWindow(QWidget):
         layout.addWidget(QLabel("Recently blocked."))
         recent_list = QComboBox()
         try:
-            recent = state.recently_blocked(limit=20) \
-                if state is not None else []
-            recent = [place for place in recent
-                      if not self._place_allowed(place)]
+            recent = state.recently_blocked(limit=20) if state is not None else []
+            recent = [place for place in recent if not self._place_allowed(place)]
         except Exception:
             recent = []
         recent_list.addItems(recent)
@@ -1719,8 +1658,7 @@ class IrisWindow(QWidget):
         layout.addWidget(QLabel("Blocked places."))
         blocked_list = QComboBox()
         try:
-            blocked = sorted(state._overrides) \
-                if state is not None else []
+            blocked = sorted(state._overrides) if state is not None else []
         except Exception:
             blocked = []
         blocked_list.addItems(blocked)
@@ -1731,47 +1669,36 @@ class IrisWindow(QWidget):
         blocked_row.addWidget(add_blocked)
         blocked_row.addWidget(remove_blocked)
         layout.addLayout(blocked_row)
-        bottom = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Cancel
-            | QDialogButtonBox.StandardButton.Save)
+        bottom = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Save)
         layout.addWidget(bottom)
         dialog._field = field
         dialog._no_limit = no_limit
-        add_allowed.clicked.connect(
-            lambda: self._on_add_allowed(dialog, allowed_list))
-        remove_allowed.clicked.connect(
-            lambda: self._on_remove_allowed(
-                dialog, allowed_list.currentText()))
+        add_allowed.clicked.connect(lambda: self._on_add_allowed(dialog, allowed_list))
+        remove_allowed.clicked.connect(lambda: self._on_remove_allowed(dialog, allowed_list.currentText()))
         allow_recent.clicked.connect(
-            lambda: self._on_allow_recent(
-                dialog, recent_list.currentText(),
-                allowed_list, recent_list))
-        add_blocked.clicked.connect(
-            lambda: self._on_add_blocked(dialog, blocked_list))
-        remove_blocked.clicked.connect(
-            lambda: self._on_remove_blocked(
-                dialog, blocked_list.currentText()))
-        bottom.accepted.connect(
-            lambda: self._on_save_limits(dialog))
+            lambda: self._on_allow_recent(dialog, recent_list.currentText(), allowed_list, recent_list)
+        )
+        add_blocked.clicked.connect(lambda: self._on_add_blocked(dialog, blocked_list))
+        remove_blocked.clicked.connect(lambda: self._on_remove_blocked(dialog, blocked_list.currentText()))
+        bottom.accepted.connect(lambda: self._on_save_limits(dialog))
         bottom.rejected.connect(dialog.reject)
         return dialog
 
     def _on_add_allowed(self, dialog, allowed_list):
         """Add… is the fallback: type the address by hand."""
-        dest, ok = QInputDialog.getText(
-            dialog, "Allow a place", "Address of the place:")
+        dest, ok = QInputDialog.getText(dialog, "Allow a place", "Address of the place:")
         if not ok or not (dest or "").strip():
             return
         dest = dest.strip()
         box = QMessageBox(dialog)
         box.setWindowTitle("Allow a place")
-        box.setText(f"Iris will let calls to {dest} through even "
-                    f"though it can't work out what they cost. They "
-                    f"will not count toward your limit. Allow it?")
-        cancel = box.addButton(
-            "Cancel", QMessageBox.ButtonRole.RejectRole)
-        allow = box.addButton(
-            "Allow it", QMessageBox.ButtonRole.AcceptRole)
+        box.setText(
+            f"Iris will let calls to {dest} through even "
+            f"though it can't work out what they cost. They "
+            f"will not count toward your limit. Allow it?"
+        )
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        allow = box.addButton("Allow it", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(cancel)
         box.exec()
         if box.clickedButton() != allow:
@@ -1785,13 +1712,11 @@ class IrisWindow(QWidget):
             return
         box = QMessageBox(dialog)
         box.setWindowTitle("Stop allowing a place")
-        box.setText(f"Stop allowing {dest}? Calls to it will be "
-                    f"blocked when a limit is set and Iris can't work "
-                    f"out what the cost is.")
-        cancel = box.addButton(
-            "Cancel", QMessageBox.ButtonRole.RejectRole)
-        stop = box.addButton(
-            "Stop allowing it", QMessageBox.ButtonRole.AcceptRole)
+        box.setText(
+            f"Stop allowing {dest}? Calls to it will be blocked when a limit is set and Iris can't work out what the cost is."
+        )
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        stop = box.addButton("Stop allowing it", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(cancel)
         box.exec()
         if box.clickedButton() != stop:
@@ -1808,19 +1733,15 @@ class IrisWindow(QWidget):
 
     def _on_add_blocked(self, dialog, blocked_list):
         """Add… a blocked place: type it, confirm it, block it."""
-        dest, ok = QInputDialog.getText(
-            dialog, "Block a place", "Address of the place:")
+        dest, ok = QInputDialog.getText(dialog, "Block a place", "Address of the place:")
         if not ok or not (dest or "").strip():
             return
         dest = dest.strip()
         box = QMessageBox(dialog)
         box.setWindowTitle("Block a place")
-        box.setText(f"This will stop your agents reaching {dest}. "
-                    f"Block it?")
-        cancel = box.addButton(
-            "Cancel", QMessageBox.ButtonRole.RejectRole)
-        block = box.addButton(
-            "Block it", QMessageBox.ButtonRole.AcceptRole)
+        box.setText(f"This will stop your agents reaching {dest}. Block it?")
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        block = box.addButton("Block it", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(cancel)
         box.exec()
         if box.clickedButton() != block:
@@ -1840,10 +1761,8 @@ class IrisWindow(QWidget):
         box = QMessageBox(dialog)
         box.setWindowTitle("Unblock a place")
         box.setText(f"Let agents reach {dest} again?")
-        cancel = box.addButton(
-            "Cancel", QMessageBox.ButtonRole.RejectRole)
-        let = box.addButton(
-            "Let them", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        let = box.addButton("Let them", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(cancel)
         box.exec()
         if box.clickedButton() != let:
@@ -1859,12 +1778,9 @@ class IrisWindow(QWidget):
         """Save limits asks first: agents are held to them at once."""
         box = QMessageBox(dialog)
         box.setWindowTitle("Save limits?")
-        box.setText("Save these limits? Your agents are held to them "
-                    "right away.")
-        cancel = box.addButton(
-            "Cancel", QMessageBox.ButtonRole.RejectRole)
-        save = box.addButton(
-            "Save limits", QMessageBox.ButtonRole.AcceptRole)
+        box.setText("Save these limits? Your agents are held to them right away.")
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        save = box.addButton("Save limits", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(cancel)
         box.exec()
         if box.clickedButton() != save:
@@ -1880,9 +1796,7 @@ class IrisWindow(QWidget):
                 text = dialog._field.text().strip().lstrip("$")
                 state.set_daily_limit(float(text))
         except (TypeError, ValueError):
-            self._show_message("That limit was refused. Use a plain "
-                               "dollar number above zero, or tick No "
-                               "limit.")
+            self._show_message("That limit was refused. Use a plain dollar number above zero, or tick No limit.")
             return
         dialog.accept()
 
@@ -1900,8 +1814,7 @@ class IrisWindow(QWidget):
         layout.addWidget(QLabel(panel_module.SETTINGS_JOURNAL_LINE))
         layout.addWidget(QLabel("Updates:"))
         layout.addWidget(QLabel(panel_module.SETTINGS_UPDATES))
-        open_folder.clicked.connect(
-            lambda: self._open_folder(self._journal_folder()))
+        open_folder.clicked.connect(lambda: self._open_folder(self._journal_folder()))
         if self._advanced:
             layout.addWidget(QLabel("The spot Iris listens on:"))
             spot_row = QHBoxLayout()
@@ -1917,12 +1830,10 @@ class IrisWindow(QWidget):
             layout.addWidget(keep)
             delete = QPushButton("Delete the journal…")
             layout.addWidget(delete)
-            change.clicked.connect(
-                lambda: self._on_change_spot(spot_field.text()))
+            change.clicked.connect(lambda: self._on_change_spot(spot_field.text()))
             delete.clicked.connect(self._on_delete_journal)
             dialog._keep = keep
-            keep.currentIndexChanged.connect(
-                lambda _index: self._on_keep_changed(dialog))
+            keep.currentIndexChanged.connect(lambda _index: self._on_keep_changed(dialog))
         close = QPushButton("Close")
         layout.addWidget(close)
         close.clicked.connect(dialog.accept)
@@ -1939,8 +1850,7 @@ class IrisWindow(QWidget):
         try:
             import db as db_module
 
-            db_module.set_setting(
-                state.conn, "journal_keep", keep.currentText())
+            db_module.set_setting(state.conn, "journal_keep", keep.currentText())
         except Exception:
             pass
 
@@ -1955,25 +1865,20 @@ class IrisWindow(QWidget):
         try:
             port = int(str(text).strip())
         except (TypeError, ValueError):
-            self._show_message("That spot was refused. Use a plain "
-                               "port number.")
+            self._show_message("That spot was refused. Use a plain port number.")
             return
         if not 1 <= port <= 65535:
-            self._show_message("That spot was refused. Use a port "
-                               "number from 1 to 65535.")
+            self._show_message("That spot was refused. Use a port number from 1 to 65535.")
             return
         controller = self._controller
         controller.stop()
         controller.proxy_port = port
         if not controller.start():
             self._port_error = True
-            self._show_message(f"Iris could not start: "
-                               f"{controller.start_error}")
+            self._show_message(f"Iris could not start: {controller.start_error}")
             return
-        self.view.setUrl(QUrl(controller.panel_url(
-            "advanced" if self._advanced else "simple")))
-        self._show_message("Iris is watching on a new address. Copy it "
-                           "and give it to your agent.")
+        self.view.setUrl(QUrl(controller.panel_url("advanced" if self._advanced else "simple")))
+        self._show_message("Iris is watching on a new address. Copy it and give it to your agent.")
 
     def _on_try_another_spot(self):
         """The spot is taken: restart the proxy on a free one."""
@@ -1990,20 +1895,19 @@ class IrisWindow(QWidget):
         self._port_error = False
         self._dismissed.clear()
         self._on_change_spot(str(port))
-        self._show_message("Iris is watching on a new address. Copy it "
-                           "and give it to your agent.")
+        self._show_message("Iris is watching on a new address. Copy it and give it to your agent.")
 
     def _on_delete_journal(self):
         """Delete the whole journal asks first: nothing comes back."""
         box = QMessageBox(self)
         box.setWindowTitle("Delete the whole journal?")
-        box.setText("This removes what every Run did and what Iris "
-                    "found. You can't get it back. Iris can't check "
-                    "past Runs after this.")
-        keep = box.addButton(
-            "Keep the journal", QMessageBox.ButtonRole.RejectRole)
-        delete = box.addButton(
-            "Delete the journal", QMessageBox.ButtonRole.AcceptRole)
+        box.setText(
+            "This removes what every Run did and what Iris "
+            "found. You can't get it back. Iris can't check "
+            "past Runs after this."
+        )
+        keep = box.addButton("Keep the journal", QMessageBox.ButtonRole.RejectRole)
+        delete = box.addButton("Delete the journal", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(keep)
         box.exec()
         if box.clickedButton() != delete:
@@ -2026,11 +1930,8 @@ class IrisWindow(QWidget):
         """
         from PySide6.QtWidgets import QInputDialog
 
-        names = [connect_module.AGENT_NAMES[agent_id]
-                 for agent_id in ("claude-code", "cursor", "continue")]
-        picked, ok = QInputDialog.getItem(
-            self, "Connect agent", "Pick an agent:",
-            names, editable=False)
+        names = [connect_module.AGENT_NAMES[agent_id] for agent_id in ("claude-code", "cursor", "continue")]
+        picked, ok = QInputDialog.getItem(self, "Connect agent", "Pick an agent:", names, editable=False)
         if not ok:
             return None
         for agent_id, shown in connect_module.AGENT_NAMES.items():
@@ -2059,11 +1960,10 @@ class IrisWindow(QWidget):
         box.setText(
             f"{name} must restart so it picks up the change. "
             f"Save your work in {name} first. "
-            f"Iris cannot save your work for you.")
-        save_button = box.addButton(
-            "I'll save first", QMessageBox.ButtonRole.ActionRole)
-        restart_button = box.addButton(
-            "Restart", QMessageBox.ButtonRole.AcceptRole)
+            f"Iris cannot save your work for you."
+        )
+        save_button = box.addButton("I'll save first", QMessageBox.ButtonRole.ActionRole)
+        restart_button = box.addButton("Restart", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.exec()
         clicked = box.clickedButton()
@@ -2076,8 +1976,7 @@ class IrisWindow(QWidget):
     def _running_now(self):
         """True when at least one Run is still going."""
         try:
-            return any(run["state"] in ("FLOWING", "WARNED", "REDIRECTED")
-                       for run in self._runs_now())
+            return any(run["state"] in ("FLOWING", "WARNED", "REDIRECTED") for run in self._runs_now())
         except Exception:
             return False
 
@@ -2092,12 +1991,9 @@ class IrisWindow(QWidget):
         if self._running_now():
             box = QMessageBox(self)
             box.setWindowTitle("A Run is still going.")
-            box.setText("If you close Iris, your agent loses its "
-                        "connection and the Run stops.")
-            keep = box.addButton(
-                "Keep Iris open", QMessageBox.ButtonRole.RejectRole)
-            close = box.addButton(
-                "Close Iris", QMessageBox.ButtonRole.AcceptRole)
+            box.setText("If you close Iris, your agent loses its connection and the Run stops.")
+            keep = box.addButton("Keep Iris open", QMessageBox.ButtonRole.RejectRole)
+            close = box.addButton("Close Iris", QMessageBox.ButtonRole.AcceptRole)
             box.setDefaultButton(keep)
             box.exec()
             if box.clickedButton() != close:

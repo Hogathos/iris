@@ -107,18 +107,13 @@ def init_db(path: str) -> sqlite3.Connection:
     # peer created the index first, the re-check below lets us
     # continue. Anything else is re-raised, never masked.
     for name, sql in (
-        ("idx_attempts_trace_id",
-         "CREATE INDEX IF NOT EXISTS idx_attempts_trace_id "
-         "ON attempts (trace_id, id)"),
-        ("idx_attempts_dest_outcome",
-         "CREATE INDEX IF NOT EXISTS idx_attempts_dest_outcome "
-         "ON attempts (dest_host, outcome)"),
+        ("idx_attempts_trace_id", "CREATE INDEX IF NOT EXISTS idx_attempts_trace_id ON attempts (trace_id, id)"),
+        ("idx_attempts_dest_outcome", "CREATE INDEX IF NOT EXISTS idx_attempts_dest_outcome ON attempts (dest_host, outcome)"),
     ):
         try:
             conn.execute(sql)
         except sqlite3.OperationalError:
-            present = {row[0] for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            present = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
             if name not in present:
                 raise
     conn.commit()
@@ -254,13 +249,19 @@ def fetch_outcome_counts(conn) -> dict:
     pre-M4 database, so the five counts always add up to total
     attempts instead of silently dropping rows.
     """
-    counts = {"allowed": 0, "blocked": 0, "rate_limited": 0,
-              "paused": 0, "redirected": 0, "stopped": 0,
-              "verified": 0, "warned": 0, "other": 0}
-    for outcome, n in conn.execute(
-            "SELECT outcome, COUNT(*) FROM attempts GROUP BY outcome"):
-        if outcome in ("allowed", "blocked", "rate_limited", "paused",
-                       "redirected", "stopped", "verified", "warned"):
+    counts = {
+        "allowed": 0,
+        "blocked": 0,
+        "rate_limited": 0,
+        "paused": 0,
+        "redirected": 0,
+        "stopped": 0,
+        "verified": 0,
+        "warned": 0,
+        "other": 0,
+    }
+    for outcome, n in conn.execute("SELECT outcome, COUNT(*) FROM attempts GROUP BY outcome"):
+        if outcome in ("allowed", "blocked", "rate_limited", "paused", "redirected", "stopped", "verified", "warned"):
             counts[outcome] = n
         else:
             counts["other"] += n
@@ -287,10 +288,8 @@ def load_paused(conn) -> dict:
     conn.row_factory = sqlite3.Row
     try:
         return {
-            row["trace_id"]: {"reason": row["reason"],
-                              "created_at": row["created_at"]}
-            for row in conn.execute(
-                "SELECT trace_id, reason, created_at FROM paused_runs")
+            row["trace_id"]: {"reason": row["reason"], "created_at": row["created_at"]}
+            for row in conn.execute("SELECT trace_id, reason, created_at FROM paused_runs")
         }
     finally:
         conn.row_factory = prev_factory
@@ -300,8 +299,7 @@ def save_paused(conn, trace_id: str, reason: str, created_at: str) -> None:
     """Record one paused Run. Human-only callers; never the agent."""
     with _write_lock:
         conn.execute(
-            "INSERT OR REPLACE INTO paused_runs "
-            "(trace_id, reason, created_at) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO paused_runs (trace_id, reason, created_at) VALUES (?, ?, ?)",
             (trace_id, reason, created_at),
         )
         conn.commit()
@@ -310,8 +308,7 @@ def save_paused(conn, trace_id: str, reason: str, created_at: str) -> None:
 def clear_paused(conn, trace_id: str) -> None:
     """Forget one paused Run: it resumed after a fresh Verify."""
     with _write_lock:
-        conn.execute("DELETE FROM paused_runs WHERE trace_id = ?",
-                     (trace_id,))
+        conn.execute("DELETE FROM paused_runs WHERE trace_id = ?", (trace_id,))
         conn.commit()
 
 
@@ -336,24 +333,18 @@ def load_redirected(conn) -> dict:
     conn.row_factory = sqlite3.Row
     try:
         return {
-            row["trace_id"]: {"dest_host": row["dest_host"],
-                              "reason": row["reason"],
-                              "created_at": row["created_at"]}
-            for row in conn.execute(
-                "SELECT trace_id, dest_host, reason, created_at"
-                " FROM redirected_runs")
+            row["trace_id"]: {"dest_host": row["dest_host"], "reason": row["reason"], "created_at": row["created_at"]}
+            for row in conn.execute("SELECT trace_id, dest_host, reason, created_at FROM redirected_runs")
         }
     finally:
         conn.row_factory = prev_factory
 
 
-def save_redirected(conn, trace_id: str, dest_host: str, reason: str,
-                    created_at: str) -> None:
+def save_redirected(conn, trace_id: str, dest_host: str, reason: str, created_at: str) -> None:
     """Record one redirected Run. Human-only callers; never the agent."""
     with _write_lock:
         conn.execute(
-            "INSERT OR REPLACE INTO redirected_runs "
-            "(trace_id, dest_host, reason, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO redirected_runs (trace_id, dest_host, reason, created_at) VALUES (?, ?, ?, ?)",
             (trace_id, dest_host, reason, created_at),
         )
         conn.commit()
@@ -389,26 +380,23 @@ def load_overrides(conn) -> dict:
     conn.row_factory = sqlite3.Row
     try:
         return {
-            row["dest_host"]: {"action": row["action"],
-                               "target": row["target"],
-                               "reason": row["reason"],
-                               "created_at": row["created_at"]}
-            for row in conn.execute(
-                "SELECT dest_host, action, target, reason, created_at"
-                " FROM override_rules")
+            row["dest_host"]: {
+                "action": row["action"],
+                "target": row["target"],
+                "reason": row["reason"],
+                "created_at": row["created_at"],
+            }
+            for row in conn.execute("SELECT dest_host, action, target, reason, created_at FROM override_rules")
         }
     finally:
         conn.row_factory = prev_factory
 
 
-def save_override(conn, dest_host: str, action: str, target: str,
-                  reason: str, created_at: str) -> None:
+def save_override(conn, dest_host: str, action: str, target: str, reason: str, created_at: str) -> None:
     """Record one per-network override rule. Human-only; never the agent."""
     with _write_lock:
         conn.execute(
-            "INSERT OR REPLACE INTO override_rules "
-            "(dest_host, action, target, reason, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO override_rules (dest_host, action, target, reason, created_at) VALUES (?, ?, ?, ?, ?)",
             (dest_host, action, target, reason, created_at),
         )
         conn.commit()
@@ -420,8 +408,7 @@ def clear_override(conn, dest_host: str) -> None:
     Human-only callers; never the agent. The network flows again.
     """
     with _write_lock:
-        conn.execute("DELETE FROM override_rules WHERE dest_host = ?",
-                     (dest_host,))
+        conn.execute("DELETE FROM override_rules WHERE dest_host = ?", (dest_host,))
         conn.commit()
 
 
@@ -448,9 +435,7 @@ def load_red_button(conn):
     prev_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            "SELECT reason, created_at FROM red_button_state WHERE id = 1"
-        ).fetchone()
+        row = conn.execute("SELECT reason, created_at FROM red_button_state WHERE id = 1").fetchone()
         return dict(row) if row is not None else None
     finally:
         conn.row_factory = prev_factory
@@ -460,8 +445,7 @@ def save_red_button(conn, reason: str, created_at: str) -> None:
     """Record a Red button press. Human-only callers; never the agent."""
     with _write_lock:
         conn.execute(
-            "INSERT OR REPLACE INTO red_button_state "
-            "(id, reason, created_at) VALUES (1, ?, ?)",
+            "INSERT OR REPLACE INTO red_button_state (id, reason, created_at) VALUES (1, ?, ?)",
             (reason, created_at),
         )
         conn.commit()
@@ -510,22 +494,18 @@ def load_caps(conn) -> dict:
     conn.row_factory = sqlite3.Row
     try:
         return {
-            row["dest_host"]: {"cap": row["cap"], "reason": row["reason"],
-                               "created_at": row["created_at"]}
-            for row in conn.execute(
-                "SELECT dest_host, cap, reason, created_at FROM cap_rules")
+            row["dest_host"]: {"cap": row["cap"], "reason": row["reason"], "created_at": row["created_at"]}
+            for row in conn.execute("SELECT dest_host, cap, reason, created_at FROM cap_rules")
         }
     finally:
         conn.row_factory = prev_factory
 
 
-def save_cap(conn, dest_host: str, cap: float, reason: str,
-             created_at: str) -> None:
+def save_cap(conn, dest_host: str, cap: float, reason: str, created_at: str) -> None:
     """Record one spend cap. Human-only; never the agent."""
     with _write_lock:
         conn.execute(
-            "INSERT OR REPLACE INTO cap_rules "
-            "(dest_host, cap, reason, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO cap_rules (dest_host, cap, reason, created_at) VALUES (?, ?, ?, ?)",
             (dest_host, cap, reason, created_at),
         )
         conn.commit()
@@ -534,8 +514,7 @@ def save_cap(conn, dest_host: str, cap: float, reason: str,
 def clear_cap(conn, dest_host: str) -> None:
     """Forget one spend cap: a human unblocked it after Verify."""
     with _write_lock:
-        conn.execute("DELETE FROM cap_rules WHERE dest_host = ?",
-                     (dest_host,))
+        conn.execute("DELETE FROM cap_rules WHERE dest_host = ?", (dest_host,))
         conn.commit()
 
 
@@ -553,9 +532,7 @@ CREATE TABLE IF NOT EXISTS claims (
 """
 
 
-def save_claim(conn, trace_id: str, claim: str, verdict: str,
-               looked_at: str, found: str, took_ms,
-               created_at: str) -> None:
+def save_claim(conn, trace_id: str, claim: str, verdict: str, looked_at: str, found: str, took_ms, created_at: str) -> None:
     """Record one checked claim for a Run. The verdict came from a read.
 
     Claims are what the agent said, plus what Iris found when it
@@ -568,8 +545,7 @@ def save_claim(conn, trace_id: str, claim: str, verdict: str,
             "INSERT INTO claims "
             "(trace_id, claim, verdict, looked_at, found, took_ms,"
             " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (trace_id, claim, verdict, looked_at, found, took_ms,
-             created_at),
+            (trace_id, claim, verdict, looked_at, found, took_ms, created_at),
         )
         conn.commit()
 
@@ -579,9 +555,7 @@ def load_claims(conn, trace_id: str) -> list:
     prev_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        return [dict(row) for row in conn.execute(
-            "SELECT * FROM claims WHERE trace_id = ? ORDER BY id",
-            (trace_id,))]
+        return [dict(row) for row in conn.execute("SELECT * FROM claims WHERE trace_id = ? ORDER BY id", (trace_id,))]
     finally:
         conn.row_factory = prev_factory
 
@@ -596,8 +570,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 def get_setting(conn, key: str):
     """One saved setting, or None when the human never set it."""
-    row = conn.execute(
-        "SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row[0] if row is not None else None
 
 
@@ -605,8 +578,7 @@ def set_setting(conn, key: str, value: str) -> None:
     """Save one setting. Human-only callers; never the agent."""
     with _write_lock:
         conn.execute(
-            "INSERT OR REPLACE INTO settings (key, value)"
-            " VALUES (?, ?)",
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
             (key, value),
         )
         conn.commit()
@@ -640,22 +612,18 @@ def load_allowed_places(conn) -> dict:
     conn.row_factory = sqlite3.Row
     try:
         return {
-            row["dest_host"]: {"reason": row["reason"],
-                               "created_at": row["created_at"]}
-            for row in conn.execute(
-                "SELECT dest_host, reason, created_at FROM allowed_places")
+            row["dest_host"]: {"reason": row["reason"], "created_at": row["created_at"]}
+            for row in conn.execute("SELECT dest_host, reason, created_at FROM allowed_places")
         }
     finally:
         conn.row_factory = prev_factory
 
 
-def save_allowed_place(conn, dest_host: str, reason: str,
-                       created_at: str) -> None:
+def save_allowed_place(conn, dest_host: str, reason: str, created_at: str) -> None:
     """Allow one place. Human-only callers; never the agent."""
     with _write_lock:
         conn.execute(
-            "INSERT OR REPLACE INTO allowed_places "
-            "(dest_host, reason, created_at) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO allowed_places (dest_host, reason, created_at) VALUES (?, ?, ?)",
             (dest_host, reason, created_at),
         )
         conn.commit()
@@ -664,8 +632,7 @@ def save_allowed_place(conn, dest_host: str, reason: str,
 def clear_allowed_place(conn, dest_host: str) -> None:
     """Stop allowing one place. Human-only callers; never the agent."""
     with _write_lock:
-        conn.execute("DELETE FROM allowed_places WHERE dest_host = ?",
-                     (dest_host,))
+        conn.execute("DELETE FROM allowed_places WHERE dest_host = ?", (dest_host,))
         conn.commit()
 
 
@@ -679,8 +646,7 @@ def last_attempt(conn, trace_id: str):
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT * FROM attempts WHERE trace_id = ? "
-            "ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id DESC LIMIT 1",
             (trace_id,),
         ).fetchone()
         return dict(row) if row is not None else None
@@ -702,8 +668,7 @@ def has_trace(conn, trace_id: str) -> bool:
     trace, and must not call a Correct Verify no trace either.
     """
     row = conn.execute(
-        "SELECT 1 FROM attempts WHERE trace_id = ? "
-        "AND (outcome != 'verified' OR status = 'success') LIMIT 1",
+        "SELECT 1 FROM attempts WHERE trace_id = ? AND (outcome != 'verified' OR status = 'success') LIMIT 1",
         (trace_id,),
     ).fetchone()
     return row is not None

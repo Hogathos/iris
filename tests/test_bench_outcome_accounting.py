@@ -85,6 +85,7 @@ handler journals.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import contextlib
 import io
 import os
@@ -167,18 +168,15 @@ class OutcomeAccountingTest(unittest.TestCase):
         # A fresh database per test, so every count below is exact.
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.safe = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)   # where a Redirect sends the Run
+        self.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.safe = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)  # where a Redirect sends the Run
         for server in (self.echo, self.safe):
             threading.Thread(target=server.serve_forever, daemon=True).start()
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), _HttpEchoHandler)
         threading.Thread(target=self.http.serve_forever, daemon=True).start()
         # High rate limit: rate limiting has its own check, and a 429
         # here would mask the rows this check needs.
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         self.proxy_port = self.proxy.server_address[1]
         self.dest = f"127.0.0.1:{self.echo.server_address[1]}"
@@ -201,8 +199,7 @@ class OutcomeAccountingTest(unittest.TestCase):
 
     def call(self, url, trace=None):
         """Plain HTTP GET through the proxy. Returns the status code."""
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-            {"http": f"http://127.0.0.1:{self.proxy_port}"}))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{self.proxy_port}"}))
         req = urllib.request.Request(url, method="GET")
         if trace:
             req.add_header("X-Trace-Id", trace)
@@ -214,13 +211,9 @@ class OutcomeAccountingTest(unittest.TestCase):
 
     def open_tunnel(self, trace):
         """CONNECT through the proxy for this Run. Returns (sock, status)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {self.dest} HTTP/1.1\r\n"
-             f"Host: {self.dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -272,9 +265,7 @@ class OutcomeAccountingTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace,))]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace,))]
         finally:
             conn.close()
 
@@ -283,8 +274,7 @@ class OutcomeAccountingTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts ORDER BY id")]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts ORDER BY id")]
         finally:
             conn.close()
 
@@ -300,8 +290,8 @@ class OutcomeAccountingTest(unittest.TestCase):
                 return
             time.sleep(0.02)
         self.fail(
-            "the handler never journaled a close row that carries the "
-            "tunnel's bytes: it was not logged, or it lost the bytes")
+            "the handler never journaled a close row that carries the tunnel's bytes: it was not logged, or it lost the bytes"
+        )
 
     def run_report(self):
         """Run report.py on this journal and return its money number.
@@ -329,9 +319,10 @@ class OutcomeAccountingTest(unittest.TestCase):
         the tunnel dest: pass the HTTP dest when the priced row is a
         plain HTTP GET.
         """
-        with mock.patch.dict(
-                api_module.PRICE_PER_REQUEST, {"127.0.0.1": TEST_PRICE}), \
-                mock.patch.object(api_module, "DB_PATH", self.db_path):
+        with (
+            mock.patch.dict(api_module.PRICE_PER_REQUEST, {"127.0.0.1": TEST_PRICE}),
+            mock.patch.object(api_module, "DB_PATH", self.db_path),
+        ):
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             try:
@@ -351,21 +342,18 @@ class OutcomeAccountingTest(unittest.TestCase):
                 "row_costs": [api_module.attempt_cost(r) for r in rows],
                 "run_cost": summary["cost"],
                 "wasted": summary["wasted"],
-                "capped": self.proxy.state.capped_total(
-                    capped_dest or self.dest),
+                "capped": self.proxy.state.capped_total(capped_dest or self.dest),
             }
 
     def assert_reconciles(self, seen):
         """The buckets add up to the total, on the db reader and the report."""
         buckets = sum(seen["counts"].values())
         self.assertEqual(
-            buckets, seen["total"],
-            "the outcome buckets do not add up to the total attempts "
-            "(db.fetch_outcome_counts)")
+            buckets, seen["total"], "the outcome buckets do not add up to the total attempts (db.fetch_outcome_counts)"
+        )
         self.assertEqual(
-            seen["total"], len(seen["rows"]),
-            "the total attempts does not match the journal rows "
-            "(db.fetch_totals)")
+            seen["total"], len(seen["rows"]), "the total attempts does not match the journal rows (db.fetch_totals)"
+        )
 
     # ---- the checks ----------------------------------------------------
 
@@ -373,18 +361,18 @@ class OutcomeAccountingTest(unittest.TestCase):
         """Check 1: one of each outcome, one priced request, readers agree."""
         # One allowed request that forwards and finishes by itself.
         self.assertEqual(
-            self.call(f"{self.base}/echo", "bench-acct-allowed"), 200,
-            "harness: the allowed request did not forward")
+            self.call(f"{self.base}/echo", "bench-acct-allowed"), 200, "harness: the allowed request did not forward"
+        )
         # One blocked request that never forwards.
         self.assertEqual(
             self.call("http://exfil.example.test/echo", "bench-acct-blocked"),
-            403, "harness: the blocked request was not refused")
+            403,
+            "harness: the blocked request was not refused",
+        )
         # One tunnel cut by Pause.
         sock_c = self.open_and_exchange("bench-acct-paused")
         try:
-            self.assertTrue(
-                self.proxy.state.pause_run("bench-acct-paused"),
-                "pause_run refused the Run")
+            self.assertTrue(self.proxy.state.pause_run("bench-acct-paused"), "pause_run refused the Run")
             self.wait_for_close_row("bench-acct-paused")
             self.assert_tunnel_dead(sock_c)
         finally:
@@ -393,9 +381,8 @@ class OutcomeAccountingTest(unittest.TestCase):
         sock_d = self.open_and_exchange("bench-acct-redirected")
         try:
             self.assertTrue(
-                self.proxy.state.redirect_run(
-                    "bench-acct-redirected", self.safe_dest),
-                "redirect_run refused the Run")
+                self.proxy.state.redirect_run("bench-acct-redirected", self.safe_dest), "redirect_run refused the Run"
+            )
             self.wait_for_close_row("bench-acct-redirected")
             self.assert_tunnel_dead(sock_d)
         finally:
@@ -403,12 +390,10 @@ class OutcomeAccountingTest(unittest.TestCase):
         # One Verify call. It journals verified rows for its own Run.
         verdict, _card = self.proxy.state.verify_read_back(
             "bench-acct-verified",
-            {"kind": "remote", "system": "stripe",
-             "reference": "pi_test_123",
-             "idempotency_key": "bench-acct-verify-1"},
-            done_clause=DONE_FILE)
-        self.assertEqual(verdict, "Unverified",
-                         "harness: the Verify call did not run")
+            {"kind": "remote", "system": "stripe", "reference": "pi_test_123", "idempotency_key": "bench-acct-verify-1"},
+            done_clause=DONE_FILE,
+        )
+        self.assertEqual(verdict, "Unverified", "harness: the Verify call did not run")
         # The priced row is the plain HTTP GET, so the capped total is
         # read for the HTTP dest, not the tunnel dest.
         http_dest = f"127.0.0.1:{self.http.server_address[1]}"
@@ -420,52 +405,37 @@ class OutcomeAccountingTest(unittest.TestCase):
         # paused rows the same way: its control row ("human pause")
         # and its cut close row ("tunnel cut by pause"). The Verify
         # leaves two verified rows: its call row and its verdict row.
-        self.assertEqual(seen["counts"]["allowed"], 1,
-                         "only the finished request counts as allowed")
-        self.assertEqual(seen["counts"]["blocked"], 1,
-                         "only the refused request counts as blocked")
-        self.assertEqual(seen["counts"]["paused"], 2,
-                         "the Pause control row and close row count")
-        self.assertEqual(seen["counts"]["redirected"], 2,
-                         "the Redirect control row and close row count")
-        self.assertEqual(seen["counts"]["verified"], 2,
-                         "the Verify call row and verdict row count")
-        self.assertEqual(seen["successes"], 1,
-                         "only the finished request counts as a success")
+        self.assertEqual(seen["counts"]["allowed"], 1, "only the finished request counts as allowed")
+        self.assertEqual(seen["counts"]["blocked"], 1, "only the refused request counts as blocked")
+        self.assertEqual(seen["counts"]["paused"], 2, "the Pause control row and close row count")
+        self.assertEqual(seen["counts"]["redirected"], 2, "the Redirect control row and close row count")
+        self.assertEqual(seen["counts"]["verified"], 2, "the Verify call row and verdict row count")
+        self.assertEqual(seen["successes"], 1, "only the finished request counts as a success")
         # Money: the one forwarded request costs the price on every
         # reader. Everything else costs $0.00.
         self.assertEqual(
-            [r for r in seen["row_costs"] if r != 0.0], [TEST_PRICE],
-            "exactly one row costs money, the forwarded request")
-        self.assertEqual(seen["run_cost"], TEST_PRICE,
-                         "the Run's money spent is not the price "
-                         "(api.summarize_costs)")
-        self.assertEqual(seen["wasted"], 0.0,
-                         "nothing was wasted: the refused and cut Runs "
-                         "cost $0.00 (api.summarize_costs)")
-        self.assertEqual(seen["dashboard"]["total_cost"], TEST_PRICE,
-                         "the dashboard total is not the price (api.stats)")
-        self.assertEqual(seen["dashboard"]["wasted_cost"], 0.0,
-                         "the dashboard wasted cost is not $0.00 (api.stats)")
-        self.assertEqual(seen["capped"], TEST_PRICE,
-                         "the spend cap total is not the price "
-                         "(ProxyState.capped_total)")
+            [r for r in seen["row_costs"] if r != 0.0], [TEST_PRICE], "exactly one row costs money, the forwarded request"
+        )
+        self.assertEqual(seen["run_cost"], TEST_PRICE, "the Run's money spent is not the price (api.summarize_costs)")
+        self.assertEqual(seen["wasted"], 0.0, "nothing was wasted: the refused and cut Runs cost $0.00 (api.summarize_costs)")
+        self.assertEqual(seen["dashboard"]["total_cost"], TEST_PRICE, "the dashboard total is not the price (api.stats)")
+        self.assertEqual(seen["dashboard"]["wasted_cost"], 0.0, "the dashboard wasted cost is not $0.00 (api.stats)")
+        self.assertEqual(seen["capped"], TEST_PRICE, "the spend cap total is not the price (ProxyState.capped_total)")
         # The report and the dashboard must say the same number.
         # Fails today: the report sums recorded costs only, so it says
         # $0.00 while the dashboard says the price.
         self.assertEqual(
-            seen["report_cost"], seen["dashboard"]["total_cost"],
-            "the report money and the dashboard money disagree "
-            "(report.py vs api.stats)")
+            seen["report_cost"],
+            seen["dashboard"]["total_cost"],
+            "the report money and the dashboard money disagree (report.py vs api.stats)",
+        )
 
     def test_stopped_rows_cost_nothing(self):
         """Check 2: a Red button stop row costs $0.00, and it reconciles."""
         trace = "bench-acct-stopped"
         sock = self.open_and_exchange(trace)
         try:
-            self.assertTrue(
-                self.proxy.state.red_button("human red button"),
-                "red_button refused")
+            self.assertTrue(self.proxy.state.red_button("human red button"), "red_button refused")
             # The stop control row lands synchronously. The cut close
             # row lands later on the handler thread.
             self.wait_for_close_row(trace)
@@ -477,68 +447,59 @@ class OutcomeAccountingTest(unittest.TestCase):
         stopped = [r for r in seen["rows"] if r["outcome"] == "stopped"]
         self.assertTrue(stopped, "no stopped row was journaled")
         self.assertEqual(
-            [api_module.attempt_cost(r) for r in stopped], [0.0] * len(stopped),
-            "a stopped row costs money (api.attempt_cost)")
+            [api_module.attempt_cost(r) for r in stopped], [0.0] * len(stopped), "a stopped row costs money (api.attempt_cost)"
+        )
         # The close row after a Red button cut is NOT pinned here.
         # Claude owns the Red button cross-test. See decision 3.
 
     def test_rate_limited_rows_cost_nothing(self):
         """Check 3: 429 rows cost $0.00, and they reconcile."""
         burst_db = os.path.join(self.tmp.name, "burst.db")
-        burst = proxy_module.serve(
-            "127.0.0.1", 0, burst_db, rate_limit=5, rate_window=1.0)
+        burst = proxy_module.serve("127.0.0.1", 0, burst_db, rate_limit=5, rate_window=1.0)
         burst_port = burst.server_address[1]
         threading.Thread(target=burst.serve_forever, daemon=True).start()
         try:
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-                {"http": f"http://127.0.0.1:{burst_port}"}))
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{burst_port}"}))
             statuses = []
             for i in range(7):
-                req = urllib.request.Request(
-                    f"{self.base}/echo", method="GET")
+                req = urllib.request.Request(f"{self.base}/echo", method="GET")
                 req.add_header("X-Trace-Id", f"bench-acct-burst-{i}")
                 try:
                     with opener.open(req, timeout=10) as resp:
                         statuses.append(resp.status)
                 except urllib.error.HTTPError as exc:
                     statuses.append(exc.code)
-            self.assertEqual(statuses.count(200), 5,
-                             "harness: the burst did not forward five")
-            self.assertEqual(statuses.count(429), 2,
-                             "harness: the burst did not limit two")
-            with mock.patch.dict(
-                    api_module.PRICE_PER_REQUEST,
-                    {"127.0.0.1": TEST_PRICE}), \
-                    mock.patch.object(api_module, "DB_PATH", burst_db):
+            self.assertEqual(statuses.count(200), 5, "harness: the burst did not forward five")
+            self.assertEqual(statuses.count(429), 2, "harness: the burst did not limit two")
+            with (
+                mock.patch.dict(api_module.PRICE_PER_REQUEST, {"127.0.0.1": TEST_PRICE}),
+                mock.patch.object(api_module, "DB_PATH", burst_db),
+            ):
                 conn = sqlite3.connect(burst_db)
                 conn.row_factory = sqlite3.Row
                 try:
                     counts = db_module.fetch_outcome_counts(conn)
                     totals = db_module.fetch_totals(conn)
-                    rows = [dict(r) for r in conn.execute(
-                        "SELECT * FROM attempts ORDER BY id")]
+                    rows = [dict(r) for r in conn.execute("SELECT * FROM attempts ORDER BY id")]
                 finally:
                     conn.close()
                 summary = api_module.summarize_costs(rows)
                 dashboard = api_module.stats()
             self.assertEqual(
-                sum(counts.values()), totals["attempts"],
-                "the outcome buckets do not add up to the total attempts")
+                sum(counts.values()), totals["attempts"], "the outcome buckets do not add up to the total attempts"
+            )
             self.assertEqual(counts["allowed"], 5)
             self.assertEqual(counts["rate_limited"], 2)
             self.assertEqual(
-                [api_module.attempt_cost(r) for r in rows
-                 if r["outcome"] == "rate_limited"], [0.0, 0.0],
-                "a rate-limited row costs money (api.attempt_cost)")
-            self.assertEqual(summary["cost"], 5 * TEST_PRICE,
-                             "the five forwarded requests do not cost "
-                             "five prices (api.summarize_costs)")
-            self.assertEqual(summary["wasted"], 0.0,
-                             "the limited rows wasted money "
-                             "(api.summarize_costs)")
-            self.assertEqual(dashboard["total_cost"], 5 * TEST_PRICE,
-                             "the dashboard total is not five prices "
-                             "(api.stats)")
+                [api_module.attempt_cost(r) for r in rows if r["outcome"] == "rate_limited"],
+                [0.0, 0.0],
+                "a rate-limited row costs money (api.attempt_cost)",
+            )
+            self.assertEqual(
+                summary["cost"], 5 * TEST_PRICE, "the five forwarded requests do not cost five prices (api.summarize_costs)"
+            )
+            self.assertEqual(summary["wasted"], 0.0, "the limited rows wasted money (api.summarize_costs)")
+            self.assertEqual(dashboard["total_cost"], 5 * TEST_PRICE, "the dashboard total is not five prices (api.stats)")
         finally:
             burst.shutdown()
             burst.server_close()
@@ -551,52 +512,54 @@ class OutcomeAccountingTest(unittest.TestCase):
         self.addCleanup(os.unlink, tmp.name)
         conn = db_module.init_db(tmp.name)
         db_module.log_attempt(
-            conn, trace_id="bench-acct-unknown", task_number=1, attempt=1,
-            status="success", dest_host="pay.example.com",
-            endpoint="/v1/x", method="POST", outcome="allowed")
+            conn,
+            trace_id="bench-acct-unknown",
+            task_number=1,
+            attempt=1,
+            status="success",
+            dest_host="pay.example.com",
+            endpoint="/v1/x",
+            method="POST",
+            outcome="allowed",
+        )
         db_module.log_attempt(
-            conn, trace_id="bench-acct-unknown-blocked", task_number=1,
-            attempt=1, status="blocked", dest_host="example.com",
-            endpoint="/", method="GET", outcome="blocked",
-            reason="not_allowlisted")
+            conn,
+            trace_id="bench-acct-unknown-blocked",
+            task_number=1,
+            attempt=1,
+            status="blocked",
+            dest_host="example.com",
+            endpoint="/",
+            method="GET",
+            outcome="blocked",
+            reason="not_allowlisted",
+        )
         conn.close()
         with mock.patch.object(api_module, "DB_PATH", tmp.name):
             conn = sqlite3.connect(tmp.name)
             conn.row_factory = sqlite3.Row
             try:
-                rows = [dict(r) for r in conn.execute(
-                    "SELECT * FROM attempts ORDER BY id")]
+                rows = [dict(r) for r in conn.execute("SELECT * FROM attempts ORDER BY id")]
             finally:
                 conn.close()
             summary = api_module.summarize_costs(rows)
             dashboard = api_module.stats()
             trace = api_module.get_trace("bench-acct-unknown")
         allowed_row = [r for r in rows if r["outcome"] == "allowed"][0]
+        self.assertIsNone(api_module.attempt_cost(allowed_row), "the unpriced destination got a price (api.attempt_cost)")
+        self.assertIsNone(summary["cost"], "the total is a number while a destination has no price (api.summarize_costs)")
+        self.assertEqual(summary["wasted"], 0.0, "the blocked row wasted money (api.summarize_costs)")
         self.assertIsNone(
-            api_module.attempt_cost(allowed_row),
-            "the unpriced destination got a price (api.attempt_cost)")
-        self.assertIsNone(
-            summary["cost"],
-            "the total is a number while a destination has no price "
-            "(api.summarize_costs)")
-        self.assertEqual(summary["wasted"], 0.0,
-                         "the blocked row wasted money "
-                         "(api.summarize_costs)")
-        self.assertIsNone(dashboard["total_cost"],
-                          "the dashboard total is a number while a "
-                          "destination has no price (api.stats)")
-        self.assertEqual(dashboard["unknown_runs"], 1,
-                         "the dashboard does not count the unknown run "
-                         "(api.stats)")
-        self.assertIn("pay.example.com", dashboard["cost_line"],
-                      "the cost line does not name the unpriced "
-                      "destination (api.stats)")
-        self.assertIsNone(trace["cost"],
-                          "the trace cost is a number while its "
-                          "destination has no price (api.get_trace)")
-        self.assertIn("pay.example.com", trace["cost_line"],
-                      "the trace cost line does not name the unpriced "
-                      "destination (api.get_trace)")
+            dashboard["total_cost"], "the dashboard total is a number while a destination has no price (api.stats)"
+        )
+        self.assertEqual(dashboard["unknown_runs"], 1, "the dashboard does not count the unknown run (api.stats)")
+        self.assertIn(
+            "pay.example.com", dashboard["cost_line"], "the cost line does not name the unpriced destination (api.stats)"
+        )
+        self.assertIsNone(trace["cost"], "the trace cost is a number while its destination has no price (api.get_trace)")
+        self.assertIn(
+            "pay.example.com", trace["cost_line"], "the trace cost line does not name the unpriced destination (api.get_trace)"
+        )
 
     def test_legacy_row_lands_in_other_and_counts(self):
         """Check 5: a row with no outcome is 'other', and it still counts."""
@@ -605,18 +568,39 @@ class OutcomeAccountingTest(unittest.TestCase):
         self.addCleanup(os.unlink, tmp.name)
         conn = db_module.init_db(tmp.name)
         db_module.log_attempt(
-            conn, trace_id="bench-acct-legacy-allowed", task_number=1,
-            attempt=1, status="success", dest_host="127.0.0.1",
-            endpoint="/echo", method="GET", outcome="allowed")
+            conn,
+            trace_id="bench-acct-legacy-allowed",
+            task_number=1,
+            attempt=1,
+            status="success",
+            dest_host="127.0.0.1",
+            endpoint="/echo",
+            method="GET",
+            outcome="allowed",
+        )
         db_module.log_attempt(
-            conn, trace_id="bench-acct-legacy-blocked", task_number=1,
-            attempt=1, status="blocked", dest_host="example.com",
-            endpoint="/", method="GET", outcome="blocked",
-            reason="not_allowlisted")
+            conn,
+            trace_id="bench-acct-legacy-blocked",
+            task_number=1,
+            attempt=1,
+            status="blocked",
+            dest_host="example.com",
+            endpoint="/",
+            method="GET",
+            outcome="blocked",
+            reason="not_allowlisted",
+        )
         db_module.log_attempt(
-            conn, trace_id="bench-acct-legacy-old", task_number=1,
-            attempt=1, status="success", dest_host="127.0.0.1",
-            endpoint="/echo", method="GET", outcome="")
+            conn,
+            trace_id="bench-acct-legacy-old",
+            task_number=1,
+            attempt=1,
+            status="success",
+            dest_host="127.0.0.1",
+            endpoint="/echo",
+            method="GET",
+            outcome="",
+        )
         conn.close()
         with mock.patch.object(api_module, "DB_PATH", tmp.name):
             conn = sqlite3.connect(tmp.name)
@@ -627,26 +611,31 @@ class OutcomeAccountingTest(unittest.TestCase):
             finally:
                 conn.close()
             dashboard = api_module.stats()
-        self.assertEqual(counts["other"], 1,
-                         "the legacy row did not land in 'other' "
-                         "(db.fetch_outcome_counts)")
+        self.assertEqual(counts["other"], 1, "the legacy row did not land in 'other' (db.fetch_outcome_counts)")
         self.assertEqual(
-            sum(counts.values()), totals["attempts"],
-            "the outcome buckets do not add up to the total attempts "
-            "(db.fetch_outcome_counts)")
+            sum(counts.values()),
+            totals["attempts"],
+            "the outcome buckets do not add up to the total attempts (db.fetch_outcome_counts)",
+        )
         # The fix adds "other" to /stats, so the sum below counts all
         # nine buckets. Before the fix it counted eight, and the sum
         # fell one short of the total.
         dashboard_buckets = (
-            dashboard["allowed"] + dashboard["blocked"]
-            + dashboard["rate_limited"] + dashboard["paused"]
-            + dashboard["redirected"] + dashboard["stopped"]
-            + dashboard["verified"] + dashboard["warned"]
-            + dashboard["other"])
+            dashboard["allowed"]
+            + dashboard["blocked"]
+            + dashboard["rate_limited"]
+            + dashboard["paused"]
+            + dashboard["redirected"]
+            + dashboard["stopped"]
+            + dashboard["verified"]
+            + dashboard["warned"]
+            + dashboard["other"]
+        )
         self.assertEqual(
-            dashboard_buckets, dashboard["total_attempts"],
-            "the dashboard buckets do not add up to the total attempts "
-            "(api.stats has no 'other')")
+            dashboard_buckets,
+            dashboard["total_attempts"],
+            "the dashboard buckets do not add up to the total attempts (api.stats has no 'other')",
+        )
 
 
 if __name__ == "__main__":

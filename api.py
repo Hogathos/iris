@@ -10,6 +10,7 @@ here can start, stop, or reconfigure the proxy.
 Run (project folder, port 8000, proxy stays on 8888):
     .venv\\Scripts\\python.exe -m uvicorn api:app --host 127.0.0.1 --port 8000
 """
+
 from __future__ import annotations
 
 import os
@@ -58,8 +59,7 @@ def attempt_cost(row) -> float | None:
     retry row is a decision being saved, not a request. Their
     recorded or looked-up price must not count as new spend.
     """
-    if row["outcome"] in ("blocked", "rate_limited", "paused",
-                            "redirected", "stopped", "verified", "warned"):
+    if row["outcome"] in ("blocked", "rate_limited", "paused", "redirected", "stopped", "verified", "warned"):
         return 0.0
     method = row["method"] if "method" in row.keys() else None
     if method in _CONTROL_METHODS:
@@ -521,17 +521,12 @@ def list_traces(limit: int = 20) -> dict:
             (limit,),
         ).fetchall()
         by_trace = {}
-        for r in conn.execute(
-            "SELECT trace_id, dest_host, outcome, status, cost_dollars,"
-            " method FROM attempts"
-        ):
+        for r in conn.execute("SELECT trace_id, dest_host, outcome, status, cost_dollars, method FROM attempts"):
             by_trace.setdefault(r["trace_id"], []).append(r)
         traces = []
         for r in rows:
             d = dict(r)
-            d["tunnels"] = sum(
-                1 for a in by_trace.get(d["trace_id"], [])
-                if a["method"] == "CONNECT")
+            d["tunnels"] = sum(1 for a in by_trace.get(d["trace_id"], []) if a["method"] == "CONNECT")
             summary = summarize_costs(by_trace.get(d["trace_id"], []))
             d["cost"] = summary["cost"]
             d["cost_wasted"] = summary["wasted"]
@@ -603,13 +598,9 @@ def stats() -> dict:
             FROM attempts
             """
         ).fetchone()
-        cost_rows = conn.execute(
-            "SELECT trace_id, dest_host, outcome, status, cost_dollars, method FROM attempts"
-        ).fetchall()
+        cost_rows = conn.execute("SELECT trace_id, dest_host, outcome, status, cost_dollars, method FROM attempts").fetchall()
         summary = summarize_costs(cost_rows)
-        unknown_runs = len({
-            r["trace_id"] for r in cost_rows if attempt_cost(r) is None
-        })
+        unknown_runs = len({r["trace_id"] for r in cost_rows if attempt_cost(r) is None})
         return {
             "total_attempts": total,
             "allowed": counts["allowed"],

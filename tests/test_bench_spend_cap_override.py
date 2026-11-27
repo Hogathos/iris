@@ -48,6 +48,7 @@ rows with cost_dollars, the documented nonzero-cost-wins path; the
 enforcement under test is real. No bodies, no keys, no Authorization
 headers, no real hostnames. No guessed costs, ever.
 """
+
 import os
 import socket
 import socketserver
@@ -97,22 +98,17 @@ class SpendCapOverrideTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, three loopback destinations."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoC = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        self.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoC = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         threading.Thread(target=self.echoA.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoB.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoC.serve_forever, daemon=True).start()
         # Rate limiting has its own tests; this proxy serves a high
         # limit so a 429 never masks the 503 cut refusal checked below.
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         self.addCleanup(self.tmp.cleanup)
         self.addCleanup(self.proxy.state.conn.close)
         self.addCleanup(self.echoA.server_close)
@@ -133,9 +129,7 @@ class SpendCapOverrideTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,)).fetchall()
+            return conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,)).fetchall()
         finally:
             conn.close()
 
@@ -150,17 +144,9 @@ class SpendCapOverrideTest(unittest.TestCase):
 
     def open_tunnel(self, dest, trace_id):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -203,11 +189,20 @@ class SpendCapOverrideTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             import db as db_module
+
             db_module.log_attempt(
-                conn, trace_id=trace_id, task_number=1, attempt=1,
-                status="success", dest_host=dest, endpoint=dest,
-                method="CONNECT", http_status=200, outcome="allowed",
-                cost_dollars=dollars)
+                conn,
+                trace_id=trace_id,
+                task_number=1,
+                attempt=1,
+                status="success",
+                dest_host=dest,
+                endpoint=dest,
+                method="CONNECT",
+                http_status=200,
+                outcome="allowed",
+                cost_dollars=dollars,
+            )
         finally:
             conn.close()
 
@@ -229,9 +224,8 @@ class SpendCapOverrideTest(unittest.TestCase):
         try:
             self.assertEqual(self.echo_roundtrip(sockA, b"hello"), b"hello")
             self.assertTrue(
-                self.proxy.state.set_override(
-                    self.destA, "pause", reason="human override"),
-                "set_override refused net A")
+                self.proxy.state.set_override(self.destA, "pause", reason="human override"), "set_override refused net A"
+            )
             probe, probe_status = self.open_tunnel(self.destA, traceA)
             probe.close()
             self.assertEqual(probe_status, 503, "overridden network stays cut")
@@ -249,9 +243,7 @@ class SpendCapOverrideTest(unittest.TestCase):
     def test_cap_block_cut_close_row(self):
         """Cap-block-cut tunnel journals paused, not allowed."""
         traceA = "bench-capblock-cut-run-A"
-        self.assertTrue(
-            self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"),
-            "set_cap refused net A")
+        self.assertTrue(self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"), "set_cap refused net A")
         sockA, statusA = self.open_tunnel(self.destA, traceA)
         self.assertEqual(statusA, 200)
         try:
@@ -273,8 +265,7 @@ class SpendCapOverrideTest(unittest.TestCase):
     def test_warn_once(self):
         """The 80% warn fires once per cap, never twice."""
         traceA = "bench-cap-warn-once-run-A"
-        self.assertTrue(
-            self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"))
+        self.assertTrue(self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"))
         for _ in range(4):
             self.record_cost(traceA, self.destA, 0.20)
         probe1, status1 = self.open_tunnel(self.destA, traceA)
@@ -283,8 +274,7 @@ class SpendCapOverrideTest(unittest.TestCase):
         probe2, status2 = self.open_tunnel(self.destA, traceA)
         probe2.close()
         self.assertEqual(status2, 200, "second probe past 80% still flows")
-        warns = [r for r in self.rows_for(traceA)
-                 if r["outcome"] == "warned"]
+        warns = [r for r in self.rows_for(traceA) if r["outcome"] == "warned"]
         self.assertEqual(len(warns), 1, "exactly one warn row per cap")
         self.assertEqual(warns[0]["reason"], "cap warn 80%")
 
@@ -300,12 +290,8 @@ class SpendCapOverrideTest(unittest.TestCase):
         try:
             for sock in (sockA, sockB, sockC):
                 self.assertEqual(self.echo_roundtrip(sock, b"hello"), b"hello")
-            self.assertTrue(
-                self.proxy.state.set_override(
-                    self.destB, "pause", reason="human override"))
-            self.assertTrue(
-                self.proxy.state.set_cap(
-                    self.destA, 1.00, reason="human cap"))
+            self.assertTrue(self.proxy.state.set_override(self.destB, "pause", reason="human override"))
+            self.assertTrue(self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"))
             for _ in range(5):
                 self.record_cost(traceA, self.destA, 0.20)
             probeA, statusA2 = self.open_tunnel(self.destA, traceA)
@@ -317,16 +303,12 @@ class SpendCapOverrideTest(unittest.TestCase):
             sockC2, statusC2 = self.open_tunnel(self.destC, traceC)
             try:
                 self.assertEqual(statusC2, 200, "untouched network flows")
-                self.assertEqual(
-                    self.echo_roundtrip(sockC2, b"still"), b"still")
+                self.assertEqual(self.echo_roundtrip(sockC2, b"still"), b"still")
             finally:
                 sockC2.close()
-            self.assertEqual(
-                panel_states.run_state(self.rows_for(traceA)), "BLOCKED")
-            self.assertEqual(
-                panel_states.run_state(self.rows_for(traceB)), "PAUSED")
-            self.assertEqual(
-                panel_states.run_state(self.rows_for(traceC)), "FLOWING")
+            self.assertEqual(panel_states.run_state(self.rows_for(traceA)), "BLOCKED")
+            self.assertEqual(panel_states.run_state(self.rows_for(traceB)), "PAUSED")
+            self.assertEqual(panel_states.run_state(self.rows_for(traceC)), "FLOWING")
         finally:
             sockA.close()
             sockB.close()
@@ -336,8 +318,7 @@ class SpendCapOverrideTest(unittest.TestCase):
         """After Verify + unblock, a new tunnel really flows, not just retry."""
         traceA = "bench-cap-unblock-flow-run-A"
         done = HUMAN_APPROVED_DONE
-        self.assertTrue(
-            self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"))
+        self.assertTrue(self.proxy.state.set_cap(self.destA, 1.00, reason="human cap"))
         sockA, statusA = self.open_tunnel(self.destA, traceA)
         self.assertEqual(statusA, 200)
         try:
@@ -354,23 +335,21 @@ class SpendCapOverrideTest(unittest.TestCase):
                 os.fsync(proof.fileno())
             verdict, _ = self.proxy.state.verify_read_back(
                 traceA,
-                {"kind": "local-file", "path": proof_path,
-                 "expected_text": "row exists after close/fsync",
-                 "idempotency_key": "cap-unblock-verify-1"},
-                done_clause=done)
+                {
+                    "kind": "local-file",
+                    "path": proof_path,
+                    "expected_text": "row exists after close/fsync",
+                    "idempotency_key": "cap-unblock-verify-1",
+                },
+                done_clause=done,
+            )
             self.assertEqual(verdict, "Correct")
-            self.assertTrue(
-                self.proxy.state.verify_run(traceA, done_clause=done),
-                "fresh Verify must pass")
-            self.assertTrue(
-                self.proxy.state.unblock_cap(
-                    self.destA, reason="human unblock"),
-                "human unblock must be accepted")
+            self.assertTrue(self.proxy.state.verify_run(traceA, done_clause=done), "fresh Verify must pass")
+            self.assertTrue(self.proxy.state.unblock_cap(self.destA, reason="human unblock"), "human unblock must be accepted")
             sockA2, statusA2 = self.open_tunnel(self.destA, traceA)
             try:
                 self.assertEqual(statusA2, 200, "unblocked network flows")
-                self.assertEqual(
-                    self.echo_roundtrip(sockA2, b"again"), b"again")
+                self.assertEqual(self.echo_roundtrip(sockA2, b"again"), b"again")
             finally:
                 sockA2.close()
             allowed, _ = self.proxy.state.retry_run(traceA)

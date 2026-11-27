@@ -22,6 +22,7 @@ because he chose one prompt for the whole change ("let's continue").
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import sys
 import tempfile
@@ -52,34 +53,51 @@ class TierTest(unittest.TestCase):
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
         conn = db_module.init_db(self.db_path)
         db_module.log_attempt(
-            conn, trace_id="trace-live", task_number=1, attempt=1,
-            status="success", dest_host="127.0.0.1:18080",
-            endpoint="127.0.0.1:18080", method="CONNECT", outcome="",
-            created_at="2026-11-22T06:00:00+00:00")
+            conn,
+            trace_id="trace-live",
+            task_number=1,
+            attempt=1,
+            status="success",
+            dest_host="127.0.0.1:18080",
+            endpoint="127.0.0.1:18080",
+            method="CONNECT",
+            outcome="",
+            created_at="2026-11-22T06:00:00+00:00",
+        )
         db_module.log_attempt(
-            conn, trace_id="trace-paused", task_number=1, attempt=1,
-            status="success", dest_host="127.0.0.1:18080",
-            endpoint="127.0.0.1:18080", method="CONNECT", outcome="",
-            created_at="2026-11-22T06:00:00+00:00")
+            conn,
+            trace_id="trace-paused",
+            task_number=1,
+            attempt=1,
+            status="success",
+            dest_host="127.0.0.1:18080",
+            endpoint="127.0.0.1:18080",
+            method="CONNECT",
+            outcome="",
+            created_at="2026-11-22T06:00:00+00:00",
+        )
         db_module.log_attempt(
-            conn, trace_id="trace-paused", task_number=1, attempt=2,
-            status="unknown", dest_host="127.0.0.1:18080",
-            endpoint="127.0.0.1:18080", method="PAUSE",
+            conn,
+            trace_id="trace-paused",
+            task_number=1,
+            attempt=2,
+            status="unknown",
+            dest_host="127.0.0.1:18080",
+            endpoint="127.0.0.1:18080",
+            method="PAUSE",
             outcome="paused",
-            created_at="2026-11-22T06:01:00+00:00")
+            created_at="2026-11-22T06:01:00+00:00",
+        )
         conn.commit()
         conn.close()
         self.old_db_path = api_module.DB_PATH
         api_module.DB_PATH = self.db_path
-        self.addCleanup(setattr, api_module, "DB_PATH",
-                        self.old_db_path)
+        self.addCleanup(setattr, api_module, "DB_PATH", self.old_db_path)
         self.addCleanup(self.tmp.cleanup)
 
     def _request(self, state=None):
         """A fake panel request, with or without a live proxy state."""
-        return types.SimpleNamespace(
-            app=types.SimpleNamespace(
-                state=types.SimpleNamespace(proxy_state=state)))
+        return types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(proxy_state=state)))
 
     def _state(self):
         """A stub proxy state, enough for the cutoff form to render."""
@@ -87,29 +105,22 @@ class TierTest(unittest.TestCase):
 
     def test_simple_hides_bytes_seconds_method(self):
         """Simple shows Run, Started, Status, Verdict, Cost: no diagnostics."""
-        body = _body(panel_module.index(
-            self._request(), tier="simple"))
-        for header in ("Bytes", "Seconds", "Method", "Destination",
-                       "What", "Pause"):
+        body = _body(panel_module.index(self._request(), tier="simple"))
+        for header in ("Bytes", "Seconds", "Method", "Destination", "What", "Pause"):
             self.assertNotIn("<th" + header, body)
-        for header in ("Run</th>", "Started</th>", "Status</th>",
-                       "Verdict</th>", "Cost</th>"):
+        for header in ("Run</th>", "Started</th>", "Status</th>", "Verdict</th>", "Cost</th>"):
             self.assertIn(header, body)
 
     def test_advanced_shows_all_columns(self):
         """Advanced adds Calls and Went to beside the Simple columns."""
-        body = _body(panel_module.index(
-            self._request(), tier="advanced"))
-        for header in ("Run</th>", "Started</th>", "Status</th>",
-                       "Verdict</th>", "Calls</th>", "Went to</th>",
-                       "Cost</th>"):
+        body = _body(panel_module.index(self._request(), tier="advanced"))
+        for header in ("Run</th>", "Started</th>", "Status</th>", "Verdict</th>", "Calls</th>", "Went to</th>", "Cost</th>"):
             self.assertIn(header, body)
 
     def test_no_tier_shows_everything(self):
         """No tier means show everything: the dev panel is unchanged."""
         body = _body(panel_module.index(self._request()))
-        for header in ("Run</th>", "Status</th>", "Verdict</th>",
-                       "Calls</th>", "Cost</th>"):
+        for header in ("Run</th>", "Status</th>", "Verdict</th>", "Calls</th>", "Cost</th>"):
             self.assertIn(header, body)
         detail = _body(panel_module.run_detail("trace-live"))
         for section in ("Claims", "Calls", "Why", "Cost"):
@@ -117,27 +128,22 @@ class TierTest(unittest.TestCase):
 
     def test_unknown_tier_shows_everything(self):
         """An unknown tier falls back to showing everything, no crash."""
-        body = _body(panel_module.index(
-            self._request(), tier="bogus"))
-        for header in ("Run</th>", "Status</th>", "Verdict</th>",
-                       "Calls</th>", "Cost</th>"):
+        body = _body(panel_module.index(self._request(), tier="bogus"))
+        for header in ("Run</th>", "Status</th>", "Verdict</th>", "Calls</th>", "Cost</th>"):
             self.assertIn(header, body)
 
     def test_simple_hides_cutoff_form(self):
         """No tier shows a cutoff form: the relay timeout is API-only."""
         for tier in ("simple", "advanced", ""):
-            body = _body(panel_module.index(
-                self._request(self._state()), tier=tier))
+            body = _body(panel_module.index(self._request(self._state()), tier=tier))
             self.assertNotIn('action="/settings/relay-timeout"', body)
 
     def test_simple_hides_redirect_on_the_run_page(self):
         """Simple shows no Send form on a live Run; Advanced does."""
-        simple = _body(panel_module.run_detail(
-            "trace-live", tier="simple"))
+        simple = _body(panel_module.run_detail("trace-live", tier="simple"))
         self.assertNotIn("Send this Run somewhere else", simple)
         self.assertNotIn("/redirect", simple)
-        advanced = _body(panel_module.run_detail(
-            "trace-live", tier="advanced"))
+        advanced = _body(panel_module.run_detail("trace-live", tier="advanced"))
         self.assertIn("Send this Run somewhere else", advanced)
         self.assertIn("/redirect", advanced)
 
@@ -149,39 +155,30 @@ class TierTest(unittest.TestCase):
 
     def test_simple_keeps_pause_and_verify(self):
         """Pause is on the live run page; Verify stays on a paused Run."""
-        detail_body = _body(panel_module.run_detail(
-            "trace-live", tier="simple"))
+        detail_body = _body(panel_module.run_detail("trace-live", tier="simple"))
         self.assertIn("/runs/trace-live/pause", detail_body)
-        paused_body = _body(panel_module.run_detail(
-            "trace-paused", tier="simple"))
+        paused_body = _body(panel_module.run_detail("trace-paused", tier="simple"))
         self.assertIn("/runs/trace-paused/verify", paused_body)
         self.assertIn('name="read_back"', paused_body)
 
     def test_simple_tier_persists_in_run_links(self):
         """Simple run links and tab links carry the tier."""
-        body = _body(panel_module.index(
-            self._request(), tier="simple"))
+        body = _body(panel_module.index(self._request(), tier="simple"))
         self.assertIn("/runs/trace-live?tier=simple", body)
         self.assertIn("/limits?tier=simple", body)
 
     def test_run_detail_back_link_keeps_tier(self):
         """The run page links back to the list at the same tier."""
-        body = _body(panel_module.run_detail(
-            "trace-live", tier="simple"))
+        body = _body(panel_module.run_detail("trace-live", tier="simple"))
         self.assertIn('href="/?tier=simple"', body)
 
     def test_pause_redirect_keeps_tier(self):
         """Pausing from Simple lands back on the Simple run page."""
-        state = types.SimpleNamespace(
-            pause_run=lambda trace_id, reason="": True)
-        request = types.SimpleNamespace(
-            app=types.SimpleNamespace(
-                state=types.SimpleNamespace(proxy_state=state)))
-        resp = panel_module.pause_button(
-            "trace-live", request, tier="simple")
+        state = types.SimpleNamespace(pause_run=lambda trace_id, reason="": True)
+        request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(proxy_state=state)))
+        resp = panel_module.pause_button("trace-live", request, tier="simple")
         self.assertEqual(resp.status_code, 303)
-        self.assertTrue(resp.headers["location"].endswith(
-            "/runs/trace-live?tier=simple"))
+        self.assertTrue(resp.headers["location"].endswith("/runs/trace-live?tier=simple"))
 
 
 if __name__ == "__main__":

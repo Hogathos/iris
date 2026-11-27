@@ -36,6 +36,7 @@ verify_ok goes to VERIFY_OK, VERIFY_OK plus resume goes to FLOWING.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -84,18 +85,12 @@ class VerifyFoldTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.old_dest_server = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.new_dest_server = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        threading.Thread(
-            target=self.old_dest_server.serve_forever, daemon=True).start()
-        threading.Thread(
-            target=self.new_dest_server.serve_forever, daemon=True).start()
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        self.old_dest_server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.new_dest_server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        threading.Thread(target=self.old_dest_server.serve_forever, daemon=True).start()
+        threading.Thread(target=self.new_dest_server.serve_forever, daemon=True).start()
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         self.proxy_port = self.proxy.server_address[1]
         self.dest = f"127.0.0.1:{self.old_dest_server.server_address[1]}"
         self.safe_dest = f"127.0.0.1:{self.new_dest_server.server_address[1]}"
@@ -112,13 +107,9 @@ class VerifyFoldTest(unittest.TestCase):
 
     def open_tunnel(self, trace):
         """CONNECT through the proxy for this Run. Returns (sock, status)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {self.dest} HTTP/1.1\r\n"
-             f"Host: {self.dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -133,9 +124,7 @@ class VerifyFoldTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace,))]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace,))]
         finally:
             conn.close()
 
@@ -156,33 +145,34 @@ class VerifyFoldTest(unittest.TestCase):
         pause = journal_row("paused", "human pause")
         redirect = journal_row("redirected", "human redirect")
         verify = journal_row("", "verify ok")
-        verify_words = journal_row(
-            "", "verify ok: named read-back: file row exists after "
-            "close/fsync")
+        verify_words = journal_row("", "verify ok: named read-back: file row exists after close/fsync")
         resume = journal_row("", "retry allowed after verify")
         held_attempt = journal_row("paused", "human pause")
         self.assertEqual(
-            states_module.run_state([pause, verify]), "VERIFY_OK",
-            "after Verify and before retry the Run is checked clean "
-            "and held, so the panel must say VERIFY_OK, not FLOWING")
+            states_module.run_state([pause, verify]),
+            "VERIFY_OK",
+            "after Verify and before retry the Run is checked clean and held, so the panel must say VERIFY_OK, not FLOWING",
+        )
         self.assertEqual(
-            states_module.run_state([pause, verify_words]), "VERIFY_OK",
+            states_module.run_state([pause, verify_words]),
+            "VERIFY_OK",
             "a verify ok row carrying the human's words must fold the "
-            "same way: the words are the audit trail, not a new event")
+            "same way: the words are the audit trail, not a new event",
+        )
+        self.assertEqual(states_module.run_state([pause, verify, resume]), "FLOWING", "after the retry the Run flows")
         self.assertEqual(
-            states_module.run_state([pause, verify, resume]), "FLOWING",
-            "after the retry the Run flows")
+            states_module.run_state([pause, redirect, verify]),
+            "VERIFY_OK",
+            "pause then redirect then Verify must also read VERIFY_OK",
+        )
         self.assertEqual(
-            states_module.run_state([pause, redirect, verify]), "VERIFY_OK",
-            "pause then redirect then Verify must also read VERIFY_OK")
+            states_module.run_state([pause, redirect, verify, resume]), "FLOWING", "after the retry the redirected Run flows"
+        )
         self.assertEqual(
-            states_module.run_state(
-                [pause, redirect, verify, resume]), "FLOWING",
-            "after the retry the redirected Run flows")
-        self.assertEqual(
-            states_module.run_state(
-                [pause, redirect, verify, held_attempt]), "PAUSED",
-            "a held attempt after Verify reads PAUSED: the Run is held")
+            states_module.run_state([pause, redirect, verify, held_attempt]),
+            "PAUSED",
+            "a held attempt after Verify reads PAUSED: the Run is held",
+        )
 
     # ---- check 2 -------------------------------------------------------
 
@@ -193,42 +183,35 @@ class VerifyFoldTest(unittest.TestCase):
         try:
             self.assertEqual(status, 200, "harness: the tunnel did not open")
             sock.sendall(PAYLOAD)
-            self.assertEqual(sock.recv(len(PAYLOAD)), PAYLOAD,
-                             "harness: the tunnel did not echo")
+            self.assertEqual(sock.recv(len(PAYLOAD)), PAYLOAD, "harness: the tunnel did not echo")
+            self.assertTrue(self.proxy.state.pause_run(trace), "pause_run refused the Run")
+            self.wait_for_row(trace, lambda r: r["bytes_tx"] == len(PAYLOAD), "the cut tunnel's close row")
+            self.assertTrue(self.proxy.state.redirect_run(trace, self.safe_dest), "redirect_run refused a paused Run")
             self.assertTrue(
-                self.proxy.state.pause_run(trace),
-                "pause_run refused the Run")
-            self.wait_for_row(
-                trace, lambda r: r["bytes_tx"] == len(PAYLOAD),
-                "the cut tunnel's close row")
-            self.assertTrue(
-                self.proxy.state.redirect_run(trace, self.safe_dest),
-                "redirect_run refused a paused Run")
-            self.assertTrue(
-                self.proxy.state.verify_run(trace, DONE_CLAUSE),
-                "harness: a human Verify on a paused Run was refused")
+                self.proxy.state.verify_run(trace, DONE_CLAUSE), "harness: a human Verify on a paused Run was refused"
+            )
             # No retry yet. The panel must say VERIFY_OK, and the proxy
             # must still hold the Run.
             self.assertEqual(
-                states_module.run_state(self.rows_for(trace)), "VERIFY_OK",
-                "the real rows after Verify must fold to VERIFY_OK")
+                states_module.run_state(self.rows_for(trace)), "VERIFY_OK", "the real rows after Verify must fold to VERIFY_OK"
+            )
             held_sock, held_status = self.open_tunnel(trace)
             held_sock.close()
-            self.assertEqual(
-                held_status, 503,
-                "the proxy must still hold the Run after Verify")
+            self.assertEqual(held_status, 503, "the proxy must still hold the Run after Verify")
             # After the retry the Run flows, and the panel agrees.
             self.assertEqual(
                 self.proxy.state.retry_run(trace),
                 (True, "retry allowed after verify"),
-                "harness: retry after a fresh Verify was refused")
+                "harness: retry after a fresh Verify was refused",
+            )
             self.assertEqual(
-                states_module.run_state(self.rows_for(trace)), "FLOWING",
-                "the real rows after Verify and retry must fold to FLOWING")
+                states_module.run_state(self.rows_for(trace)),
+                "FLOWING",
+                "the real rows after Verify and retry must fold to FLOWING",
+            )
             flow_sock, flow_status = self.open_tunnel(trace)
             try:
-                self.assertEqual(
-                    flow_status, 200, "the Run must flow after retry")
+                self.assertEqual(flow_status, 200, "the Run must flow after retry")
             finally:
                 flow_sock.close()
         finally:
@@ -238,9 +221,7 @@ class VerifyFoldTest(unittest.TestCase):
 
     def test_next_step_describes_verify_ok(self):
         """Check 4: the panel can describe the state it will now show."""
-        self.assertEqual(
-            states_module.next_step("VERIFY_OK", "Unverified"),
-            "Run checked clean. A human can let it go again.")
+        self.assertEqual(states_module.next_step("VERIFY_OK", "Unverified"), "Run checked clean. A human can let it go again.")
 
 
 if __name__ == "__main__":

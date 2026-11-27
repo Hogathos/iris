@@ -20,6 +20,7 @@ push").
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -64,16 +65,13 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, two loopback destinations."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        self.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         threading.Thread(target=self.echoA.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoB.serve_forever, daemon=True).start()
         self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         # addCleanup runs LIFO: shutdowns are added last so they run
         # first then closes, then DB, then temp. Closing a listening
         # socket while serve_forever still selects on it crashes
@@ -97,18 +95,14 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
 
     def _request(self, state):
         """A fake panel request that carries the live proxy state."""
-        return types.SimpleNamespace(
-            app=types.SimpleNamespace(
-                state=types.SimpleNamespace(proxy_state=state)))
+        return types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(proxy_state=state)))
 
     def _rows_for(self, trace_id):
         """All journal rows for one trace_id, oldest first. Read only."""
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,))]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,))]
         finally:
             conn.close()
 
@@ -124,17 +118,9 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
 
     def open_tunnel(self, dest, trace_id):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -177,26 +163,21 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             request = self._request(self.proxy.state)
             self.assertTrue(self.proxy.state.pause_run(trace))
             self.assert_tunnel_dead(sock)
-            resp = panel_module.verify_button(
-                trace, request, read_back=READ_BACK)
+            resp = panel_module.verify_button(trace, request, read_back=READ_BACK)
             self.assertEqual(resp.status_code, 303)
             allowed, why = self.proxy.state.retry_run(trace)
             self.assertTrue(allowed, f"retry stayed shut: {why}")
             rows = self._rows_for(trace)
             self.assertTrue(
-                any(r["reason"].startswith("verify ok")
-                    and READ_BACK in r["reason"] for r in rows),
-                "no verify ok row carrying the read-back in the journal")
-            self.assertTrue(
-                any(r["reason"] == "retry allowed after verify"
-                    for r in rows),
-                "no retry row in the journal")
+                any(r["reason"].startswith("verify ok") and READ_BACK in r["reason"] for r in rows),
+                "no verify ok row carrying the read-back in the journal",
+            )
+            self.assertTrue(any(r["reason"] == "retry allowed after verify" for r in rows), "no retry row in the journal")
         finally:
             panel_module.app.state.proxy_state = None
             sock.close()
@@ -207,15 +188,12 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             request = self._request(self.proxy.state)
             self.assertTrue(self.proxy.state.pause_run(trace))
-            self.assertTrue(
-                self.proxy.state.redirect_run(trace, self.destB))
-            resp = panel_module.verify_button(
-                trace, request, read_back=READ_BACK)
+            self.assertTrue(self.proxy.state.redirect_run(trace, self.destB))
+            resp = panel_module.verify_button(trace, request, read_back=READ_BACK)
             self.assertEqual(resp.status_code, 303)
             allowed, why = self.proxy.state.retry_run(trace)
             self.assertTrue(allowed, f"retry stayed shut: {why}")
@@ -229,21 +207,17 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             request = self._request(self.proxy.state)
-            resp = panel_module.verify_button(
-                trace, request, read_back=READ_BACK)
+            resp = panel_module.verify_button(trace, request, read_back=READ_BACK)
             self.assertEqual(resp.status_code, 400)
             self.assertIn("refused", resp.body.decode().lower())
             allowed, why = self.proxy.state.retry_run(trace)
             self.assertTrue(allowed, "flowing run must stay ungated")
             self.assertEqual(why, "not paused")
             rows = self._rows_for(trace)
-            self.assertFalse(
-                any(r["reason"].startswith("verify ok") for r in rows),
-                "a refused Verify must stamp nothing")
+            self.assertFalse(any(r["reason"].startswith("verify ok") for r in rows), "a refused Verify must stamp nothing")
         finally:
             panel_module.app.state.proxy_state = None
             sock.close()
@@ -254,14 +228,12 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             request = self._request(self.proxy.state)
             self.assertTrue(self.proxy.state.pause_run(trace))
             self.assert_tunnel_dead(sock)
-            resp = panel_module.verify_button(
-                trace, request, read_back="   ")
+            resp = panel_module.verify_button(trace, request, read_back="   ")
             self.assertEqual(resp.status_code, 400)
             self.assertIn("refused", resp.body.decode().lower())
             allowed, _why = self.proxy.state.retry_run(trace)
@@ -276,20 +248,15 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
         sock, status = self.open_tunnel(self.destA, trace)
         self.assertEqual(status, 200)
         try:
-            self.assertEqual(
-                self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
+            self.assertEqual(self.echo_roundtrip(sock, b"run-on-A"), b"run-on-A")
             panel_module.app.state.proxy_state = self.proxy.state
             flowing_page = panel_module.run_detail(trace)
-            flowing_body = (flowing_page if isinstance(flowing_page, str)
-                            else flowing_page.body.decode())
-            self.assertNotIn(
-                f"/runs/{trace}/verify", flowing_body,
-                "a flowing Run must show no Verify button")
+            flowing_body = flowing_page if isinstance(flowing_page, str) else flowing_page.body.decode()
+            self.assertNotIn(f"/runs/{trace}/verify", flowing_body, "a flowing Run must show no Verify button")
             self.assertTrue(self.proxy.state.pause_run(trace))
             self.assert_tunnel_dead(sock)
             paused_page = panel_module.run_detail(trace)
-            paused_body = (paused_page if isinstance(paused_page, str)
-                           else paused_page.body.decode())
+            paused_body = paused_page if isinstance(paused_page, str) else paused_page.body.decode()
             self.assertIn(f"/runs/{trace}/verify", paused_body)
             self.assertIn('name="read_back"', paused_body)
         finally:
@@ -299,8 +266,7 @@ class DevtoolVerifyButtonTest(unittest.TestCase):
     def test_verify_watch_only_503(self):
         """With no proxy beside the panel, the route is watch-only."""
         request = self._request(None)
-        resp = panel_module.verify_button(
-            "devtool-verify-watch-only", request, read_back=READ_BACK)
+        resp = panel_module.verify_button("devtool-verify-watch-only", request, read_back=READ_BACK)
         self.assertEqual(resp.status_code, 503)
 
 

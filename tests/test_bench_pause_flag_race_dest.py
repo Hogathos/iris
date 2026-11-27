@@ -71,6 +71,7 @@ close_reason, and it does not pin the endpoint column.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -117,14 +118,12 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        cls.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         cls.echo_port = cls.echo.server_address[1]
         threading.Thread(target=cls.echo.serve_forever, daemon=True).start()
         # High rate limit: rate limiting has its own tests, and a 429
         # here would mask the tunnel this test needs to open.
-        cls.proxy = proxy_module.serve(
-            "127.0.0.1", 0, cls.db_path, rate_limit=10000)
+        cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path, rate_limit=10000)
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.dest = f"127.0.0.1:{cls.echo_port}"
@@ -140,13 +139,9 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
 
     def open_tunnel(self, trace):
         """CONNECT through the proxy for this Run. Returns (sock, status)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {self.dest} HTTP/1.1\r\n"
-             f"Host: {self.dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -170,8 +165,8 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
 
     def test_pause_row_names_the_tunnel_the_sweep_cuts(self):
         trace = "bench-pause-flag-race-dest-1"
-        in_journal = threading.Event()   # pause_run is past the pop
-        release = threading.Event()      # test lets pause_run finish
+        in_journal = threading.Event()  # pause_run is past the pop
+        release = threading.Event()  # test lets pause_run finish
         real_save_paused = proxy_module.db_module.save_paused
 
         def held_save_paused(conn, trace_id, *args, **kwargs):
@@ -194,15 +189,14 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
 
         tunnel_sock = None
         status = None
-        with mock.patch.object(
-                proxy_module.db_module, "save_paused", held_save_paused):
+        with mock.patch.object(proxy_module.db_module, "save_paused", held_save_paused):
             pauser = threading.Thread(target=run_pause, daemon=True)
             pauser.start()
             try:
                 self.assertTrue(
                     in_journal.wait(timeout=STEP_TIMEOUT),
-                    "harness: pause_run never reached the journal step, "
-                    "so the pop-to-flag gap was never entered")
+                    "harness: pause_run never reached the journal step, so the pop-to-flag gap was never entered",
+                )
                 # pause_run has popped the live tunnels and has not set
                 # its flag. Open the tunnel now: it registers in the gap.
                 tunnel_sock, status = self.open_tunnel(trace)
@@ -215,18 +209,19 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
             self.assertNotIn("error", pause_result, pause_result.get("error"))
             self.assertTrue(pause_result.get("ok"), "pause_run refused the Run")
             self.assertEqual(
-                status, 200,
+                status,
+                200,
                 "harness: the tunnel must be live in the gap. If the proxy "
                 "now refuses it there, no tunnel is cut and test 1d no "
-                "longer applies: review this test")
+                "longer applies: review this test",
+            )
             # pause_run has returned. Its two rows are written. The cut
             # tunnel's own close row lands on the handler's thread, so
             # wait for the third paused row with a deadline, then fail
             # loudly if it never comes.
             deadline = time.monotonic() + STEP_TIMEOUT
             while True:
-                pause_rows = [r for r in self.rows_for(trace)
-                              if r["outcome"] == "paused"]
+                pause_rows = [r for r in self.rows_for(trace) if r["outcome"] == "paused"]
                 if len(pause_rows) >= 3 or time.monotonic() >= deadline:
                     break
                 time.sleep(0.02)
@@ -236,11 +231,13 @@ class PauseRowNamesSweptTunnelTest(unittest.TestCase):
                 "Pause cut a tunnel that registered between the pop and "
                 "the flag. The paused rows must be the first row, empty, "
                 "then the sweep row and the cut tunnel's close row, both "
-                "naming the destination of that tunnel")
+                "naming the destination of that tunnel",
+            )
             self.assertEqual(
                 [r["close_reason"] for r in pause_rows],
                 ["paused", "paused", "paused"],
-                "all three paused rows must have close reason paused")
+                "all three paused rows must have close reason paused",
+            )
         finally:
             if tunnel_sock is not None:
                 tunnel_sock.close()

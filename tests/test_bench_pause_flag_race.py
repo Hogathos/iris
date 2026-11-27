@@ -42,6 +42,7 @@ step the fix moves. It checks the tunnel only.
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -86,14 +87,12 @@ class PausePopToFlagRaceTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        cls.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         cls.echo_port = cls.echo.server_address[1]
         threading.Thread(target=cls.echo.serve_forever, daemon=True).start()
         # High rate limit: rate limiting has its own tests, and a 429
         # here would mask the tunnel this test needs to open.
-        cls.proxy = proxy_module.serve(
-            "127.0.0.1", 0, cls.db_path, rate_limit=10000)
+        cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path, rate_limit=10000)
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.dest = f"127.0.0.1:{cls.echo_port}"
@@ -109,13 +108,9 @@ class PausePopToFlagRaceTest(unittest.TestCase):
 
     def open_tunnel(self, trace):
         """CONNECT through the proxy for this Run. Returns (sock, status)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
         sock.settimeout(HOLD_TIMEOUT)
-        sock.sendall(
-            (f"CONNECT {self.dest} HTTP/1.1\r\n"
-             f"Host: {self.dest}\r\n"
-             f"X-Trace-Id: {trace}\r\n\r\n").encode())
+        sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -147,15 +142,17 @@ class PausePopToFlagRaceTest(unittest.TestCase):
         except OSError:
             return
         self.assertEqual(
-            data, b"",
+            data,
+            b"",
             "A tunnel registered after Pause took the live tunnels and "
             "before Pause set its flag, and the tunnel carries bytes "
-            "anyway: nothing cut it")
+            "anyway: nothing cut it",
+        )
 
     def test_tunnel_between_pause_pop_and_flag_is_cut(self):
         trace = "bench-pause-flag-race-1"
-        in_journal = threading.Event()   # pause_run is past the pop
-        release = threading.Event()      # test lets pause_run finish
+        in_journal = threading.Event()  # pause_run is past the pop
+        release = threading.Event()  # test lets pause_run finish
         real_save_paused = proxy_module.db_module.save_paused
 
         def held_save_paused(conn, trace_id, *args, **kwargs):
@@ -177,15 +174,14 @@ class PausePopToFlagRaceTest(unittest.TestCase):
                 pause_result["error"] = repr(exc)
 
         tunnel_sock = None
-        with mock.patch.object(
-                proxy_module.db_module, "save_paused", held_save_paused):
+        with mock.patch.object(proxy_module.db_module, "save_paused", held_save_paused):
             pauser = threading.Thread(target=run_pause, daemon=True)
             pauser.start()
             try:
                 self.assertTrue(
                     in_journal.wait(timeout=STEP_TIMEOUT),
-                    "harness: pause_run never reached the journal step, "
-                    "so the pop-to-flag gap was never entered")
+                    "harness: pause_run never reached the journal step, so the pop-to-flag gap was never entered",
+                )
                 # pause_run has popped the live tunnels and has not set
                 # its flag. Open the tunnel now: it registers in the gap.
                 tunnel_sock, status = self.open_tunnel(trace)
@@ -202,9 +198,7 @@ class PausePopToFlagRaceTest(unittest.TestCase):
             if status == 200:
                 self.assert_tunnel_dead(tunnel_sock)
             else:
-                self.assertEqual(
-                    status, 503,
-                    "a tunnel refused during Pause must be 503 (paused)")
+                self.assertEqual(status, 503, "a tunnel refused during Pause must be 503 (paused)")
         finally:
             if tunnel_sock is not None:
                 tunnel_sock.close()

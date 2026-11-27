@@ -21,6 +21,7 @@ No approved done = Unverified, never Correct.
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -73,17 +74,13 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
         """Fresh proxy, fresh temp DB, two loopback destinations, no cap."""
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "attempts.db")
-        self.echoA = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
-        self.echoB = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        self.echoA = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+        self.echoB = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         threading.Thread(target=self.echoA.serve_forever, daemon=True).start()
         threading.Thread(target=self.echoB.serve_forever, daemon=True).start()
-        self.proxy = proxy_module.serve(
-            "127.0.0.1", 0, self.db_path, rate_limit=10000)
+        self.proxy = proxy_module.serve("127.0.0.1", 0, self.db_path, rate_limit=10000)
         self.proxy_port = self.proxy.server_address[1]
-        threading.Thread(
-            target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         # addCleanup runs LIFO: shutdowns are added last so they run
         # first then closes, then DB, then temp. Closing a listening
         # socket while serve_forever still selects on it crashes
@@ -105,25 +102,17 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-                (trace_id,)).fetchall()]
+            return [
+                dict(r) for r in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,)).fetchall()
+            ]
         finally:
             conn.close()
 
     def open_tunnel(self, dest, trace_id):
         """Open one raw CONNECT tunnel; return (socket, status code)."""
-        sock = socket.create_connection(
-            ("127.0.0.1", self.proxy_port), timeout=5)
+        sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5)
         sock.settimeout(5)
-        sock.sendall(
-            (
-                f"CONNECT {dest} HTTP/1.1\r\n"
-                f"Host: {dest}\r\n"
-                f"X-Trace-Id: {trace_id}\r\n"
-                "\r\n"
-            ).encode()
-        )
+        sock.sendall((f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\nX-Trace-Id: {trace_id}\r\n\r\n").encode())
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = sock.recv(65536)
@@ -149,10 +138,18 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             db_module.log_attempt(
-                conn, trace_id=trace_id, task_number=1, attempt=1,
-                status="success", dest_host=dest_host, endpoint=dest_host,
-                method="CONNECT", http_status=200, outcome="allowed",
-                cost_dollars=dollars)
+                conn,
+                trace_id=trace_id,
+                task_number=1,
+                attempt=1,
+                status="success",
+                dest_host=dest_host,
+                endpoint=dest_host,
+                method="CONNECT",
+                http_status=200,
+                outcome="allowed",
+                cost_dollars=dollars,
+            )
         finally:
             conn.close()
 
@@ -199,18 +196,12 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
             probe.close()
             self.assertEqual(probe_status, 200, "warn must not stop the run")
             rowsA = self.rows_for(traceA)
-            self.assertEqual(
-                states_module.run_state(rowsA), "WARNED",
-                "80% spend must read WARNED")
-            self.assertEqual(
-                states_module.verdict_for(rowsA), "Unverified")
+            self.assertEqual(states_module.run_state(rowsA), "WARNED", "80% spend must read WARNED")
+            self.assertEqual(states_module.verdict_for(rowsA), "Unverified")
             live, why = states_module.pause_button_live("WARNED")
             self.assertTrue(live, "Pause must stay live in WARNED")
-            self.assertEqual(
-                why, "Money spent at 80% of cap, run continues")
-            self.assertEqual(
-                self.echo_roundtrip(sockB, b"run-B-unaffected"),
-                b"run-B-unaffected")
+            self.assertEqual(why, "Money spent at 80% of cap, run continues")
+            self.assertEqual(self.echo_roundtrip(sockB, b"run-B-unaffected"), b"run-B-unaffected")
 
             # Step 3: spend reaches 100%. A block row is journaled, the
             # live tunnel is cut with no data after the block, new
@@ -222,15 +213,10 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
             self.assertEqual(statusA2, 503, "capped network stays cut")
             self.assert_tunnel_dead(sockA)
             rowsA = self.rows_for(traceA)
-            self.assertEqual(
-                states_module.run_state(rowsA), "BLOCKED",
-                "100% spend must read BLOCKED")
+            self.assertEqual(states_module.run_state(rowsA), "BLOCKED", "100% spend must read BLOCKED")
             live, why = states_module.pause_button_live("BLOCKED")
             self.assertFalse(live, "Pause must rest in BLOCKED")
-            self.assertEqual(
-                why,
-                "Blocked at 100% of cap, a human must check it again, "
-                "then unblock after Verify")
+            self.assertEqual(why, "Blocked at 100% of cap, a human must check it again, then unblock after Verify")
 
             # Step 4: retry without a fresh Verify stays blocked and
             # journaled, even after a Correct read-back on its own.
@@ -241,40 +227,36 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
                 os.fsync(proof.fileno())
             verdict, _ = self.proxy.state.verify_read_back(
                 traceA,
-                {"kind": "local-file", "path": path,
-                 "expected_text": "row exists after close/fsync",
-                 "idempotency_key": "wb-verify-1"},
-                done_clause=done)
+                {
+                    "kind": "local-file",
+                    "path": path,
+                    "expected_text": "row exists after close/fsync",
+                    "idempotency_key": "wb-verify-1",
+                },
+                done_clause=done,
+            )
             self.assertEqual(verdict, "Correct")
             allowed, why = self.proxy.state.retry_run(traceA)
             self.assertFalse(allowed, "Correct alone never unblocks")
             self.assertIn("verify", why.lower())
             self.assertTrue(
-                [r for r in self.rows_for(traceA)
-                 if r["reason"] == "verify required before retry"],
-                "still-blocked retry must be journaled")
+                [r for r in self.rows_for(traceA) if r["reason"] == "verify required before retry"],
+                "still-blocked retry must be journaled",
+            )
 
             # Step 5: human unblock after Verify. The lift is journaled,
             # the state machine reads FLOWING again, and a new tunnel
             # flows. No new outcome was invented for any of this.
-            self.assertTrue(
-                self.proxy.state.verify_run(traceA, done_clause=done),
-                "fresh Verify must pass")
-            self.assertTrue(
-                self.proxy.state.unblock_cap(
-                    self.destA, reason="human unblock"),
-                "human unblock must be accepted")
-            self.assertTrue(
-                [r for r in self.rows_all()
-                 if r["reason"] == "cap lifted"],
-                "unblock must be journaled")
+            self.assertTrue(self.proxy.state.verify_run(traceA, done_clause=done), "fresh Verify must pass")
+            self.assertTrue(self.proxy.state.unblock_cap(self.destA, reason="human unblock"), "human unblock must be accepted")
+            self.assertTrue([r for r in self.rows_all() if r["reason"] == "cap lifted"], "unblock must be journaled")
             # The lift is journaled for the Run it unpauses, not only
             # for the destination: the panel folds one Run's rows, so
             # a lift row with no trace id cannot return it to FLOWING.
             self.assertTrue(
-                [r for r in self.rows_for(traceA)
-                 if r["reason"] == "cap lifted"],
-                "unblock must be journaled for the Run it unpauses")
+                [r for r in self.rows_for(traceA) if r["reason"] == "cap lifted"],
+                "unblock must be journaled for the Run it unpauses",
+            )
             allowed, _ = self.proxy.state.retry_run(traceA)
             self.assertTrue(allowed, "retry after unblock must be allowed")
             sockA3, statusA3 = self.open_tunnel(self.destA, traceA)
@@ -282,8 +264,7 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
                 self.assertEqual(statusA3, 200, "unblocked run flows")
             finally:
                 sockA3.close()
-            self.assertEqual(
-                states_module.run_state(self.rows_for(traceA)), "FLOWING")
+            self.assertEqual(states_module.run_state(self.rows_for(traceA)), "FLOWING")
 
             # Step 6: accounting reconciles across every outcome,
             # including warned. Warned rows keep what was spent in
@@ -299,11 +280,17 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
                 finally:
                     conn.close()
                 all_rows = self.rows_all()
-                total = (counts["allowed"] + counts["blocked"]
-                         + counts["rate_limited"] + counts["paused"]
-                         + counts["redirected"] + counts["stopped"]
-                         + counts["verified"] + counts["warned"]
-                         + counts["other"])
+                total = (
+                    counts["allowed"]
+                    + counts["blocked"]
+                    + counts["rate_limited"]
+                    + counts["paused"]
+                    + counts["redirected"]
+                    + counts["stopped"]
+                    + counts["verified"]
+                    + counts["warned"]
+                    + counts["other"]
+                )
                 if total == len(all_rows):
                     break
                 time.sleep(0.05)
@@ -323,8 +310,7 @@ class DevtoolStatesWarnBlockTest(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts ORDER BY id").fetchall()]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts ORDER BY id").fetchall()]
         finally:
             conn.close()
 

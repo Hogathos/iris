@@ -1,4 +1,5 @@
 """M3 tests: one trace ID across Agent A -> proxy -> Agent B -> proxy -> upstream."""
+
 import json
 import os
 import sqlite3
@@ -13,7 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # urllib honors NO_PROXY and would bypass the loopback test proxy;
 # drop it so the suite never depends on ambient proxy config (N7).
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 import agent_b as agent_b_module
 import proxy as proxy_module
@@ -32,18 +34,23 @@ class M3TracePropagationTest(unittest.TestCase):
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.agent_b = agent_b_module.serve(
-            "127.0.0.1", 0,
+            "127.0.0.1",
+            0,
             proxy_url=f"http://127.0.0.1:{cls.proxy_port}",
-            upstream_base=f"http://127.0.0.1:{cls.upstream_port}")
+            upstream_base=f"http://127.0.0.1:{cls.upstream_port}",
+        )
         cls.agent_b_port = cls.agent_b.server_address[1]
         threading.Thread(target=cls.agent_b.serve_forever, daemon=True).start()
-        cls.opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-            {"http": f"http://127.0.0.1:{cls.proxy_port}"}))
+        cls.opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{cls.proxy_port}"}))
 
     @classmethod
     def tearDownClass(cls):
-        cls.agent_b.shutdown(); cls.proxy.shutdown(); cls.upstream.shutdown()
-        cls.agent_b.server_close(); cls.proxy.server_close(); cls.upstream.server_close()
+        cls.agent_b.shutdown()
+        cls.proxy.shutdown()
+        cls.upstream.shutdown()
+        cls.agent_b.server_close()
+        cls.proxy.server_close()
+        cls.upstream.server_close()
         cls.proxy.state.conn.close()
         cls.tmp.cleanup()
 
@@ -60,8 +67,7 @@ class M3TracePropagationTest(unittest.TestCase):
     def call_agent_a(self, trace=None, data=None, headers=None):
         """Agent A: call Agent B through the proxy."""
         url = f"http://127.0.0.1:{self.agent_b_port}/task"
-        req = urllib.request.Request(url, data=data,
-                                     method="POST" if data else "GET")
+        req = urllib.request.Request(url, data=data, method="POST" if data else "GET")
         if trace:
             req.add_header("X-Trace-Id", trace)
         for k, v in (headers or {}).items():
@@ -87,9 +93,8 @@ class M3TracePropagationTest(unittest.TestCase):
 
     def test_explicit_trace_carried_across_both_legs_no_secrets(self):
         status, _, body = self.call_agent_a(
-            trace="trace-m3-task-1",
-            data=b"SECRET_PROMPT_BODY_12345",
-            headers={"Authorization": "Bearer [REDACTED]"})
+            trace="trace-m3-task-1", data=b"SECRET_PROMPT_BODY_12345", headers={"Authorization": "Bearer [REDACTED]"}
+        )
         self.assertEqual(status, 200)
         self.assertEqual(body["trace_id"], "trace-m3-task-1")
         self.assert_two_legs("trace-m3-task-1")

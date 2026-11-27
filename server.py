@@ -10,6 +10,7 @@ Endpoints:
 
 Run:  python server.py --port 18080
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,18 +45,19 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(min(delay, 5.0))
             self._json(200, {"ok": True, "delay": delay})
         elif parsed.path == "/usage":
-            self._json(200, {"ok": True,
-                             "usage": {"input_tokens": 42,
-                                       "output_tokens": 7}})
+            self._json(200, {"ok": True, "usage": {"input_tokens": 42, "output_tokens": 7}})
         elif parsed.path == "/echo":
-            self._json(200, {
-                "ok": True,
-                "method": self.command,
-                "path": self.path,
-                "trace_id": self.headers.get("X-Trace-Id"),
-                "has_authorization": self.headers.get("Authorization") is not None,
-                "body_bytes": len(body),
-            })
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "method": self.command,
+                    "path": self.path,
+                    "trace_id": self.headers.get("X-Trace-Id"),
+                    "has_authorization": self.headers.get("Authorization") is not None,
+                    "body_bytes": len(body),
+                },
+            )
         else:
             self._json(200, {"ok": True, "path": self.path})
 

@@ -15,6 +15,7 @@ Qt notes, read before touching this file:
   - QT_QPA_PLATFORM=offscreen is set below, before any Qt import.
   - One QApplication serves the whole module. Never create a second.
 """
+
 import json
 import os
 import re
@@ -29,8 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 for _proxy_key in ("NO_PROXY", "no_proxy"):
-    _seen = [p.strip() for p in os.environ.get(_proxy_key, "").split(",")
-             if p.strip()]
+    _seen = [p.strip() for p in os.environ.get(_proxy_key, "").split(",") if p.strip()]
     for _host in ("127.0.0.1", "localhost"):
         if _host not in _seen:
             _seen.append(_host)
@@ -47,6 +47,7 @@ from devpanel import states as states_module
 def _app():
     """The one QApplication for this module, offscreen, reused."""
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
@@ -115,16 +116,14 @@ def _window(db_path, seams=None, **kwargs):
     """A window on a fake controller. Offscreen, never shown."""
     _app()
     controller = _FakeController(db_path)
-    window = shell_module.IrisWindow(
-        controller, seams=seams or _FakeSeams(), **kwargs)
+    window = shell_module.IrisWindow(controller, seams=seams or _FakeSeams(), **kwargs)
     window._show_dashboard()
     return window
 
 
 def _panel_request(state=None, headers=None):
     """A fake panel request carrying state and headers, no server."""
-    app_state = types.SimpleNamespace(
-        proxy_state=state, panel_token=None, panel_port=None)
+    app_state = types.SimpleNamespace(proxy_state=state, panel_token=None, panel_port=None)
     app = types.SimpleNamespace(state=app_state)
     return types.SimpleNamespace(app=app, headers=headers or {})
 
@@ -139,27 +138,25 @@ class FirstRunTest(unittest.TestCase):
 
     def test_first_run_words_and_paths(self):
         from appmode import demo as demo_module  # noqa: F401
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         window = _window(os.path.join(tmp.name, "attempts.db"))
         self.addCleanup(window.close)
         page = window._first_run_page
         words = " ".join(
-            label.text() for label in page.findChildren(
-                __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel))
+            label.text() for label in page.findChildren(__import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel)
+        )
         for sentence in (
-                "Iris watches what your agent does on this computer.",
-                "Everything stays on this computer. Iris needs no account.",
-                "It sees where each tool call goes, how big it is, "
-                "and how long it takes.",
-                "When your agent says it did something, Iris looks "
-                "for itself and tells you: Correct, Incorrect, "
-                "or Unverified.",
-                "The demo runs on this computer only. It costs $0.00."):
+            "Iris watches what your agent does on this computer.",
+            "Everything stays on this computer. Iris needs no account.",
+            "It sees where each tool call goes, how big it is, and how long it takes.",
+            "When your agent says it did something, Iris looks for itself and tells you: Correct, Incorrect, or Unverified.",
+            "The demo runs on this computer only. It costs $0.00.",
+        ):
             self.assertIn(sentence, words)
         self.assertEqual(window._demo_button.text(), "Run the demo")
-        self.assertEqual(window._skip_link.text(),
-                         "Skip the demo and open the dashboard")
+        self.assertEqual(window._skip_link.text(), "Skip the demo and open the dashboard")
         seams = _FakeSeams()
         window2 = _window(os.path.join(tmp.name, "j2.db"), seams=seams)
         self.addCleanup(window2.close)
@@ -180,13 +177,13 @@ class DemoTest(unittest.TestCase):
 
     def test_demo_three_claims_and_a_stop(self):
         from appmode import demo as demo_module
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         state, db_path = _fresh_state(tmp)
         self.addCleanup(state.conn.close)
         notebook = os.path.join(tmp.name, "demo-notebook.json")
-        trace_id = demo_module.run_demo(
-            state, notebook, interval_seconds=0)
+        trace_id = demo_module.run_demo(state, notebook, interval_seconds=0)
         with open(notebook, encoding="utf-8") as handle:
             notes = json.load(handle)
         self.assertEqual(len(notes), 2)
@@ -195,43 +192,37 @@ class DemoTest(unittest.TestCase):
             claims = db_module.load_claims(conn, trace_id)
         finally:
             conn.close()
-        self.assertEqual([c["verdict"] for c in claims],
-                         ["Correct", "Unverified", "Incorrect"])
+        self.assertEqual([c["verdict"] for c in claims], ["Correct", "Unverified", "Incorrect"])
         self.assertEqual(
             [c["claim"] for c in claims],
-            ['I saved a note called "groceries".',
-             "I checked the weather service.",
-             "I saved 3 notes in total."])
+            ['I saved a note called "groceries".', "I checked the weather service.", "I saved 3 notes in total."],
+        )
         self.assertEqual(
             [c["found"] for c in claims],
-            ['Iris looked in the demo notebook. The note "groceries" '
-             "is there.",
-             "That service is on another computer. Iris only looks at "
-             "this computer, so it could not check.",
-             "Iris looked in the demo notebook. It holds 2 notes, "
-             "not 3."])
+            [
+                'Iris looked in the demo notebook. The note "groceries" is there.',
+                "That service is on another computer. Iris only looks at this computer, so it could not check.",
+                "Iris looked in the demo notebook. It holds 2 notes, not 3.",
+            ],
+        )
         rows = db_module.get_connection(db_path)
-        self.assertEqual(states_module.run_state(
-            _rows_for(db_path, trace_id)), "STOPPED")
+        self.assertEqual(states_module.run_state(_rows_for(db_path, trace_id)), "STOPPED")
         rows.close()
 
     def test_demo_detail_says_what_iris_found(self):
         from appmode import demo as demo_module
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         state, db_path = _fresh_state(tmp)
         self.addCleanup(state.conn.close)
         notebook = os.path.join(tmp.name, "demo-notebook.json")
-        trace_id = demo_module.run_demo(
-            state, notebook, interval_seconds=0)
+        trace_id = demo_module.run_demo(state, notebook, interval_seconds=0)
         old = api_module.DB_PATH
         api_module.DB_PATH = db_path
         self.addCleanup(setattr, api_module, "DB_PATH", old)
-        html = panel_module.run_detail(
-            trace_id, tier="simple",
-            request=_panel_request(state))
-        self.assertIn("Iris stopped this Run. A claim was Incorrect.",
-                      html)
+        html = panel_module.run_detail(trace_id, tier="simple", request=_panel_request(state))
+        self.assertIn("Iris stopped this Run. A claim was Incorrect.", html)
 
 
 def _rows_for(db_path, trace_id):
@@ -239,9 +230,7 @@ def _rows_for(db_path, trace_id):
     conn = sqlite3.connect(db_path)
     try:
         conn.row_factory = sqlite3.Row
-        return [dict(row) for row in conn.execute(
-            "SELECT * FROM attempts WHERE trace_id = ? ORDER BY id",
-            (trace_id,))]
+        return [dict(row) for row in conn.execute("SELECT * FROM attempts WHERE trace_id = ? ORDER BY id", (trace_id,))]
     finally:
         conn.close()
 
@@ -251,6 +240,7 @@ class VerdictWordsTest(unittest.TestCase):
 
     def test_no_unknown_on_screen(self):
         from appmode import demo as demo_module
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         state, db_path = _fresh_state(tmp)
@@ -262,14 +252,11 @@ class VerdictWordsTest(unittest.TestCase):
         index_html = panel_module.index(request, tier="simple")
         self.assertNotIn("Unknown", index_html)
         self.assertNotIn("unknown", index_html)
-        detail_html = _page_text(panel_module.run_detail(
-            "no-such-run", tier="simple", request=request))
+        detail_html = _page_text(panel_module.run_detail("no-such-run", tier="simple", request=request))
         self.assertNotIn("Unknown", detail_html)
         notebook = os.path.join(tmp.name, "demo-notebook.json")
-        trace_id = demo_module.run_demo(
-            state, notebook, interval_seconds=0)
-        claimed = panel_module.run_detail(
-            trace_id, tier="simple", request=request)
+        trace_id = demo_module.run_demo(state, notebook, interval_seconds=0)
+        claimed = panel_module.run_detail(trace_id, tier="simple", request=request)
         for word in ("Correct", "Incorrect", "Unverified"):
             self.assertIn(word, claimed)
         self.assertNotIn("Unknown", claimed)
@@ -287,18 +274,22 @@ class RunLabelTest(unittest.TestCase):
     def test_run_label_is_trace_prefix(self):
         trace_id = "abcdef1234567890"
         self.assertEqual(panel_module._short(trace_id), "Run abcdef12")
-        self.assertEqual(shell_module.short_run_name(trace_id),
-                         panel_module._short(trace_id))
-        self.assertEqual(panel_module.SPOT,
-                         shell_module.DEFAULT_PROXY_PORT)
+        self.assertEqual(shell_module.short_run_name(trace_id), panel_module._short(trace_id))
+        self.assertEqual(panel_module.SPOT, shell_module.DEFAULT_PROXY_PORT)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         state, db_path = _fresh_state(tmp)
         self.addCleanup(state.conn.close)
         db_module.log_attempt(
-            state.conn, trace_id=trace_id, task_number=1, attempt=1,
-            status="success", outcome="allowed",
-            dest_host="127.0.0.1", method="GET")
+            state.conn,
+            trace_id=trace_id,
+            task_number=1,
+            attempt=1,
+            status="success",
+            outcome="allowed",
+            dest_host="127.0.0.1",
+            method="GET",
+        )
         old = api_module.DB_PATH
         api_module.DB_PATH = db_path
         self.addCleanup(setattr, api_module, "DB_PATH", old)
@@ -317,32 +308,35 @@ class VerifyGateTest(unittest.TestCase):
         self.addCleanup(state.conn.close)
         trace_id = "verify" + "0" * 10
         db_module.log_attempt(
-            state.conn, trace_id=trace_id, task_number=1, attempt=1,
-            status="success", outcome="allowed",
-            dest_host="127.0.0.1", method="GET")
+            state.conn,
+            trace_id=trace_id,
+            task_number=1,
+            attempt=1,
+            status="success",
+            outcome="allowed",
+            dest_host="127.0.0.1",
+            method="GET",
+        )
         self.assertTrue(state.pause_run(trace_id, reason="human pause"))
         seams = _FakeSeams()
-        window = _window(os.path.join(tmp.name, "j.db"), seams=seams,
-                         ask_words=lambda: "I checked the notebook.")
+        window = _window(os.path.join(tmp.name, "j.db"), seams=seams, ask_words=lambda: "I checked the notebook.")
         self.addCleanup(window.close)
         dialog = window._verify_dialog()
         self.assertEqual(dialog.windowTitle(), "Verify")
-        buttons = {button.text() for button in dialog.findChildren(
-            __import__("PySide6.QtWidgets", fromlist=["QPushButton"])
-            .QPushButton)}
+        buttons = {
+            button.text()
+            for button in dialog.findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton)
+        }
         self.assertEqual(buttons, {"Cancel", "Verify"})
-        self.assertIn("What was checked, in plain words:",
-                      dialog.findChild(
-                          __import__("PySide6.QtWidgets",
-                                     fromlist=["QLabel"]).QLabel).text())
+        self.assertIn(
+            "What was checked, in plain words:",
+            dialog.findChild(__import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel).text(),
+        )
         words = "I checked the notebook against the claim."
-        self.assertTrue(panel_module.devpanel_verify(
-            state, trace_id, words))
+        self.assertTrue(panel_module.devpanel_verify(state, trace_id, words))
         allowed, _why = state.retry_run(trace_id)
         self.assertTrue(allowed)
-        window2 = _window(os.path.join(tmp.name, "j2.db"),
-                          seams=_FakeSeams(),
-                          ask_words=lambda: "   ")
+        window2 = _window(os.path.join(tmp.name, "j2.db"), seams=_FakeSeams(), ask_words=lambda: "   ")
         self.addCleanup(window2.close)
         window2._seams.calls.clear()
         window2._on_verify_for("sometrace")
@@ -359,18 +353,21 @@ class EmergencyStopTest(unittest.TestCase):
         self.addCleanup(state.conn.close)
         for trace_id in ("stop-a-12345678", "stop-b-12345678"):
             db_module.log_attempt(
-                state.conn, trace_id=trace_id, task_number=1, attempt=1,
-                status="success", outcome="allowed",
-                dest_host="127.0.0.1", method="GET")
+                state.conn,
+                trace_id=trace_id,
+                task_number=1,
+                attempt=1,
+                status="success",
+                outcome="allowed",
+                dest_host="127.0.0.1",
+                method="GET",
+            )
         state.red_button(reason="human red button")
         for trace_id in ("stop-a-12345678", "stop-b-12345678"):
-            self.assertEqual(
-                states_module.run_state(
-                    _rows_for(db_path, trace_id)), "STOPPED")
+            self.assertEqual(states_module.run_state(_rows_for(db_path, trace_id)), "STOPPED")
         seams = _FakeSeams()
         asked = []
-        window = _window(os.path.join(tmp.name, "j.db"), seams=seams,
-                         ask_confirm=lambda: asked.append(True))
+        window = _window(os.path.join(tmp.name, "j.db"), seams=seams, ask_confirm=lambda: asked.append(True))
         self.addCleanup(window.close)
         window._on_stop()
         self.assertEqual(asked, [])
@@ -378,12 +375,10 @@ class EmergencyStopTest(unittest.TestCase):
         self.assertIn("red", window.stop_button.styleSheet().lower())
         dialog = window._emergency_off_dialog()
         self.assertEqual(dialog.windowTitle(), "Let agents work again?")
-        self.assertIn("Runs that were stopped stay stopped.",
-                      dialog.text())
+        self.assertIn("Runs that were stopped stay stopped.", dialog.text())
         _kind, words, _buttons = window._strip_for(emergency=True)
         self.assertIn("Emergency stop is on.", words)
-        self.assertIn("Close it yourself if you want it fully off.",
-                      words)
+        self.assertIn("Close it yourself if you want it fully off.", words)
 
     def test_stop_survives_restart(self):
         tmp = tempfile.TemporaryDirectory()
@@ -423,21 +418,18 @@ class LoopbackSecurityTest(unittest.TestCase):
             self.assertTrue(panel_module.check_token(token))
             self.assertFalse(panel_module.check_token("stale-token"))
             refused = panel_module.pause_button(
-                "trace-x", _panel_request(
-                    state, headers={"host": "127.0.0.1:8199"}),
-                tier="", token="wrong-token")
+                "trace-x", _panel_request(state, headers={"host": "127.0.0.1:8199"}), tier="", token="wrong-token"
+            )
             self.assertEqual(refused.status_code, 403)
-            self.assertIn("This page is out of date. Reload it.",
-                          refused.body.decode())
+            self.assertIn("This page is out of date. Reload it.", refused.body.decode())
             rows_before = db_module.fetch_totals(state.conn)["attempts"]
-            self.assertEqual(
-                db_module.fetch_totals(state.conn)["attempts"],
-                rows_before)
+            self.assertEqual(db_module.fetch_totals(state.conn)["attempts"], rows_before)
         finally:
             panel_module.clear_identity()
 
     def test_token_lives_in_memory_only(self):
         import inspect
+
         maker_source = inspect.getsource(panel_module.new_panel_token)
         self.assertIn("secrets", maker_source)
         panel_source = inspect.getsource(panel_module)
@@ -458,8 +450,7 @@ class SpendingLimitTest(unittest.TestCase):
         state.set_daily_limit(10.0)
         reason = state.unpriceable_blocked(place)
         self.assertIn("daily limit", reason)
-        self.assertIsNone(
-            state.unpriceable_blocked("127.0.0.1:8891"))
+        self.assertIsNone(state.unpriceable_blocked("127.0.0.1:8891"))
         state.allow_place(place)
         self.assertIsNone(state.unpriceable_blocked(place))
         state.unallow_place(place)
@@ -491,18 +482,15 @@ class AllowOneClickTest(unittest.TestCase):
         state.set_daily_limit(10.0)
         place = "prices.unknown:443"
         trace_id = "allow" + "0" * 11
-        state.note_blocked_call(
-            trace_id, place, state.unpriceable_blocked(place))
+        state.note_blocked_call(trace_id, place, state.unpriceable_blocked(place))
         window = _window(os.path.join(tmp.name, "j.db"))
         self.addCleanup(window.close)
-        kind, words, buttons = window._strip_for(
-            blocked_place=place)
+        kind, words, buttons = window._strip_for(blocked_place=place)
         self.assertIn(f"Iris blocked a call to {place}.", words)
         self.assertIn(f"Allow {place}", buttons)
         window._allow_place(place, state)
         self.assertTrue(state.is_allowed_place(place))
-        kind2, words2, buttons2 = window._strip_for(
-            blocked_place=place)
+        kind2, words2, buttons2 = window._strip_for(blocked_place=place)
         self.assertIn(f"{place} is allowed.", words2)
         self.assertIn("Undo", buttons2)
         old = api_module.DB_PATH
@@ -526,56 +514,55 @@ class JournalWordsTest(unittest.TestCase):
         self.addCleanup(setattr, api_module, "DB_PATH", old)
         request = _panel_request(state)
         rendered = (
-            panel_module.index(request, tier="simple")
-            + panel_module.limits_page(request)
-            + panel_module.tools_page(request))
+            panel_module.index(request, tier="simple") + panel_module.limits_page(request) + panel_module.tools_page(request)
+        )
         self.assertIn("journal", rendered)
         self.assertNotRegex(rendered, r"[Rr]ecord")
         window = _window(os.path.join(tmp.name, "j.db"))
         self.addCleanup(window.close)
-        names = [action.text()
-                 for menu in window.menuBar().findChildren(
-                     __import__("PySide6.QtWidgets",
-                                fromlist=["QMenu"]).QMenu)
-                 for action in menu.actions()]
+        names = [
+            action.text()
+            for menu in window.menuBar().findChildren(__import__("PySide6.QtWidgets", fromlist=["QMenu"]).QMenu)
+            for action in menu.actions()
+        ]
         self.assertIn("Save a copy of the journal\u2026", names)
-        self.assertEqual(window.default_journal_name("2026-11-25"),
-                         "iris-journal-2026-11-25")
-        self.assertIn("It holds no message text and no keys.",
-                      window._save_note_text())
+        self.assertEqual(window.default_journal_name("2026-11-25"), "iris-journal-2026-11-25")
+        self.assertIn("It holds no message text and no keys.", window._save_note_text())
 
 
 class DevpanelLookTest(unittest.TestCase):
     """Spec 12.11: same strings as the app. Metadata only, never raw."""
 
     def test_same_strings_and_metadata_only(self):
-        self.assertIs(shell_module.VERIFY_TOOLTIP,
-                      panel_module.VERIFY_TOOLTIP)
-        self.assertIs(shell_module.PAUSE_TOOLTIP,
-                      panel_module.PAUSE_TOOLTIP)
-        self.assertIs(shell_module.EMERGENCY_TOOLTIP,
-                      panel_module.EMERGENCY_TOOLTIP)
+        self.assertIs(shell_module.VERIFY_TOOLTIP, panel_module.VERIFY_TOOLTIP)
+        self.assertIs(shell_module.PAUSE_TOOLTIP, panel_module.PAUSE_TOOLTIP)
+        self.assertIs(shell_module.EMERGENCY_TOOLTIP, panel_module.EMERGENCY_TOOLTIP)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         state, db_path = _fresh_state(tmp)
         self.addCleanup(state.conn.close)
         trace_id = "calls" + "0" * 11
         db_module.log_attempt(
-            state.conn, trace_id=trace_id, task_number=1, attempt=1,
-            status="success", outcome="allowed", dest_host="127.0.0.1",
-            endpoint="/notes", method="POST", bytes_in=18,
-            bytes_out=200, latency_seconds=0.012)
+            state.conn,
+            trace_id=trace_id,
+            task_number=1,
+            attempt=1,
+            status="success",
+            outcome="allowed",
+            dest_host="127.0.0.1",
+            endpoint="/notes",
+            method="POST",
+            bytes_in=18,
+            bytes_out=200,
+            latency_seconds=0.012,
+        )
         old = api_module.DB_PATH
         api_module.DB_PATH = db_path
         self.addCleanup(setattr, api_module, "DB_PATH", old)
-        html = panel_module.run_detail(
-            trace_id, tier="advanced",
-            request=_panel_request(state)).lower()
-        for header in ("#", "time", "kind", "place", "path", "sent",
-                       "received", "took", "outcome"):
+        html = panel_module.run_detail(trace_id, tier="advanced", request=_panel_request(state)).lower()
+        for header in ("#", "time", "kind", "place", "path", "sent", "received", "took", "outcome"):
             self.assertIn(header, html)
-        for banned in ("payload", "replay", "resend a call", "raw",
-                        "trace_id", "dest_host", "attempt_cost"):
+        for banned in ("payload", "replay", "resend a call", "raw", "trace_id", "dest_host", "attempt_cost"):
             self.assertNotIn(banned, html)
 
 
@@ -598,8 +585,7 @@ class ConsumerTiersTest(unittest.TestCase):
             self.assertEqual(gone.status_code, 404)
             developer = panel_module.index(request, tier="developer")
             self.assertEqual(developer.status_code, 404)
-            settings = panel_module.relay_timeout_button(
-                request, seconds="30")
+            settings = panel_module.relay_timeout_button(request, seconds="30")
             self.assertEqual(settings.status_code, 404)
         finally:
             panel_module.set_consumer_build(False)
@@ -619,6 +605,7 @@ class TeardownTest(unittest.TestCase):
         self.assertEqual(controller.stopped, 1)
         self.assertTrue(window._demo_worker.joined)
         from shiboken6 import isValid
+
         self.assertFalse(isValid(window.view_host))
         self.assertFalse(isValid(window.view))
 
@@ -642,23 +629,21 @@ class MoreDetailTabsTest(unittest.TestCase):
 
     def test_detail_tabs_follow_more_detail(self):
         from appmode import demo as demo_module
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         state, db_path = _fresh_state(tmp)
         self.addCleanup(state.conn.close)
         notebook = os.path.join(tmp.name, "demo-notebook.json")
-        trace_id = demo_module.run_demo(
-            state, notebook, interval_seconds=0)
+        trace_id = demo_module.run_demo(state, notebook, interval_seconds=0)
         old = api_module.DB_PATH
         api_module.DB_PATH = db_path
         self.addCleanup(setattr, api_module, "DB_PATH", old)
         request = _panel_request(state)
-        simple = panel_module.run_detail(trace_id, tier="simple",
-                                         request=request)
+        simple = panel_module.run_detail(trace_id, tier="simple", request=request)
         self.assertIn("What the agent said", simple)
         self.assertNotIn("How Iris decided", simple)
-        advanced = panel_module.run_detail(trace_id, tier="advanced",
-                                           request=request)
+        advanced = panel_module.run_detail(trace_id, tier="advanced", request=request)
         for tab in ("Claims", "Calls", "Why", "Cost"):
             self.assertIn(tab, advanced)
         self.assertIn("How Iris decided", advanced)

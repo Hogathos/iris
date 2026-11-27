@@ -20,6 +20,7 @@ for the whole change.
 Loopback only. Metadata only in journal rows. No bodies, no keys,
 no Authorization headers, no real hostnames.
 """
+
 import os
 import sqlite3
 import sys
@@ -59,17 +60,14 @@ class RelayTimeoutControlTest(unittest.TestCase):
 
     def _request(self, state):
         """A fake panel request that carries the live proxy state."""
-        return types.SimpleNamespace(
-            app=types.SimpleNamespace(
-                state=types.SimpleNamespace(proxy_state=state)))
+        return types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(proxy_state=state)))
 
     def _timeout_rows(self, db_path):
         """Every journal row the cutoff setter wrote."""
         conn = sqlite3.connect(db_path)
         try:
             conn.row_factory = sqlite3.Row
-            return [dict(r) for r in conn.execute(
-                "SELECT * FROM attempts WHERE method = 'TIMEOUT'")]
+            return [dict(r) for r in conn.execute("SELECT * FROM attempts WHERE method = 'TIMEOUT'")]
         finally:
             conn.close()
 
@@ -82,8 +80,7 @@ class RelayTimeoutControlTest(unittest.TestCase):
             self.assertEqual(state.relay_timeout, 300.0)
             rows = self._timeout_rows(db_path)
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["reason"],
-                             "silent cutoff set to 300s")
+            self.assertEqual(rows[0]["reason"], "silent cutoff set to 300s")
             self.assertEqual(rows[0]["cost_dollars"], 0.0)
         finally:
             self._close(proxy, tmp)
@@ -108,19 +105,14 @@ class RelayTimeoutControlTest(unittest.TestCase):
             self.assertTrue(state.set_relay_timeout("120"))
             self.assertEqual(state.relay_timeout, 120.0)
             rows = self._timeout_rows(db_path)
-            self.assertEqual([r["reason"] for r in rows],
-                             ["silent cutoff set to 30.5s",
-                              "silent cutoff set to 120s"])
+            self.assertEqual([r["reason"] for r in rows], ["silent cutoff set to 30.5s", "silent cutoff set to 120s"])
         finally:
             self._close(proxy, tmp)
 
     def test_timeout_words(self):
-        self.assertEqual(proxy_module._timeout_words(30),
-                         "closed after 30s silent")
-        self.assertEqual(proxy_module._timeout_words(0.3),
-                         "closed after 0.3s silent")
-        self.assertEqual(proxy_module._timeout_words(300),
-                         "closed after 300s silent")
+        self.assertEqual(proxy_module._timeout_words(30), "closed after 30s silent")
+        self.assertEqual(proxy_module._timeout_words(0.3), "closed after 0.3s silent")
+        self.assertEqual(proxy_module._timeout_words(300), "closed after 300s silent")
 
     def test_panel_route_sets_cutoff_and_refuses_bad_value(self):
         proxy, tmp, db_path = self._serve()
@@ -128,8 +120,7 @@ class RelayTimeoutControlTest(unittest.TestCase):
             state = proxy.state
             panel_module.app.state.proxy_state = state
             request = self._request(state)
-            resp = panel_module.relay_timeout_button(request,
-                                                     seconds="300")
+            resp = panel_module.relay_timeout_button(request, seconds="300")
             self.assertEqual(resp.status_code, 303)
             self.assertEqual(state.relay_timeout, 300.0)
             bad = panel_module.relay_timeout_button(request, seconds="2")

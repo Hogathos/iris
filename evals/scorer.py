@@ -7,6 +7,7 @@ exits non-zero if any case fails.
 
 Run:  python evals/scorer.py --dataset evals/golden_dataset_v1.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,14 +57,15 @@ class Env:
         self.agent_b = None
         for srv in (self.upstream, self.echo, self.proxy):
             threading.Thread(target=srv.serve_forever, daemon=True).start()
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler(
-            {"http": f"http://127.0.0.1:{self.proxy_port}"}))
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{self.proxy_port}"}))
 
     def with_agent_b(self):
         self.agent_b = agent_b_module.serve(
-            "127.0.0.1", 0,
+            "127.0.0.1",
+            0,
             proxy_url=f"http://127.0.0.1:{self.proxy_port}",
-            upstream_base=f"http://127.0.0.1:{self.upstream_port}")
+            upstream_base=f"http://127.0.0.1:{self.upstream_port}",
+        )
         threading.Thread(target=self.agent_b.serve_forever, daemon=True).start()
         return self.agent_b.server_address[1]
 
@@ -112,9 +114,14 @@ class Env:
 
     def close(self):
         if self.agent_b:
-            self.agent_b.shutdown(); self.agent_b.server_close()
-        self.proxy.shutdown(); self.echo.shutdown(); self.upstream.shutdown()
-        self.proxy.server_close(); self.echo.server_close(); self.upstream.server_close()
+            self.agent_b.shutdown()
+            self.agent_b.server_close()
+        self.proxy.shutdown()
+        self.echo.shutdown()
+        self.upstream.shutdown()
+        self.proxy.server_close()
+        self.echo.server_close()
+        self.upstream.server_close()
         self.proxy.state.conn.close()
         self.tmp.cleanup()
 
@@ -130,54 +137,49 @@ def _check(case, env, actual):
             fails.append(msg)
 
     if "http_status" in exp and actual.get("status") is not None:
-        need(actual["status"] == exp["http_status"],
-             f"http_status {actual['status']} != {exp['http_status']}")
+        need(actual["status"] == exp["http_status"], f"http_status {actual['status']} != {exp['http_status']}")
     if "statuses" in exp:
-        need(actual.get("statuses") == exp["statuses"],
-             f"statuses {actual.get('statuses')} != {exp['statuses']}")
+        need(actual.get("statuses") == exp["statuses"], f"statuses {actual.get('statuses')} != {exp['statuses']}")
     if "rows" in exp:
         relevant = actual.get("relevant_rows", rows)
-        need(len(relevant) == exp["rows"],
-             f"rows {len(relevant)} != {exp['rows']}")
+        need(len(relevant) == exp["rows"], f"rows {len(relevant)} != {exp['rows']}")
     if "trace_id" in exp:
-        need(any(r["trace_id"] == exp["trace_id"] for r in rows),
-             "expected trace_id not found in rows")
+        need(any(r["trace_id"] == exp["trace_id"] for r in rows), "expected trace_id not found in rows")
     if exp.get("generated_trace_returned"):
         gen = actual.get("response_trace")
         need(bool(gen), "no generated trace returned")
-        need(any(r["trace_id"] == gen for r in rows),
-             "generated trace not in rows")
+        need(any(r["trace_id"] == gen for r in rows), "generated trace not in rows")
     if "distinct_trace_ids" in exp:
-        need(len({r["trace_id"] for r in rows}) == exp["distinct_trace_ids"],
-             "distinct trace_id count mismatch")
+        need(len({r["trace_id"] for r in rows}) == exp["distinct_trace_ids"], "distinct trace_id count mismatch")
     if "distinct_task_numbers" in exp:
-        need(len({r["task_number"] for r in rows}) == exp["distinct_task_numbers"],
-             "distinct task_number count mismatch")
+        need(len({r["task_number"] for r in rows}) == exp["distinct_task_numbers"], "distinct task_number count mismatch")
     if "legs" in exp:
-        need(any(r["endpoint"] == exp["legs"]["a_endpoint"] for r in rows),
-             "A leg (/task) missing")
-        need(any(r["endpoint"] == exp["legs"]["b_endpoint"] for r in rows),
-             "B leg (/echo) missing")
-    for key, field in (("row_status", "status"), ("outcome", "outcome"),
-                       ("reason", "reason"), ("method", "method"),
-                       ("endpoint", "endpoint")):
+        need(any(r["endpoint"] == exp["legs"]["a_endpoint"] for r in rows), "A leg (/task) missing")
+        need(any(r["endpoint"] == exp["legs"]["b_endpoint"] for r in rows), "B leg (/echo) missing")
+    for key, field in (
+        ("row_status", "status"),
+        ("outcome", "outcome"),
+        ("reason", "reason"),
+        ("method", "method"),
+        ("endpoint", "endpoint"),
+    ):
         if key in exp:
             col = field
-            need(all(r[col] == exp[key] for r in actual.get("relevant_rows", rows)),
-                 f"{col} != {exp[key]} on some row")
+            need(all(r[col] == exp[key] for r in actual.get("relevant_rows", rows)), f"{col} != {exp[key]} on some row")
     if "cost_dollars" in exp:
-        need(all(float(r["cost_dollars"]) == exp["cost_dollars"] for r in rows),
-             "cost_dollars mismatch (cost must never be invented)")
+        need(
+            all(float(r["cost_dollars"]) == exp["cost_dollars"] for r in rows),
+            "cost_dollars mismatch (cost must never be invented)",
+        )
     if exp.get("zero_forwarded_bytes"):
-        need(all(r["bytes_in"] == 0 and r["bytes_out"] == 0
-                 for r in actual.get("relevant_rows", rows)),
-             "blocked/failed rows must have zero forwarded bytes")
+        need(
+            all(r["bytes_in"] == 0 and r["bytes_out"] == 0 for r in actual.get("relevant_rows", rows)),
+            "blocked/failed rows must have zero forwarded bytes",
+        )
     if "bytes_in_min" in exp:
-        need(any(r["bytes_in"] >= exp["bytes_in_min"] for r in rows),
-             "bytes_in below minimum")
+        need(any(r["bytes_in"] >= exp["bytes_in_min"] for r in rows), "bytes_in below minimum")
     if "bytes_out_min" in exp:
-        need(any(r["bytes_out"] >= exp["bytes_out_min"] for r in rows),
-             "bytes_out below minimum")
+        need(any(r["bytes_out"] >= exp["bytes_out_min"] for r in rows), "bytes_out below minimum")
     if exp.get("latency_present"):
         need(all(r["latency_seconds"] >= 0 for r in rows), "latency missing")
     if exp.get("echo_matches"):
@@ -189,11 +191,9 @@ def _check(case, env, actual):
         finally:
             conn.close()
         for key, want in exp["outcome_counts"].items():
-            need(counts.get(key, 0) == want,
-                 f"outcome {key}: {counts.get(key, 0)} != {want}")
+            need(counts.get(key, 0) == want, f"outcome {key}: {counts.get(key, 0)} != {want}")
         if exp.get("outcome_sum_equals_attempts"):
-            need(sum(counts.values()) == len(rows),
-                 "outcome counts do not add up to total attempts")
+            need(sum(counts.values()) == len(rows), "outcome counts do not add up to total attempts")
     if exp.get("secrets_absent_from_dump"):
         dump = env.dump()
         for secret in actual.get("secrets", []):
@@ -220,16 +220,16 @@ def replay(case, env):
         data = None
         if sc.get("secret_body"):
             data = sc["secret_body"].encode()
-            actual["secrets"] += [sc["secret_body"], sc["secret_key"],
-                                  sc["authorization"]]
+            actual["secrets"] += [sc["secret_body"], sc["secret_key"], sc["authorization"]]
             headers["Authorization"] = sc["authorization"]
-        status, hdrs, _ = env.http(f"{dest}{sc['endpoint']}", sc.get("method", "GET"),
-                                   trace=trace, data=data, headers=headers or None)
+        status, hdrs, _ = env.http(
+            f"{dest}{sc['endpoint']}", sc.get("method", "GET"), trace=trace, data=data, headers=headers or None
+        )
         actual.update(status=status, response_trace=hdrs.get("X-Trace-Id"))
         actual["rows"] = env.rows()
-        actual["relevant_rows"] = [r for r in actual["rows"]
-                                   if trace is None or r["trace_id"] == trace
-                                   or r["trace_id"] == actual["response_trace"]]
+        actual["relevant_rows"] = [
+            r for r in actual["rows"] if trace is None or r["trace_id"] == trace or r["trace_id"] == actual["response_trace"]
+        ]
         if trace is None:
             actual["relevant_rows"] = actual["rows"]
     elif kind == "connect_echo":
@@ -247,8 +247,10 @@ def replay(case, env):
         actual["relevant_rows"] = actual["rows"]
     elif kind in ("connect_closed_port", "connect_raw"):
         if kind == "connect_closed_port":
-            tmp = socket.socket(); tmp.bind(("127.0.0.1", 0))
-            dest = f"127.0.0.1:{tmp.getsockname()[1]}"; tmp.close()
+            tmp = socket.socket()
+            tmp.bind(("127.0.0.1", 0))
+            dest = f"127.0.0.1:{tmp.getsockname()[1]}"
+            tmp.close()
         else:
             dest = sc["destination"]
         sock, status, _ = env.connect_raw(dest, trace)
@@ -266,8 +268,7 @@ def replay(case, env):
     elif kind == "burst":
         statuses = []
         for i in range(sc["burst_count"]):
-            s, _, _ = env.http(f"{upstream}{sc['endpoint']}",
-                               trace=f"{trace or 'burst'}-{i}")
+            s, _, _ = env.http(f"{upstream}{sc['endpoint']}", trace=f"{trace or 'burst'}-{i}")
             statuses.append(s)
         if sc.get("recovery_call"):
             time.sleep(sc.get("pause_seconds", 1.2))
@@ -279,8 +280,7 @@ def replay(case, env):
     elif kind == "outcome_accounting":
         conn = db_module.init_db(env.db_path)
         for i in range(sc.get("seed_legacy_rows", 0)):
-            db_module.log_attempt(conn, trace_id=f"legacy-{i}", task_number=90 + i,
-                                  attempt=1, status="success")
+            db_module.log_attempt(conn, trace_id=f"legacy-{i}", task_number=90 + i, attempt=1, status="success")
         conn.close()
         env.http(f"{upstream}/echo", trace=trace)
         env.http("http://exfil.example.test/echo", method="POST", trace=f"{trace}-blocked")
@@ -300,8 +300,7 @@ def run_dataset(dataset_path):
         kwargs = {}
         sc = case["scenario"]
         if sc["type"] == "burst":
-            kwargs = {"rate_limit": sc["rate_limit"],
-                      "rate_window": sc["rate_window_seconds"]}
+            kwargs = {"rate_limit": sc["rate_limit"], "rate_window": sc["rate_window_seconds"]}
         env = Env(**kwargs)
         try:
             actual = replay(case, env)
@@ -318,9 +317,10 @@ def run_dataset(dataset_path):
             env.close()
         ok = not fails
         results.append((case, ok, fails))
-        lines.append(f"[{'PASS' if ok else 'FAIL'}] {case['id']} "
-                     f"({case['milestone']}/{case['category']})"
-                     + ("" if ok else f" -- {'; '.join(fails)}"))
+        lines.append(
+            f"[{'PASS' if ok else 'FAIL'}] {case['id']} "
+            f"({case['milestone']}/{case['category']})" + ("" if ok else f" -- {'; '.join(fails)}")
+        )
     by_cat = {}
     for case, ok, _ in results:
         passed, total = by_cat.get(case["category"], (0, 0))
@@ -337,8 +337,9 @@ def run_dataset(dataset_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Golden dataset scorer v1")
-    parser.add_argument("--dataset", default=os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "golden_dataset_v1.json"))
+    parser.add_argument(
+        "--dataset", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_dataset_v1.json")
+    )
     args = parser.parse_args()
     lines, code, _ = run_dataset(args.dataset)
     print("\n".join(lines))

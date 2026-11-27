@@ -1,4 +1,5 @@
 """Two processes opening the same pre-M4 database must both open cleanly."""
+
 import multiprocessing
 import os
 import sqlite3
@@ -10,7 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # urllib honors NO_PROXY and would bypass the loopback test proxy;
 # drop it so the suite never depends on ambient proxy config (N7).
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 import db
 
@@ -46,13 +48,10 @@ class ConcurrentMigrationTest(unittest.TestCase):
         ctx = multiprocessing.get_context("spawn")
         with tempfile.TemporaryDirectory() as tmp:
             for round_no in range(5):
-                path = _make_pre_m4_db(
-                    os.path.join(tmp, f"pre-m4-{round_no}.db"))
+                path = _make_pre_m4_db(os.path.join(tmp, f"pre-m4-{round_no}.db"))
                 barrier = ctx.Barrier(2)
                 queue = ctx.Queue()
-                procs = [ctx.Process(target=_open_db,
-                                     args=(path, barrier, queue))
-                         for _ in range(2)]
+                procs = [ctx.Process(target=_open_db, args=(path, barrier, queue)) for _ in range(2)]
                 for proc in procs:
                     proc.start()
                 for proc in procs:

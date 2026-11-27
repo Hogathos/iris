@@ -31,6 +31,7 @@ What must be true afterwards, either outcome is correct:
 
 Loopback only. Metadata only. No bodies, no keys, no real hostnames.
 """
+
 import os
 import socket
 import socketserver
@@ -75,14 +76,12 @@ class PauseDuringSetupWindowTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db_path = os.path.join(cls.tmp.name, "attempts.db")
-        cls.echo = socketserver.ThreadingTCPServer(
-            ("127.0.0.1", 0), _EchoHandler)
+        cls.echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
         cls.echo_port = cls.echo.server_address[1]
         threading.Thread(target=cls.echo.serve_forever, daemon=True).start()
         # High rate limit: rate limiting has its own tests, and a 429
         # here would mask the 503 or the live tunnel this test checks.
-        cls.proxy = proxy_module.serve(
-            "127.0.0.1", 0, cls.db_path, rate_limit=10000)
+        cls.proxy = proxy_module.serve("127.0.0.1", 0, cls.db_path, rate_limit=10000)
         cls.proxy_port = cls.proxy.server_address[1]
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.dest = f"127.0.0.1:{cls.echo_port}"
@@ -118,14 +117,15 @@ class PauseDuringSetupWindowTest(unittest.TestCase):
         except OSError:
             return
         self.assertEqual(
-            data, b"",
-            "Pause landed while the tunnel was still connecting upstream, "
-            "and the tunnel carries bytes anyway: nothing cut it")
+            data,
+            b"",
+            "Pause landed while the tunnel was still connecting upstream, and the tunnel carries bytes anyway: nothing cut it",
+        )
 
     def test_pause_during_setup_window_leaves_tunnel_dead(self):
         trace = "bench-setup-window-pause-1"
-        in_window = threading.Event()   # proxy is inside step 2
-        release = threading.Event()     # test lets step 2 finish
+        in_window = threading.Event()  # proxy is inside step 2
+        release = threading.Event()  # test lets step 2 finish
         real_create_connection = socket.create_connection
         echo_port = self.echo_port
 
@@ -143,13 +143,9 @@ class PauseDuringSetupWindowTest(unittest.TestCase):
 
         def client():
             try:
-                sock = socket.create_connection(
-                    ("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
+                sock = socket.create_connection(("127.0.0.1", self.proxy_port), timeout=HOLD_TIMEOUT)
                 sock.settimeout(HOLD_TIMEOUT)
-                sock.sendall(
-                    (f"CONNECT {self.dest} HTTP/1.1\r\n"
-                     f"Host: {self.dest}\r\n"
-                     f"X-Trace-Id: {trace}\r\n\r\n").encode())
+                sock.sendall((f"CONNECT {self.dest} HTTP/1.1\r\nHost: {self.dest}\r\nX-Trace-Id: {trace}\r\n\r\n").encode())
                 raw = b""
                 while b"\r\n\r\n" not in raw:
                     chunk = sock.recv(65536)
@@ -161,18 +157,15 @@ class PauseDuringSetupWindowTest(unittest.TestCase):
             except Exception as exc:  # reported by the assertions below
                 result["error"] = repr(exc)
 
-        with mock.patch.object(
-                socket, "create_connection", held_create_connection):
+        with mock.patch.object(socket, "create_connection", held_create_connection):
             worker = threading.Thread(target=client, daemon=True)
             worker.start()
             try:
                 self.assertTrue(
                     in_window.wait(timeout=STEP_TIMEOUT),
-                    "harness: proxy never reached the upstream connect, "
-                    "so the setup window was never entered")
-                self.assertTrue(
-                    self.proxy.state.pause_run(trace),
-                    "pause_run refused the Run")
+                    "harness: proxy never reached the upstream connect, so the setup window was never entered",
+                )
+                self.assertTrue(self.proxy.state.pause_run(trace), "pause_run refused the Run")
             finally:
                 release.set()
             worker.join(timeout=HOLD_TIMEOUT + STEP_TIMEOUT)
@@ -186,9 +179,7 @@ class PauseDuringSetupWindowTest(unittest.TestCase):
                 self.assert_tunnel_dead(sock)
             else:
                 # Refused instead: must be the paused refusal.
-                self.assertEqual(
-                    result["status"], 503,
-                    "a tunnel refused after Pause must be 503 (paused)")
+                self.assertEqual(result["status"], 503, "a tunnel refused after Pause must be 503 (paused)")
         finally:
             sock.close()
 

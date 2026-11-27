@@ -15,6 +15,7 @@ Metadata only in the rows it reads. No bodies, no keys, no
 Authorization headers, no real hostnames beyond the loopback
 destination label already on the Run's own rows.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -25,8 +26,7 @@ from urllib.parse import quote
 # with one of these is a control row (VERIFY, RETRY, APPROVE, CAP,
 # TIMEOUT) or a close row (empty method), never a call to a
 # destination. Only real HTTP methods count as calls.
-CONTROL_METHODS = frozenset(
-    {"", "VERIFY", "RETRY", "APPROVE", "CAP", "TIMEOUT"})
+CONTROL_METHODS = frozenset({"", "VERIFY", "RETRY", "APPROVE", "CAP", "TIMEOUT"})
 
 MAX_RUNS = 20
 WIDTH = 900
@@ -42,8 +42,7 @@ def _parse_time(text: str) -> datetime.datetime:
     try:
         parsed = datetime.datetime.fromisoformat(text)
     except (TypeError, ValueError):
-        return datetime.datetime.min.replace(
-            tzinfo=datetime.timezone.utc)
+        return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=datetime.timezone.utc)
     return parsed
@@ -76,8 +75,7 @@ def _worst_color(rows: list) -> str:
     over green, the same rule the edges use. Control rows are not
     calls and never set the color; a run with no call rows is green.
     """
-    colors = {_row_color(r) for r in rows
-              if (r.get("method") or "") not in CONTROL_METHODS}
+    colors = {_row_color(r) for r in rows if (r.get("method") or "") not in CONTROL_METHODS}
     if "red" in colors:
         return "red"
     if "amber" in colors:
@@ -99,8 +97,7 @@ def build_map(traces: list) -> dict:
         rows = trace.get("rows") or []
         if not rows:
             continue
-        first = min(_parse_time(r.get("created_at") or "")
-                    for r in rows)
+        first = min(_parse_time(r.get("created_at") or "") for r in rows)
         timed.append((first, trace["trace_id"], rows))
     timed.sort(key=lambda item: (item[0], item[1]))
     timed = timed[-MAX_RUNS:]
@@ -116,7 +113,7 @@ def build_map(traces: list) -> dict:
         """A time mapped left to right across the picture."""
         if span <= 0:
             return LEFT
-        fraction = ((when - earliest).total_seconds() / span)
+        fraction = (when - earliest).total_seconds() / span
         return LEFT + round(fraction * (WIDTH - LEFT - RIGHT))
 
     nodes = []
@@ -128,11 +125,13 @@ def build_map(traces: list) -> dict:
     for first, trace_id, rows in timed:
         node_id = f"run:{trace_id}"
         node = {
-            "id": node_id, "kind": "run",
+            "id": node_id,
+            "kind": "run",
             "label": _short(trace_id),
             "href": f"/runs/{trace_id}",
             "color": _worst_color(rows),
-            "x": x_for(first), "y": TOP + lane * LANE_HEIGHT,
+            "x": x_for(first),
+            "y": TOP + lane * LANE_HEIGHT,
         }
         lane += 1
         nodes.append(node)
@@ -147,7 +146,8 @@ def build_map(traces: list) -> dict:
     for dest in sorted(dest_first, key=lambda d: (dest_first[d], d)):
         node_id = f"dest:{dest}"
         node = {
-            "id": node_id, "kind": "dest",
+            "id": node_id,
+            "kind": "dest",
             "label": dest,
             "href": "/?dest=" + quote(dest),
             "x": x_for(dest_first[dest]),
@@ -174,21 +174,23 @@ def build_map(traces: list) -> dict:
                 color = "amber"
             else:
                 color = "green"
-            total = sum(float(r.get("latency_seconds") or 0)
-                        for r in call_rows)
+            total = sum(float(r.get("latency_seconds") or 0) for r in call_rows)
             from_x, from_y = run_xy[f"run:{trace_id}"]
             to_x, to_y = dest_xy[f"dest:{dest}"]
-            edges.append({
-                "from": f"run:{trace_id}", "to": f"dest:{dest}",
-                "color": color,
-                "label": (f"{len(call_rows)} calls, "
-                          f"{_seconds_text(total)}"),
-                "from_x": from_x, "from_y": from_y,
-                "to_x": to_x, "to_y": to_y,
-            })
+            edges.append(
+                {
+                    "from": f"run:{trace_id}",
+                    "to": f"dest:{dest}",
+                    "color": color,
+                    "label": (f"{len(call_rows)} calls, {_seconds_text(total)}"),
+                    "from_x": from_x,
+                    "from_y": from_y,
+                    "to_x": to_x,
+                    "to_y": to_y,
+                }
+            )
     height = TOP + lane * LANE_HEIGHT + BOTTOM
-    return {"nodes": nodes, "edges": edges,
-            "width": WIDTH, "height": height}
+    return {"nodes": nodes, "edges": edges, "width": WIDTH, "height": height}
 
 
 def to_svg(built: dict) -> str:
@@ -196,31 +198,24 @@ def to_svg(built: dict) -> str:
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'width="{built["width"]}" height="{built["height"]}" '
-        f'role="img" aria-label="Swarm map">']
+        f'role="img" aria-label="Swarm map">'
+    ]
     for edge in built["edges"]:
         mid_x = (edge["from_x"] + edge["to_x"]) // 2
         mid_y = (edge["from_y"] + edge["to_y"]) // 2
         parts.append(
             f'<line x1="{edge["from_x"]}" y1="{edge["from_y"]}" '
             f'x2="{edge["to_x"]}" y2="{edge["to_y"]}" '
-            f'stroke="{edge["color"]}" stroke-width="2" />')
-        parts.append(
-            f'<text x="{mid_x}" y="{mid_y - 6}">'
-            f'{html.escape(edge["label"])}</text>')
+            f'stroke="{edge["color"]}" stroke-width="2" />'
+        )
+        parts.append(f'<text x="{mid_x}" y="{mid_y - 6}">{html.escape(edge["label"])}</text>')
     for node in built["nodes"]:
         href = html.escape(node["href"], quote=True)
         label = html.escape(node["label"])
         if node["kind"] == "run":
-            shape = (f'<circle cx="{node["x"]}" cy="{node["y"]}" '
-                     f'r="8" fill="{node["color"]}" '
-                     f'stroke="black" />')
+            shape = f'<circle cx="{node["x"]}" cy="{node["y"]}" r="8" fill="{node["color"]}" stroke="black" />'
         else:
-            shape = (f'<rect x="{node["x"] - 8}" y="{node["y"] - 8}" '
-                     f'width="16" height="16" fill="white" '
-                     f'stroke="black" />')
-        parts.append(
-            f'<a href="{href}">{shape}'
-            f'<text x="{node["x"] + 12}" y="{node["y"] + 4}">'
-            f'{label}</text></a>')
+            shape = f'<rect x="{node["x"] - 8}" y="{node["y"] - 8}" width="16" height="16" fill="white" stroke="black" />'
+        parts.append(f'<a href="{href}">{shape}<text x="{node["x"] + 12}" y="{node["y"] + 4}">{label}</text></a>')
     parts.append("</svg>")
     return "".join(parts)

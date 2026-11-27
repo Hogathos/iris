@@ -1,4 +1,5 @@
 """Visualizer tests: headline math, A/B/C verdicts, demo-only, no secrets (v1), plus ordering, POST, collapsing (v2)."""
+
 import os
 import sqlite3
 import sys
@@ -9,7 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # urllib honors NO_PROXY and would bypass the loopback test proxy;
 # drop it so the suite never depends on ambient proxy config (N7).
-os.environ.pop("NO_PROXY", None); os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 
 import db as db_module  # noqa: E402
 import visualizer  # noqa: E402
@@ -24,11 +26,19 @@ class VisualizerTest(unittest.TestCase):
         # Real-traffic row that must be excluded, plus secret-shaped values
         # in fields the visualizer must never read out.
         db_module.log_attempt(
-            self.conn, trace_id="real-trace-x", task_number=99, attempt=1,
-            status="success", latency_seconds=9.9, cost_dollars=99.0,
+            self.conn,
+            trace_id="real-trace-x",
+            task_number=99,
+            attempt=1,
+            status="success",
+            latency_seconds=9.9,
+            cost_dollars=99.0,
             strategy="Bearer [REDACTED]",
-            dest_host="api.example-real.com", endpoint="/v1/chat",
-            method="POST", http_status=200)
+            dest_host="api.example-real.com",
+            endpoint="/v1/chat",
+            method="POST",
+            http_status=200,
+        )
         self.rows = visualizer.fetch_demo_attempts(self.conn)
         self.traces = visualizer.group_traces(self.rows)
         self.md = visualizer.render_markdown(self.rows, self.traces)
@@ -89,14 +99,21 @@ class VisualizerV2Test(unittest.TestCase):
     def test_traces_sorted_a_first_despite_reverse_insertion(self):
         for tid, task in (("demo-trace-c", 3), ("demo-trace-b", 2), ("demo-trace-a", 1)):
             db_module.log_attempt(
-                self.conn, trace_id=tid, task_number=task, attempt=1,
-                status="success", latency_seconds=0.1, cost_dollars=0.001,
-                dest_host="127.0.0.1:18080", endpoint="/echo",
-                method="GET", http_status=200)
+                self.conn,
+                trace_id=tid,
+                task_number=task,
+                attempt=1,
+                status="success",
+                latency_seconds=0.1,
+                cost_dollars=0.001,
+                dest_host="127.0.0.1:18080",
+                endpoint="/echo",
+                method="GET",
+                http_status=200,
+            )
         rows = visualizer.fetch_demo_attempts(self.conn)
         traces = visualizer.group_traces(rows)
-        self.assertEqual([t["trace_id"] for t in traces],
-                         ["demo-trace-a", "demo-trace-b", "demo-trace-c"])
+        self.assertEqual([t["trace_id"] for t in traces], ["demo-trace-a", "demo-trace-b", "demo-trace-c"])
         self.assertEqual([t["label"] for t in traces], ["A", "B", "C"])
         md = visualizer.render_markdown(rows, traces)
         self.assertLess(md.index("Trace A"), md.index("Trace B"))
@@ -107,11 +124,20 @@ class VisualizerV2Test(unittest.TestCase):
 
     def test_post_shows_metadata_only_never_values_or_bodies(self):
         db_module.log_attempt(
-            self.conn, trace_id="demo-trace-post", task_number=1, attempt=1,
-            status="success", latency_seconds=0.25, cost_dollars=0.002,
+            self.conn,
+            trace_id="demo-trace-post",
+            task_number=1,
+            attempt=1,
+            status="success",
+            latency_seconds=0.25,
+            cost_dollars=0.002,
             dest_host="127.0.0.1:18080",
             endpoint="/submit?token=SECRET123&user=bob",
-            method="POST", bytes_in=100, bytes_out=200, http_status=200)
+            method="POST",
+            bytes_in=100,
+            bytes_out=200,
+            http_status=200,
+        )
         rows = visualizer.fetch_demo_attempts(self.conn)
         traces = visualizer.group_traces(rows)
         md = visualizer.render_markdown(rows, traces)
@@ -127,11 +153,19 @@ class VisualizerV2Test(unittest.TestCase):
     def test_long_trace_collapses_middle_retries_but_counts_stay_true(self):
         for attempt in range(1, 11):
             db_module.log_attempt(
-                self.conn, trace_id="demo-trace-long", task_number=1,
-                attempt=attempt, status="failure", latency_seconds=0.1,
-                cost_dollars=0.001, retry_reason="retry" if attempt > 1 else "",
-                dest_host="127.0.0.1:18080", endpoint="/fail",
-                method="GET", http_status=500)
+                self.conn,
+                trace_id="demo-trace-long",
+                task_number=1,
+                attempt=attempt,
+                status="failure",
+                latency_seconds=0.1,
+                cost_dollars=0.001,
+                retry_reason="retry" if attempt > 1 else "",
+                dest_host="127.0.0.1:18080",
+                endpoint="/fail",
+                method="GET",
+                http_status=500,
+            )
         rows = visualizer.fetch_demo_attempts(self.conn)
         traces = visualizer.group_traces(rows)
         self.assertEqual(len(traces[0]["steps"]), 10)
@@ -146,17 +180,22 @@ class VisualizerV2Test(unittest.TestCase):
 
     def test_unknown_status_renders_unknown_never_failed(self):
         db_module.log_attempt(
-            self.conn, trace_id="demo-trace-quiet", task_number=9,
-            attempt=1, status="unknown", latency_seconds=30.0,
-            dest_host="127.0.0.1:18081", endpoint="127.0.0.1:18081",
-            method="CONNECT", close_reason="relay_timeout")
+            self.conn,
+            trace_id="demo-trace-quiet",
+            task_number=9,
+            attempt=1,
+            status="unknown",
+            latency_seconds=30.0,
+            dest_host="127.0.0.1:18081",
+            endpoint="127.0.0.1:18081",
+            method="CONNECT",
+            close_reason="relay_timeout",
+        )
         rows = visualizer.fetch_demo_attempts(self.conn)
         traces = visualizer.group_traces(rows)
-        quiet = [t for t in traces if t["steps"][-1]["trace_id"]
-                 == "demo-trace-quiet"]
+        quiet = [t for t in traces if t["steps"][-1]["trace_id"] == "demo-trace-quiet"]
         self.assertEqual(len(quiet), 1)
-        self.assertEqual(visualizer.trace_verdict(quiet[0]),
-                         "UNKNOWN OUTCOME")
+        self.assertEqual(visualizer.trace_verdict(quiet[0]), "UNKNOWN OUTCOME")
         label = visualizer._step_label(quiet[0]["steps"][0])
         self.assertIn("UNKNOWN", label)
         self.assertNotIn("FAILED", label)

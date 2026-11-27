@@ -77,7 +77,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ruff pyright flake8 pytest hypothesis fastapi uvicorn
+        pip install ruff pyright pytest hypothesis fastapi uvicorn
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with Ruff
       run: |
@@ -85,14 +85,9 @@ jobs:
         ruff check . --statistics
         # the rest is warnings only, never a build failure
         ruff check . --select=E,F --exit-zero --statistics
-    - name: Lint with flake8
-      # always runs so both linters report, even if Ruff failed
-      if: always()
+    - name: Check formatting with Ruff
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        ruff format --check .
     - name: Type-check with Pyright
       run: |
         pyright
@@ -146,7 +141,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ruff pyright flake8 pytest hypothesis fastapi uvicorn
+        pip install ruff pyright pytest hypothesis fastapi uvicorn
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with Ruff
       run: |
@@ -154,14 +149,9 @@ jobs:
         ruff check . --statistics
         # the rest is warnings only, never a build failure
         ruff check . --select=E,F --exit-zero --statistics
-    - name: Lint with flake8
-      # always runs so both linters report, even if Ruff failed
-      if: always()
+    - name: Check formatting with Ruff
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        ruff format --check .
     - name: Type-check with Pyright
       run: |
         pyright
@@ -205,7 +195,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ruff pyright flake8 pytest hypothesis fastapi uvicorn
+        pip install ruff pyright pytest hypothesis fastapi uvicorn
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with Ruff
       run: |
@@ -213,14 +203,9 @@ jobs:
         ruff check . --statistics
         # the rest is warnings only, never a build failure
         ruff check . --select=E,F --exit-zero --statistics
-    - name: Lint with flake8
-      # always runs so both linters report, even if Ruff failed
-      if: always()
+    - name: Check formatting with Ruff
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        ruff format --check .
     - name: Type-check with Pyright
       run: |
         pyright
