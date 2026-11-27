@@ -5,3 +5,8 @@ line-length = 127
 
 [lint]
 select = ["E9", "F63", "F7", "F82"]
+
+[format]
+# This historical fixture has fenced Python that Ruff would reflow as
+# if it were product code. It is a record, not source, so leave it out.
+exclude = ["competitor-verification-fixtures.md"]

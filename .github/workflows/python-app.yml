@@ -85,6 +85,9 @@ jobs:
         ruff check . --statistics
         # the rest is warnings only, never a build failure
         ruff check . --select=E,F --exit-zero --statistics
+    - name: Check formatting with Ruff
+      run: |
+        ruff format --check .
     - name: Type-check with Pyright
       run: |
         pyright
@@ -146,6 +149,9 @@ jobs:
         ruff check . --statistics
         # the rest is warnings only, never a build failure
         ruff check . --select=E,F --exit-zero --statistics
+    - name: Check formatting with Ruff
+      run: |
+        ruff format --check .
     - name: Type-check with Pyright
       run: |
         pyright
@@ -197,6 +203,9 @@ jobs:
         ruff check . --statistics
         # the rest is warnings only, never a build failure
         ruff check . --select=E,F --exit-zero --statistics
+    - name: Check formatting with Ruff
+      run: |
+        ruff format --check .
     - name: Type-check with Pyright
       run: |
         pyright
