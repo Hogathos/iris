@@ -3,7 +3,7 @@
 ## What it does
 
 The watcher runs on Charles's Dell. It polls the Iris repo for new
-Bridge prompt files and runs Muse Code headless on them, so Charles
+Bridge prompt files and runs Muse Code or Codex headless on them, so Charles
 does not have to paste prompts into PyCharm. It is the automation
 half of the Bridge. Main still writes the prompt and Charles still
 checks it. The watcher only removes the paste, not the check.
@@ -18,12 +18,9 @@ checks it. The watcher only removes the paste, not the check.
 - For each watched branch, it lists the `prompts/` directory in the
   repo (GitHub API). It compares against a seen-list it keeps on
   disk.
-- For each prompt file it has not seen, it downloads the file
-  (raw URL), then runs:
-  `muse exec --prompt-file <path> --disable-approval`
-  `--disable-approval` turns off approval prompts but keeps the
-  sandbox. Muse Code reads the prompt, implements, pushes the
-  branch, and reports, per the prompt's own instructions.
+- For each unseen prompt, the watcher downloads the file and launches
+  the agent headless. The agent writes and commits the report. The
+  watcher pushes the run branch after the agent exits.
 - It records the file as seen, so it never runs the same prompt
   twice. It logs every launch: time, branch, file, exit code.
 
@@ -47,7 +44,7 @@ A JSON file next to the script. Fields:
 ## Success criteria
 
 - A new prompt file pushed to a watched branch is picked up within
-  one poll interval and Muse Code runs it headless.
+  one poll interval. The filename suffix selects Muse Code or Codex.
 - A prompt is never run twice, even across a restart.
 - Every launch is logged with time, branch, file, and exit code.
 - A network blip does not kill the watcher. It retries on the next
@@ -55,11 +52,31 @@ A JSON file next to the script. Fields:
 - It does not run prompts on branches that are not in the config.
 - It does not run prompts in `main`. Main is not a watched branch
   unless Charles puts it in the config himself.
+- Before either agent starts, the watcher writes `prompts/<name>-status.md`.
+  The status basename omits the `-codex` routing suffix. Each snapshot
+  lists the agent, prompt, UTC start and update times, and state.
+- The watcher streams agent output to the terminal and keeps up to
+  50 recent lines for the status file. It omits detected credentials
+  from the snapshots.
+- The watcher publishes status on the run branch every two minutes
+  while the agent runs, including during silence. A status commit
+  includes only the status path and preserves other staged files.
+- At exit the watcher leaves a final snapshot on disk. Exit zero means
+  `done`. Other exit codes mean `failed`. The final branch push includes
+  the snapshot and the report the agent committed.
+
+## Independent check
+
+Run each route against a bare Git origin. Read two `running` snapshots
+from that origin while the agent is silent. Read the final snapshot and
+the agent's report from the origin's branch tip. Check the final state,
+the last line of output, and the agent's separate staged file in the
+local checkout.
 
 ## Non-goals
 
-- It does not approve merges or open pull requests. It does not
-  commit. It does not review. It only launches Muse Code.
+- It does not approve merges, open pull requests, or review agent work.
+  Its commits cover only its own status file.
 - It does not edit the prompt. It runs the file as downloaded.
 - It does not install Muse Code or the Task Scheduler entry. Charles
   installs those once, by hand, from the README the implementer

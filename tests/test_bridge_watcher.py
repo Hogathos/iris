@@ -2500,5 +2500,181 @@ class FetchBeforeCheckoutTest(unittest.TestCase):
         self.assertEqual(self._git(self.repo, "rev-parse", self.branch), self.stale_head)
 
 
+def test_run_status_uses_a_two_minute_timer():
+    assert watcher.STATUS_INTERVAL_SECONDS == 120
+
+
+def _run_status_round_trip(tmp_path, capfd, agent, exit_code):
+    """Read the live and final snapshots back from a bare Git origin."""
+    import re
+    import subprocess
+    from datetime import datetime, timedelta
+    from textwrap import dedent
+    from unittest import mock
+
+    branch = "bridge/status-test"
+    stem = "progress-codex" if agent == "codex" else "progress"
+    prompt_name = f"{stem}-prompt.md"
+    report_path = f"prompts/{stem}-report.md"
+    status_path = "prompts/progress-status.md"
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    state = tmp_path / "seen.json"
+    log = tmp_path / "launch.log"
+    config = tmp_path / "watcher.json"
+    script = tmp_path / "agent.py"
+
+    def git(cwd, *args):
+        return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    git(tmp_path, "init", "--bare", str(origin))
+    git(tmp_path, "init", "--initial-branch=" + branch, str(repo))
+    git(repo, "config", "user.name", "Watcher Test")
+    git(repo, "config", "user.email", "watcher@example.invalid")
+    git(repo, "config", "commit.gpgsign", "false")
+    git(repo, "remote", "add", "origin", str(origin))
+    _write(repo / "prompts" / prompt_name, "Test prompt")
+    git(repo, "add", "--", "prompts/" + prompt_name)
+    git(repo, "commit", "-m", "Add test prompt")
+    git(repo, "push", "origin", branch)
+    watcher.save_seen(state, set())
+    config.write_text(
+        json.dumps(
+            {
+                "branches": [branch],
+                "repo_dir": str(repo),
+                "state_file": str(state),
+                "log_file": str(log),
+                "download_dir": str(tmp_path / "downloads"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    script.write_text(
+        dedent(
+            """\
+            import subprocess
+            import sys
+            import time
+            from pathlib import Path
+
+            def write_git(*args):
+                # The timed status commit can briefly hold the same index lock.
+                deadline = time.monotonic() + 5
+                while True:
+                    result = subprocess.run(["git", *args], stderr=subprocess.PIPE, text=True)
+                    index_busy = result.returncode == 128 and "index.lock" in result.stderr and "File exists" in result.stderr
+                    if not index_busy or time.monotonic() >= deadline:
+                        sys.stderr.write(result.stderr)
+                        result.check_returncode()
+                        return
+                    time.sleep(0.1)
+
+            origin, branch, status, report, initial, exit_code = sys.argv[1:]
+            status_path = Path(status)
+            if not status_path.is_file():
+                sys.exit("The local status file was missing when the agent started.")
+            Path(initial).write_text(status_path.read_text(encoding="utf-8"), encoding="utf-8")
+            Path("unrelated.txt").write_text("staged by agent", encoding="utf-8")
+            write_git("add", "--", "unrelated.txt")
+            for line in range(1, 76):
+                print(f"output line {line:03d}", flush=True)
+            print("last stderr line", file=sys.stderr, flush=True)
+
+            live = set()
+            deadline = time.monotonic() + 15
+            while len(live) < 2 and time.monotonic() < deadline:
+                git = ["git", "-C", origin]
+                head = subprocess.check_output(git + ["rev-parse", branch], text=True).strip()
+                snapshot = subprocess.run(git + ["show", f"{head}:{status}"], capture_output=True, text=True)
+                if "last stderr line" in snapshot.stdout and "State: running" in snapshot.stdout:
+                    live.add(head)
+                time.sleep(0.1)
+            if len(live) < 2:
+                sys.exit("Two timed snapshots did not reach the origin while the agent was silent.")
+
+            print("last line before exit", flush=True)
+            Path(report).write_text("Agent report\\n", encoding="utf-8")
+            write_git("add", "--", report)
+            write_git("commit", "--only", "-m", "Add agent report", "--", report)
+            sys.exit(int(exit_code))
+            """
+        ),
+        encoding="utf-8",
+    )
+    initial = tmp_path / "initial-status.md"
+    command = [sys.executable, "-u", str(script), str(origin), branch, status_path, report_path, str(initial), str(exit_code)]
+    listing = [{"name": prompt_name, "url": "https://example.invalid/" + prompt_name}]
+    builder = "build_codex_command" if agent == "codex" else "build_command"
+    other_builder = "build_command" if agent == "codex" else "build_codex_command"
+    with (
+        mock.patch.object(watcher, "github_list", return_value=listing),
+        mock.patch.object(watcher, "github_list_branches", return_value=[branch]),
+        mock.patch.object(watcher, "download_file", side_effect=lambda url, dest: _write(dest, "Test prompt")),
+        mock.patch.object(watcher, "STATUS_INTERVAL_SECONDS", 0.75, create=True),
+        mock.patch.object(watcher, builder, return_value=command) as build,
+        mock.patch.object(watcher, other_builder) as other,
+    ):
+        assert watcher.main(["--config", str(config), "--once"]) == 0  # Baseline branch discovery.
+        assert watcher.main(["--config", str(config), "--once"]) == 0
+
+    terminal = capfd.readouterr()
+    assert initial.is_file(), terminal.out + terminal.err
+    build.assert_called_once_with(str(tmp_path / "downloads" / prompt_name))
+    other.assert_not_called()
+    assert "output line 001" in terminal.out
+    assert "last stderr line" in terminal.out + terminal.err
+    assert "last line before exit" in terminal.out
+    assert watcher.load_seen(state) == {prompt_name}
+    assert f"agent={agent} exit={exit_code}" in log.read_text(encoding="utf-8")
+
+    def timestamp(content, label):
+        match = re.search(rf"^{label}: (\S+)$", content, re.MULTILINE)
+        assert match, content
+        result = datetime.fromisoformat(match[1].replace("Z", "+00:00"))
+        assert result.utcoffset() == timedelta(0)
+        return result
+
+    first = initial.read_text(encoding="utf-8")
+    assert f"Agent: {agent}" in first
+    assert f"Prompt: {prompt_name}" in first
+    assert "State: running" in first
+    started = timestamp(first, "Started")
+    assert started <= timestamp(first, "Last updated")
+
+    commits = git(origin, "log", "--format=%H", "--reverse", branch, "--", status_path).splitlines()
+    live = [git(origin, "show", f"{commit}:{status_path}") for commit in commits[:-1]]
+    assert len(live) >= 2
+    for snapshot in live[-2:]:
+        assert "State: running" in snapshot
+        assert timestamp(snapshot, "Started") == started
+        assert "output line 001" not in snapshot
+        assert "output line 075" in snapshot
+        assert "last stderr line" in snapshot
+        assert 1 <= len(re.findall(r"output line \d{3}", snapshot)) <= 50
+    assert timestamp(live[-2], "Last updated") < timestamp(live[-1], "Last updated")
+    # A timed status commit can inherit the report from its parent before the agent exits.
+    assert git(origin, "log", "--format=%s", branch, "--", report_path) == "Add agent report"
+
+    final = git(origin, "show", f"{branch}:{status_path}")
+    state_name = "done" if exit_code == 0 else "failed"
+    assert f"State: {state_name}" in final
+    assert timestamp(final, "Started") == started
+    assert timestamp(final, "Last updated") >= timestamp(live[-1], "Last updated")
+    assert "last line before exit" in final
+    assert (repo / status_path).read_text(encoding="utf-8").strip() == final
+    assert git(origin, "show", f"{branch}:{report_path}") == "Agent report"
+    assert git(origin, "ls-tree", branch, "--", "unrelated.txt") == ""
+    assert git(repo, "diff", "--cached", "--name-only") == "unrelated.txt"
+
+
+def test_run_status_muse_publishes_live_output_and_finishes_done(tmp_path, capfd):
+    _run_status_round_trip(tmp_path, capfd, "muse", 0)
+
+
+def test_run_status_codex_publishes_live_output_and_finishes_failed(tmp_path, capfd):
+    _run_status_round_trip(tmp_path, capfd, "codex", 7)
+
+
 if __name__ == "__main__":
     unittest.main()

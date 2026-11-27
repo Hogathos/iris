@@ -17,24 +17,30 @@ Rules, enforced below:
 - Discovery only widens which branches are watched: the config
   list plus every branch GitHub returns. The run rules never
   change.
-- Never merge, open pull requests, commit, or review. Only
-  launch the agent, then push the branch it ran on.
+- Never merge, open pull requests, or review. Commit only
+  the run status file, and push the branch the agent ran on.
 - After each run, push that branch to origin by name. Never
   force-push. A failed push is logged and the poll goes on.
 - A network blip never kills the watcher. It skips and retries
   on the next poll.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
+from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
 
 # Defaults, used when the config file or a key is missing.
 DEFAULT_BRANCHES = ["app-mode/packaging"]
@@ -44,10 +50,24 @@ DEFAULT_POLL_INTERVAL_SECONDS = 120
 DEFAULT_STATE_FILENAME = "bridge_watcher_seen.json"
 DEFAULT_LOG_FILENAME = "bridge_watcher.log"
 DEFAULT_DOWNLOAD_DIRNAME = "bridge_prompts"
+STATUS_INTERVAL_SECONDS = 120
+_STATUS_TAIL_LINES = 50
+_STATUS_LINE_BYTES = 4096
+_STATUS_GIT_TIMEOUT = 30
+_SECRET_NAME = r"(?:api[_ -]?key|token|secret|password|passwd|passphrase|credentials?)"
+_CREDENTIAL_LINE = re.compile(
+    rf"\b(?:authorization|cookie|set-cookie|[\w-]*{_SECRET_NAME})[\"']?\s*[:=]"
+    r"|\b(?:bearer|basic)\s+[\w+/=.-]+"
+    r"|://[^\s/]+@"
+    r"|\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-)[\w-]+"
+    r"|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"
+    r"|\beyJ[\w-]+\.[\w-]+\.[\w-]+",
+    re.IGNORECASE,
+)
+_ANSI_COLOR = re.compile(r"\x1b\[[0-9;:]*m")
 
 # GitHub API needs a user agent, or it answers 403.
-_API_HEADERS = {"User-Agent": "iris-bridge-watcher/1.0",
-                "Accept": "application/vnd.github+json"}
+_API_HEADERS = {"User-Agent": "iris-bridge-watcher/1.0", "Accept": "application/vnd.github+json"}
 
 # How long one API call or download may take, in seconds.
 _REQUEST_TIMEOUT = 60
@@ -105,8 +125,7 @@ def _base_dir(config_path):
 def _need_text(value, field, path):
     """A non-empty string, or a plain-words refusal."""
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(
-            f"Bad {field} in {path}: it must be non-empty text.")
+        raise ConfigError(f"Bad {field} in {path}: it must be non-empty text.")
     return value
 
 
@@ -126,49 +145,34 @@ def load_config(path=None):
             with open(path, encoding="utf-8") as handle:
                 raw = json.load(handle)
         except (OSError, ValueError) as exc:
-            raise ConfigError(
-                f"Bad config file {path}: it must hold one "
-                f"JSON object ({exc}).") from exc
+            raise ConfigError(f"Bad config file {path}: it must hold one JSON object ({exc}).") from exc
         if not isinstance(raw, dict):
-            raise ConfigError(
-                f"Bad config file {path}: it must hold one "
-                f"JSON object, not a list or a bare value.")
+            raise ConfigError(f"Bad config file {path}: it must hold one JSON object, not a list or a bare value.")
     base = _base_dir(path)
 
     branches = raw.get("branches", list(DEFAULT_BRANCHES))
-    if (not isinstance(branches, list) or not branches
-            or any(not isinstance(b, str) or not b.strip()
-                   for b in branches)):
-        raise ConfigError(
-            f"Bad branches in {path or 'defaults'}: it must be "
-            f"a non-empty list of branch names.")
+    if not isinstance(branches, list) or not branches or any(not isinstance(b, str) or not b.strip() for b in branches):
+        raise ConfigError(f"Bad branches in {path or 'defaults'}: it must be a non-empty list of branch names.")
     repo = raw.get("repo", DEFAULT_REPO)
     _need_text(repo, "repo", path or "defaults")
     prompts_dir = raw.get("prompts_dir", DEFAULT_PROMPTS_DIR)
     _need_text(prompts_dir, "prompts_dir", path or "defaults")
-    interval = raw.get("poll_interval_seconds",
-                       DEFAULT_POLL_INTERVAL_SECONDS)
-    if (isinstance(interval, bool) or not isinstance(interval,
-                                                      (int, float))
-            or not interval > 0):
-        raise ConfigError(
-            f"Bad poll interval in {path or 'defaults'}: it "
-            f"must be a positive number of seconds.")
+    interval = raw.get("poll_interval_seconds", DEFAULT_POLL_INTERVAL_SECONDS)
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)) or not interval > 0:
+        raise ConfigError(f"Bad poll interval in {path or 'defaults'}: it must be a positive number of seconds.")
     state_file = raw.get("state_file", DEFAULT_STATE_FILENAME)
     _need_text(state_file, "state file path", path or "defaults")
     log_file = raw.get("log_file", DEFAULT_LOG_FILENAME)
     _need_text(log_file, "log file path", path or "defaults")
     download_dir = raw.get("download_dir", DEFAULT_DOWNLOAD_DIRNAME)
-    _need_text(download_dir, "download folder path",
-               path or "defaults")
+    _need_text(download_dir, "download folder path", path or "defaults")
     if not os.path.isabs(state_file):
         state_file = os.path.join(base, state_file)
     if not os.path.isabs(log_file):
         log_file = os.path.join(base, log_file)
     if not os.path.isabs(download_dir):
         download_dir = os.path.join(base, download_dir)
-    repo_dir = _need_text(raw.get("repo_dir"), "repo_dir",
-                            path or "defaults")
+    repo_dir = _need_text(raw.get("repo_dir"), "repo_dir", path or "defaults")
     if not os.path.isabs(repo_dir):
         repo_dir = os.path.join(base, repo_dir)
     return {
@@ -200,13 +204,14 @@ def load_seen(path):
         raise ConfigError(
             f"Bad seen-list {path}: it must hold a JSON list "
             f"of file names ({exc}). Fix or delete the file, "
-            f"then start the watcher again.") from exc
-    if (not isinstance(raw, list)
-            or any(not isinstance(name, str) for name in raw)):
+            f"then start the watcher again."
+        ) from exc
+    if not isinstance(raw, list) or any(not isinstance(name, str) for name in raw):
         raise ConfigError(
             f"Bad seen-list {path}: it must hold a JSON list "
             f"of file names. Fix or delete the file, then "
-            f"start the watcher again.")
+            f"start the watcher again."
+        )
     return set(raw)
 
 
@@ -215,8 +220,7 @@ def save_seen(path, seen):
     leaves a half file behind."""
     parent = os.path.dirname(os.path.abspath(path))
     os.makedirs(parent, exist_ok=True)
-    handle, tmp = tempfile.mkstemp(
-        dir=parent, prefix=".seen-", suffix=".tmp")
+    handle, tmp = tempfile.mkstemp(dir=parent, prefix=".seen-", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as out:
             json.dump(sorted(seen), out, indent=2)
@@ -264,8 +268,7 @@ def is_prompt_file(name):
     -prompt.md. Any other file in the prompts dir (a report, a
     note, anything else) is simply not a prompt: it is never
     downloaded, never run, and never logged as a failure."""
-    return (isinstance(name, str)
-            and name.endswith("-prompt.md"))
+    return isinstance(name, str) and name.endswith("-prompt.md")
 
 
 def report_name(prompt_name):
@@ -273,16 +276,14 @@ def report_name(prompt_name):
     report at <name>-report.md on the same branch. Anything that
     is not a prompt has no report."""
     suffix = "-prompt.md"
-    if (isinstance(prompt_name, str)
-            and prompt_name.endswith(suffix)):
-        return prompt_name[:-len(suffix)] + "-report.md"
+    if isinstance(prompt_name, str) and prompt_name.endswith(suffix):
+        return prompt_name[: -len(suffix)] + "-report.md"
     return None
 
 
 def build_command(prompt_path):
     """The headless Muse Code command for one prompt file."""
-    return ["muse", "exec", "--prompt-file", prompt_path,
-            "--disable-approval", "--trust-workspace"]
+    return ["muse", "exec", "--prompt-file", prompt_path, "--disable-approval", "--trust-workspace"]
 
 
 def build_codex_command(prompt_path):
@@ -313,17 +314,14 @@ def github_list(repo, branch, prompts_dir, timeout=_REQUEST_TIMEOUT):
     the caller treats them as a blip, not a death.
     """
     path = urllib.parse.quote(prompts_dir.strip("/"))
-    url = (f"https://api.github.com/repos/{repo}/contents/"
-           f"{path}?ref={urllib.parse.quote(branch)}")
+    url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={urllib.parse.quote(branch)}"
     request = urllib.request.Request(url, headers=_api_headers())
-    with urllib.request.urlopen(request,
-                                timeout=timeout) as resp:
+    with urllib.request.urlopen(request, timeout=timeout) as resp:
         entries = json.load(resp)
     files = []
     for entry in entries:
         if isinstance(entry, dict) and entry.get("type") == "file":
-            files.append({"name": entry.get("name", ""),
-                          "url": entry.get("download_url", "")})
+            files.append({"name": entry.get("name", ""), "url": entry.get("download_url", "")})
     return [item for item in files if item["name"] and item["url"]]
 
 
@@ -349,12 +347,10 @@ def github_list_branches(repo, timeout=_REQUEST_TIMEOUT):
     death.
     """
     names = []
-    url = (f"https://api.github.com/repos/{repo}/branches"
-           f"?per_page=100")
+    url = f"https://api.github.com/repos/{repo}/branches?per_page=100"
     while url:
         request = urllib.request.Request(url, headers=_api_headers())
-        with urllib.request.urlopen(request,
-                                    timeout=timeout) as resp:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             entries = json.load(resp)
             link = resp.headers.get("Link", "")
         for entry in entries or []:
@@ -371,32 +367,33 @@ def download_file(url, dest_path, timeout=_REQUEST_TIMEOUT):
     # Base headers only: the token is for api.github.com, never for
     # raw downloads, so it is never sent here.
     request = urllib.request.Request(url, headers=_API_HEADERS)
-    with urllib.request.urlopen(request,
-                                timeout=timeout) as resp:
+    with urllib.request.urlopen(request, timeout=timeout) as resp:
         body = resp.read()
     with open(dest_path, "wb") as handle:
         handle.write(body)
 
 
-def run_muse(command, repo_dir, timeout=None):
+def run_muse(command, repo_dir, timeout=None, *, status=None):
     """Run Muse Code headless with a built command list.
 
     Takes the command list itself (see build_command), not a
     prompt path: run_once builds the command and hands it over.
     Runs in repo_dir, so Muse Code works in the iris repo and
     not in the watcher's own folder. Output streams to the
-    watcher terminal: nothing is captured. The timeout is in
+    watcher terminal. Keep a recent tail when status is enabled. The timeout is in
     seconds; None waits as long as the run takes. Returns the
     exit code.
     """
-    proc = subprocess.run(
-        command, timeout=timeout, cwd=repo_dir,
-        shell=(os.name == "nt"))
+    if status is not None:
+        return status.run(command, timeout=timeout, shell=(os.name == "nt"))
+    proc = subprocess.run(command, timeout=timeout, cwd=repo_dir, shell=(os.name == "nt"))
     return proc.returncode
 
 
-def run_codex(command, cwd):
+def run_codex(command, cwd, *, status=None):
     """Run Codex in the repo and stream its output to the terminal."""
+    if status is not None:
+        return status.run(command)
     return subprocess.run(command, cwd=cwd).returncode
 
 
@@ -406,14 +403,9 @@ def get_current_branch(repo_dir):
     Raises when git cannot answer: the caller skips the run instead
     of guessing.
     """
-    proc = subprocess.run(
-        ["git", "-C", repo_dir, "rev-parse", "--abbrev-ref",
-         "HEAD"],
-        capture_output=True, text=True)
+    proc = subprocess.run(["git", "-C", repo_dir, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
     if proc.returncode != 0:
-        raise subprocess.CalledProcessError(
-            proc.returncode, proc.args, output=proc.stdout,
-            stderr=proc.stderr)
+        raise subprocess.CalledProcessError(proc.returncode, proc.args, output=proc.stdout, stderr=proc.stderr)
     return proc.stdout.strip()
 
 
@@ -424,9 +416,8 @@ def branch_exists_locally(repo_dir, branch):
     is public, and fetch works without credentials on the Dell.
     """
     proc = subprocess.run(
-        ["git", "-C", repo_dir, "rev-parse", "--verify",
-         "--quiet", "refs/heads/" + branch],
-        capture_output=True, text=True)
+        ["git", "-C", repo_dir, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch], capture_output=True, text=True
+    )
     return proc.returncode == 0
 
 
@@ -439,15 +430,23 @@ def fetch_branch(repo_dir, branch):
     It raises when git fails: the caller logs a plain skip.
     """
     branch_ref = "refs/heads/" + branch
+    subprocess.run(["git", "check-ref-format", branch_ref], capture_output=True, check=True)
     subprocess.run(
-        ["git", "check-ref-format", branch_ref],
-        capture_output=True, check=True)
-    subprocess.run(
-        ["git", "-C", repo_dir, "fetch", "--no-tags",
-         "--no-recurse-submodules",
-         "--refmap=refs/heads/*:refs/remotes/origin/*",
-         "origin", branch_ref],
-        capture_output=True, text=True, check=True)
+        [
+            "git",
+            "-C",
+            repo_dir,
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--refmap=refs/heads/*:refs/remotes/origin/*",
+            "origin",
+            branch_ref,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 def fast_forward_branch(repo_dir, branch, *, already_checked_out=False):
@@ -462,21 +461,37 @@ def fast_forward_branch(repo_dir, branch, *, already_checked_out=False):
         # Merge treats a local branch ahead of origin as up to date.
         # Require HEAD to be at or behind the fetched commit.
         subprocess.run(
-            ["git", "-C", repo_dir, "merge-base", "--is-ancestor",
-             "HEAD", origin_ref],
-            capture_output=True, text=True, check=True)
+            ["git", "-C", repo_dir, "merge-base", "--is-ancestor", "HEAD", origin_ref],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
         subprocess.run(
-            ["git", "-C", repo_dir, "merge", "--ff-only", "--no-squash",
-             "--no-autostash", "--no-overwrite-ignore", "--", origin_ref],
-            capture_output=True, text=True, check=True)
+            [
+                "git",
+                "-C",
+                repo_dir,
+                "merge",
+                "--ff-only",
+                "--no-squash",
+                "--no-autostash",
+                "--no-overwrite-ignore",
+                "--",
+                origin_ref,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
         return
 
     refspec = f"{origin_ref}:refs/heads/{branch}"
     subprocess.run(
-        ["git", "-C", repo_dir, "fetch", "--no-tags",
-         "--no-recurse-submodules", "--no-write-fetch-head",
-         ".", refspec],
-        capture_output=True, text=True, check=True)
+        ["git", "-C", repo_dir, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", ".", refspec],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 def remote_branch_exists(repo_dir, branch):
@@ -487,26 +502,23 @@ def remote_branch_exists(repo_dir, branch):
     origin/branch does.
     """
     proc = subprocess.run(
-        ["git", "-C", repo_dir, "rev-parse", "--verify",
-         "--quiet", "refs/remotes/origin/" + branch],
-        capture_output=True, text=True)
+        ["git", "-C", repo_dir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + branch],
+        capture_output=True,
+        text=True,
+    )
     return proc.returncode == 0
 
 
 def working_tree_dirty(repo_dir):
     """True when git status shows uncommitted changes."""
-    proc = subprocess.run(
-        ["git", "-C", repo_dir, "status", "--porcelain"],
-        capture_output=True, text=True, check=True)
+    proc = subprocess.run(["git", "-C", repo_dir, "status", "--porcelain"], capture_output=True, text=True, check=True)
     return bool(proc.stdout.strip())
 
 
 def checkout_branch(repo_dir, branch):
     """Switch the working tree to a local branch. Raises when git
     cannot switch."""
-    subprocess.run(
-        ["git", "-C", repo_dir, "checkout", branch],
-        capture_output=True, text=True, check=True)
+    subprocess.run(["git", "-C", repo_dir, "checkout", branch], capture_output=True, text=True, check=True)
 
 
 def _prepare_branch_checkout(repo_dir, branch, *, already_checked_out):
@@ -518,11 +530,9 @@ def _prepare_branch_checkout(repo_dir, branch, *, already_checked_out):
 
     if already_checked_out or branch_exists_locally(repo_dir, branch):
         try:
-            fast_forward_branch(
-                repo_dir, branch, already_checked_out=already_checked_out)
+            fast_forward_branch(repo_dir, branch, already_checked_out=already_checked_out)
         except (OSError, subprocess.SubprocessError):
-            return (f"cannot fast-forward {branch} to its origin head, "
-                    "run skipped")
+            return f"cannot fast-forward {branch} to its origin head, run skipped"
     elif not remote_branch_exists(repo_dir, branch):
         return f"no local branch {branch} or fetched branch, run skipped"
 
@@ -535,7 +545,7 @@ def _prepare_branch_checkout(repo_dir, branch, *, already_checked_out):
     return None
 
 
-def push_branch(repo_dir, branch):
+def push_branch(repo_dir, branch, *, timeout=None):
     """Push one branch to origin, naming it out loud.
 
     Runs ``git push origin <branch>`` in repo_dir. The watcher
@@ -546,9 +556,18 @@ def push_branch(repo_dir, branch):
     when git fails: the caller logs it plainly instead of
     crashing or retrying.
     """
-    subprocess.run(
-        ["git", "-C", repo_dir, "push", "origin", branch],
-        capture_output=True, text=True, check=True)
+    command = ["git", "-C", repo_dir, "push", "origin", branch]
+    if timeout is None:
+        subprocess.run(command, capture_output=True, text=True, check=True)
+    else:
+        subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=True,
+        )
 
 
 def _log_push(log_path, now, branch, outcome):
@@ -559,13 +578,163 @@ def _log_push(log_path, now, branch, outcome):
         handle.write(f"{now} push branch={branch} {outcome}\n")
 
 
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+class _RunStatus:
+    """Write snapshots and publish them while the agent runs."""
+
+    def __init__(self, config, branch, prompt, agent):
+        self.repo = Path(config["repo_dir"]).resolve()
+        stem = prompt.removesuffix("-prompt.md")
+        if agent == "codex":
+            stem = stem.removesuffix("-codex")
+        self.path = self.repo / config["prompts_dir"].strip("/") / f"{stem}-status.md"
+        self.branch = branch
+        self.prompt = prompt
+        self.agent = agent
+        self.log = config["log_file"]
+        self.started = _utc_now()
+        self.tail = deque(maxlen=_STATUS_TAIL_LINES)
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.secrets = {
+            part
+            for key, value in os.environ.items()
+            if re.search(_SECRET_NAME + "$", key, re.IGNORECASE)
+            for part in value.strip().splitlines()
+            if part
+        }
+
+    def _write(self, state):
+        if not self.path.parent.resolve().is_relative_to(self.repo):
+            raise OSError("status folder is outside the repository")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock:
+            output = "".join(f"    {line}\n" for line in self.tail)
+        fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".status-")
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(
+                    f"Agent: {self.agent}\n\nPrompt: {self.prompt}\n\n"
+                    f"Started: {self.started}\n\nLast updated: {_utc_now()}\n\n"
+                    f"State: {state}\n\n{output}"
+                )
+            tmp.replace(self.path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _commit(self):
+        if get_current_branch(self.repo) != self.branch:
+            raise OSError("the agent switched branches")
+        path = self.path.relative_to(self.repo).as_posix()
+        git = ["git", "--literal-pathspecs", "-C", str(self.repo)]
+        # Make a new path known to Git without staging its contents. Git
+        # takes the index lock for the path-only commit and retains other
+        # staged entries. Leave the hooks enabled.
+        for args in (
+            ["add", "--intent-to-add", "--", path],
+            ["commit", "--only", "-m", f"Bridge run status for {self.prompt}", "--", path],
+        ):
+            subprocess.run(
+                git + args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=_STATUS_GIT_TIMEOUT,
+                check=True,
+            )
+
+    def snapshot(self, state, *, commit=False):
+        try:
+            self._write(state)
+            if commit:
+                self._commit()
+        except (OSError, subprocess.SubprocessError) as exc:
+            _log_push(self.log, _utc_now(), self.branch, f"status snapshot failed ({type(exc).__name__})")
+            return False
+        return True
+
+    def _publish_live(self):
+        next_update = time.monotonic() + STATUS_INTERVAL_SECONDS
+        while not self.stop.wait(max(0, next_update - time.monotonic())):
+            if self.snapshot("running", commit=True):
+                try:
+                    push_branch(self.repo, self.branch, timeout=_STATUS_GIT_TIMEOUT)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    _log_push(self.log, _utc_now(), self.branch, f"status push failed ({type(exc).__name__})")
+            next_update = max(next_update + STATUS_INTERVAL_SECONDS, time.monotonic())
+
+    def _read_output(self, pipe):
+        """Forward bytes immediately. Store only bounded, filtered lines."""
+        terminal = getattr(sys.stdout, "buffer", sys.stdout)
+        pending = b""
+        in_private_key = False
+        while chunk := pipe.read1(_STATUS_LINE_BYTES):
+            if terminal is not None:
+                try:
+                    if terminal is sys.stdout:
+                        terminal.write(chunk.decode("utf-8", errors="replace"))
+                    else:
+                        terminal.write(chunk)
+                    terminal.flush()
+                except OSError:
+                    # Drain the child even if the terminal closes.
+                    terminal = None
+            parts = chunk.split(b"\n")
+            for part in parts[:-1]:
+                in_private_key = self._remember(pending + part, in_private_key)
+                pending = b""
+            pending = (pending + parts[-1])[: _STATUS_LINE_BYTES + 1]
+        if pending:
+            self._remember(pending, in_private_key)
+
+    def _remember(self, raw_line, in_private_key):
+        line = _ANSI_COLOR.sub("", raw_line.decode("utf-8", errors="replace").rstrip("\r"))
+        if "-----BEGIN " in line and "PRIVATE KEY-----" in line:
+            in_private_key = True
+        if in_private_key or _CREDENTIAL_LINE.search(line) or any(secret in line for secret in self.secrets):
+            safe = "[credential output omitted]"
+        elif len(raw_line) > _STATUS_LINE_BYTES or any(not char.isprintable() and char != "\t" for char in line):
+            safe = "[line omitted]"
+        else:
+            safe = line
+        with self.lock:
+            self.tail.append(safe)
+        return in_private_key and not ("-----END " in line and "PRIVATE KEY-----" in line)
+
+    def run(self, command, *, timeout=None, shell=False):
+        self.snapshot("running")
+        with subprocess.Popen(
+            command,
+            cwd=self.repo,
+            shell=shell,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        ) as child:
+            assert child.stdout is not None
+            reader = threading.Thread(target=self._read_output, args=(child.stdout,))
+            publisher = threading.Thread(target=self._publish_live)
+            reader.start()
+            publisher.start()
+            try:
+                return child.wait(timeout=timeout)
+            finally:
+                self.stop.set()
+                if child.poll() is None:
+                    child.kill()
+                reader.join()
+                publisher.join()
+
+
 def _log_skip(log_path, now, branch, name, reason):
     """One plain-words skip line: time, branch, file, reason."""
     parent = os.path.dirname(os.path.abspath(log_path))
     os.makedirs(parent, exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as handle:
-        handle.write(f"{now} skip branch={branch} file={name} "
-                     f"reason={reason}\n")
+        handle.write(f"{now} skip branch={branch} file={name} reason={reason}\n")
 
 
 def _is_baseline_run(state_file):
@@ -586,8 +755,7 @@ def _baseline_branch(config, branch, files, now):
     parent = os.path.dirname(os.path.abspath(config["log_file"]))
     os.makedirs(parent, exist_ok=True)
     with open(config["log_file"], "a", encoding="utf-8") as handle:
-        handle.write(f"{now} baseline branch={branch} "
-                     f"files={len(names)} ran=none\n")
+        handle.write(f"{now} baseline branch={branch} files={len(names)} ran=none\n")
     return names
 
 
@@ -604,8 +772,7 @@ def _mark_discovery_baselined(state_file):
     path = _discovery_baseline_path(state_file)
     parent = os.path.dirname(os.path.abspath(path))
     os.makedirs(parent, exist_ok=True)
-    handle, tmp = tempfile.mkstemp(
-        dir=parent, prefix=".seen-", suffix=".tmp")
+    handle, tmp = tempfile.mkstemp(dir=parent, prefix=".seen-", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as out:
             out.write("discovery-baselined\n")
@@ -661,27 +828,19 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
     discovered = []
     if branch_lister is not None:
         try:
-            discovered = [name for name in branch_lister()
-                          if isinstance(name, str) and name.strip()]
+            discovered = [name for name in branch_lister() if isinstance(name, str) and name.strip()]
         except Exception as exc:
             all_listed = False
-            parent = os.path.dirname(
-                os.path.abspath(config["log_file"]))
+            parent = os.path.dirname(os.path.abspath(config["log_file"]))
             os.makedirs(parent, exist_ok=True)
-            with open(config["log_file"], "a",
-                      encoding="utf-8") as handle:
-                handle.write(f"{now} discover branches failed "
-                             f"({exc}), config list only, "
-                             f"retry next poll\n")
+            with open(config["log_file"], "a", encoding="utf-8") as handle:
+                handle.write(f"{now} discover branches failed ({exc}), config list only, retry next poll\n")
     watched = watched_branches(config["branches"], discovered)
     # The first poll with discovery baselines every watched branch,
     # even when a seen-list already exists from before discovery:
     # old prompts on newly found branches are marked seen instead
     # of running as if they were new.
-    need_discovery_baseline = (
-        branch_lister is not None
-        and not os.path.exists(
-            _discovery_baseline_path(state_file)))
+    need_discovery_baseline = branch_lister is not None and not os.path.exists(_discovery_baseline_path(state_file))
     baseline_mode = baselining or need_discovery_baseline
     for branch in watched:
         try:
@@ -696,64 +855,51 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
             # branch listed cleanly, so a blip keeps the next
             # poll in baseline mode instead of running old
             # prompts as if they were new.
-            baselined.extend(_baseline_branch(
-                config, branch, files, now))
+            baselined.extend(_baseline_branch(config, branch, files, now))
             continue
         # The listing already holds every file in the prompts
         # dir, so the report check below needs no extra API call.
-        listed_names = {item.get("name") for item in files
-                        if item.get("name")}
-        pending = [item for item in files
-                   if item.get("name") not in seen
-                   and os.path.basename(item.get("name", "")) ==
-                   item.get("name", "")
-                   and item.get("name") not in (".", "..")
-                   and is_prompt_file(item.get("name", ""))
-                   and report_name(item.get("name", ""))
-                   not in listed_names]
+        listed_names = {item.get("name") for item in files if item.get("name")}
+        pending = [
+            item
+            for item in files
+            if item.get("name") not in seen
+            and os.path.basename(item.get("name", "")) == item.get("name", "")
+            and item.get("name") not in (".", "..")
+            and is_prompt_file(item.get("name", ""))
+            and report_name(item.get("name", "")) not in listed_names
+        ]
         if pending and config.get("repo_dir"):
             repo_dir = config["repo_dir"]
             try:
                 current = get_current_branch(repo_dir)
             except Exception as exc:
-                reason = ("cannot read current branch, "
-                          f"checkout to {branch} skipped ({exc})")
+                reason = f"cannot read current branch, checkout to {branch} skipped ({exc})"
                 for item in pending:
-                    _log_skip(config["log_file"], now, branch,
-                              item["name"], reason)
-                    skipped_checkouts.append(
-                        (branch, item["name"], reason))
+                    _log_skip(config["log_file"], now, branch, item["name"], reason)
+                    skipped_checkouts.append((branch, item["name"], reason))
                 continue
             already_checked_out = current == branch
             if not already_checked_out:
                 try:
                     dirty = working_tree_dirty(repo_dir)
                 except Exception as exc:
-                    reason = ("cannot check for uncommitted changes, "
-                              f"checkout to {branch} skipped ({exc})")
+                    reason = f"cannot check for uncommitted changes, checkout to {branch} skipped ({exc})"
                     for item in pending:
-                        _log_skip(config["log_file"], now, branch,
-                                  item["name"], reason)
-                        skipped_checkouts.append(
-                            (branch, item["name"], reason))
+                        _log_skip(config["log_file"], now, branch, item["name"], reason)
+                        skipped_checkouts.append((branch, item["name"], reason))
                     continue
                 if dirty:
-                    reason = ("uncommitted changes would be lost "
-                              f"by checkout to {branch}, run skipped")
+                    reason = f"uncommitted changes would be lost by checkout to {branch}, run skipped"
                     for item in pending:
-                        _log_skip(config["log_file"], now, branch,
-                                  item["name"], reason)
-                        skipped_checkouts.append(
-                            (branch, item["name"], reason))
+                        _log_skip(config["log_file"], now, branch, item["name"], reason)
+                        skipped_checkouts.append((branch, item["name"], reason))
                     continue
-            reason = _prepare_branch_checkout(
-                repo_dir, branch, already_checked_out=already_checked_out)
+            reason = _prepare_branch_checkout(repo_dir, branch, already_checked_out=already_checked_out)
             if reason:
                 for item in pending:
-                    _log_skip(config["log_file"], now, branch,
-                              item["name"], reason)
-                    skipped_checkouts.append(
-                        (branch, item["name"], reason))
+                    _log_skip(config["log_file"], now, branch, item["name"], reason)
+                    skipped_checkouts.append((branch, item["name"], reason))
                 continue
         for item in files:
             name = item["name"]
@@ -764,8 +910,7 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
             # runs, and never triggers a checkout either.
             if not is_prompt_file(name):
                 continue
-            if os.path.basename(name) != name or name in (
-                    ".", ".."):
+            if os.path.basename(name) != name or name in (".", ".."):
                 failed_downloads.append(name)
                 continue
             # The prompt already ran (by hand or by an earlier
@@ -774,12 +919,10 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
             # or running it.
             expected = report_name(name)
             if expected in listed_names:
-                reason = (f"report {expected} already exists, "
-                          f"run skipped")
+                reason = f"report {expected} already exists, run skipped"
                 seen = mark_seen(seen, name)
                 save_seen(config["state_file"], seen)
-                _log_skip(config["log_file"], now, branch, name,
-                          reason)
+                _log_skip(config["log_file"], now, branch, name, reason)
                 skipped_reported.append((branch, name, reason))
                 continue
             agent = "codex" if name.endswith("-codex-prompt.md") else "muse"
@@ -789,7 +932,16 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
             except Exception:
                 failed_downloads.append(name)
                 continue
-            if agent == "codex":
+            status = None
+            if runner is None:
+                # The built-in runners share status reporting. Keep the
+                # injected runner interface for callers that launch their own.
+                status = _RunStatus(config, branch, name, agent)
+                if agent == "codex":
+                    code = run_codex(build_codex_command(dest), config["repo_dir"], status=status)
+                else:
+                    code = run_muse(build_command(dest), config["repo_dir"], status=status)
+            elif agent == "codex":
                 code = codex_runner(build_codex_command(dest), config["repo_dir"])
             else:
                 code = runner(build_command(dest))
@@ -807,14 +959,17 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
             # retries in a loop. A behind branch is logged and
             # left alone: no rebase, which is a separate prompt.
             if config.get("repo_dir"):
+                if status is not None:
+                    status.snapshot("done" if code == 0 else "failed", commit=True)
                 try:
-                    push_branch(config["repo_dir"], branch)
+                    if status is None:
+                        push_branch(config["repo_dir"], branch)
+                    else:
+                        push_branch(config["repo_dir"], branch, timeout=_STATUS_GIT_TIMEOUT)
                 except Exception as exc:
-                    _log_push(config["log_file"], now, branch,
-                              f"push failed ({exc})")
+                    _log_push(config["log_file"], now, branch, f"push failed ({exc})")
                 else:
-                    _log_push(config["log_file"], now, branch,
-                              "pushed to origin")
+                    _log_push(config["log_file"], now, branch, "pushed to origin")
     if baselining and all_listed:
         # Baseline complete, even when nothing was found: an
         # empty saved list still ends baseline mode, so a file
@@ -828,21 +983,22 @@ def run_once(config, lister, downloader, runner, now, branch_lister=None, *, cod
         # every branch leaves no marker, so the next poll stays in
         # baseline mode instead of running.
         _mark_discovery_baselined(state_file)
-    return {"launched": launched,
-            "skipped_branches": skipped_branches,
-            "failed_downloads": failed_downloads,
-            "skipped_checkouts": skipped_checkouts,
-            "skipped_reported": skipped_reported,
-            "discovered": discovered,
-            "baselined": baselined if baseline_mode else []}
+    return {
+        "launched": launched,
+        "skipped_branches": skipped_branches,
+        "failed_downloads": failed_downloads,
+        "skipped_checkouts": skipped_checkouts,
+        "skipped_reported": skipped_reported,
+        "discovered": discovered,
+        "baselined": baselined if baseline_mode else [],
+    }
 
 
 def build_parser():
     """Command line: config path, plus --once for one poll."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=None)
-    parser.add_argument("--once", action="store_true",
-                        help="run one poll, then stop")
+    parser.add_argument("--once", action="store_true", help="run one poll, then stop")
     return parser
 
 
@@ -851,8 +1007,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.config is None:
         here = os.path.dirname(os.path.abspath(__file__))
-        args.config = os.path.join(here,
-                                   "bridge_watcher_config.json")
+        args.config = os.path.join(here, "bridge_watcher_config.json")
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -868,13 +1023,12 @@ def main(argv=None):
         try:
             run_once(
                 config,
-                lambda b: github_list(
-                    config["repo"], b, config["prompts_dir"]),
+                lambda b: github_list(config["repo"], b, config["prompts_dir"]),
                 download_file,
-                lambda cmd: run_muse(cmd, config["repo_dir"]),
+                None,
                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                branch_lister=lambda: github_list_branches(
-                    config["repo"]))
+                branch_lister=lambda: github_list_branches(config["repo"]),
+            )
         except ConfigError as exc:
             print(f"bridge watcher: {exc}", flush=True)
             return 2
@@ -882,8 +1036,7 @@ def main(argv=None):
             return 0
         except Exception as exc:  # noqa: BLE001 - a poll must
             # never kill the watcher: log it and retry next poll.
-            print(f"bridge watcher: poll failed ({exc}), "
-                  f"retrying", flush=True)
+            print(f"bridge watcher: poll failed ({exc}), retrying", flush=True)
         if args.once:
             return 0
         try:
