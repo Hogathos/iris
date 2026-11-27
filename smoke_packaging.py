@@ -91,9 +91,9 @@ def _window_visible(title):
         return False
     found = []
 
-    @ctypes.WINFUNCTYPE(
+    @ctypes.WINFUNCTYPE(  # pyright: ignore[reportAttributeAccessIssue]
         ctypes.c_bool,
-        ctypes.c_void_p,  # pyright: ignore[reportAttributeAccessIssue]
+        ctypes.c_void_p,
         ctypes.c_void_p,
     )
     def _each(hwnd, _arg):
