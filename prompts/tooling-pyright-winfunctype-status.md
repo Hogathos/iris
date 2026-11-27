@@ -4,12 +4,10 @@ Prompt: tooling-pyright-winfunctype-codex-prompt.md
 
 Started: 2026-11-27T12:53:41.932Z
 
-Last updated: 2026-11-27T12:59:41.973Z
+Last updated: 2026-11-27T13:01:41.975Z
 
 State: running
 
-    [credential output omitted]
-    +
     +| Check | Result |
     +| --- | --- |
     +| `ruff check .` | All checks passed. |
@@ -58,3 +56,5 @@ State: running
     prompts/tooling-pyright-winfunctype-codex-report.md:25:## Open verification
     smoke_packaging.py:94:    @ctypes.WINFUNCTYPE(  # pyright: ignore[reportAttributeAccessIssue]
     
+    codex
+    The rerun with the workspace temp directory has passed 59% with no failures reported. I’ll use the final pytest summary to confirm the test and subtest counts.
