@@ -32,8 +32,10 @@ Incorrect, never Correct.
    only when the read-back matches the claim; Incorrect when the
    read-back contradicts it (and the Run stops); Unverified when the
    read-back cannot be done.
-4. The journal records each check's source and license (provenance per
-   case).
+4. The journal records each check's source and license in dedicated
+   columns `check_source` and `check_license` on the attempts table
+   (provenance per case). The implementer adds the two columns; the
+   provenance test reads them by name and fails until they exist.
 5. Property tests cover the state machine: every transition reachable
    from the start state, no transition to an invalid state.
 6. Drill 1 passes: the verdict is Unknown or Incorrect, never Correct,

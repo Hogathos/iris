@@ -295,7 +295,17 @@ class VerifyCheckLibraryTest(unittest.TestCase):
         self.assertFalse(self.proxy.state.is_paused(trace))
 
     def test_journal_records_check_source_and_license(self):
-        """Criterion 4: the journal carries each check's source and license."""
+        """Criterion 4: the journal carries each check's source and license.
+
+        Pinned to dedicated columns, not "somewhere in the row": the
+        attempts table carries check_source and check_license, and the
+        verdict row for this trace holds the check's exact source and
+        license there. A check_source or check_license that does not
+        exist, or that holds the wrong value, fails this test. The
+        implementer adds the two columns to the attempts table; until
+        then this test fails with a missing-column error, which is the
+        test-first signal, not a typo.
+        """
         check = library_module.get_check("secret-redaction-in-logs")
         trace = "lib-provenance"
         path = self.write_log("prov.log", RAW_LOG)
@@ -303,11 +313,15 @@ class VerifyCheckLibraryTest(unittest.TestCase):
             self.proxy.state, trace, check, self.log_claim(path, "lib-prov-1"), done_clause=DONE_FILE
         )
         self.assertEqual(verdict, "Incorrect")
-        text = self.row_text_for(trace)
-        self.assertIn(check["source"], text, "journal must record the check's source")
-        self.assertIn(check["license"], text, "journal must record the check's license")
+        rows = self.rows_for(trace)
+        verified = [row for row in rows if row["outcome"] == "verified"]
+        self.assertTrue(verified, "the verdict must be journaled")
+        row = verified[0]
+        self.assertEqual(row["check_source"], check["source"], "journal must record the check's source in check_source")
+        self.assertEqual(row["check_license"], check["license"], "journal must record the check's license in check_license")
         # The raw secret itself must never reach the journal: no bodies,
         # no keys, even when the file under check contains one.
+        text = self.row_text_for(trace)
         self.assertNotIn(FAKE_SECRET, text, "no bodies in the journal")
 
 
