@@ -18,7 +18,7 @@ Property-based tests over the Iris state machine: every transition
 reachable, no invalid states.
 
 Drill 1 (Partial write) runs end to end: the agent writes a config file
-with 10 settings, the drill removes 3, Iris must say Unknown or
+with 10 settings, the drill removes 3, Iris must say Unverified or
 Incorrect, never Correct.
 
 ## Acceptance criteria
@@ -36,10 +36,15 @@ Incorrect, never Correct.
    columns `check_source` and `check_license` on the attempts table
    (provenance per case). The implementer adds the two columns; the
    provenance test reads them by name and fails until they exist.
+   Existing databases gain the columns by migration (CREATE TABLE IF
+   NOT EXISTS alone does not add them), and both Verify rows -- the
+   call row and the verdict row -- carry the stamp.
 5. Property tests cover the state machine: every transition reachable
    from the start state, no transition to an invalid state.
-6. Drill 1 passes: the verdict is Unknown or Incorrect, never Correct,
-   when 3 of 10 settings are removed after the write.
+6. Drill 1 passes: the verdict is Unverified or Incorrect, never Correct,
+   when 3 of 10 settings are removed after the write. The 3-of-10 fault
+   is a readable file with different content, so the verdict is
+   Incorrect; Unverified is allowed only for unreadable files.
 7. Full suite stays green, no failing or skipped test undisclosed.
    Outcome accounting reconciles.
 
@@ -63,9 +68,12 @@ Incorrect, never Correct.
   check is written before any implementation), so the two-slice safety
   net is redundant. One PR, one review, one merge; the property tests
   and Drill 1 are the falsification for the catalog, built in.
-- 2026-11-28, the tests are reviewed by Codex (not Claude) before
-  implementation, because Codex runs on the Dell with DB access: it
-  can run the tests against the real engine and the real journal,
-  not just read them. Any hole it finds becomes a new test or a
-  modification to an existing test, and Charles re-approves the
-  updated tests before implementation.
+- 2026-11-28, Claude reviewed the tests' methodology (read-only, no
+  runs) before implementation and found 11 must-fix holes; the tests
+  were revised against that review and Charles approved the rulings
+  on the 7 decisions it raised. Codex then runs the stub ladder and
+  the [RUN] items on the Dell with DB access: it can run the tests
+  against the real engine and the real journal, not just read them.
+  Any hole it finds becomes a new test or a modification to an
+  existing test, and Charles re-approves the updated tests before
+  implementation.
